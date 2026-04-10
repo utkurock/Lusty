@@ -17,6 +17,14 @@ export function getPool(): Pool {
       connectionString,
       ssl: { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false' },
       max: 3,
+      // Supabase transaction pooler kills idle connections aggressively;
+      // keep the pool small and timeouts tight so we fail fast instead of
+      // hanging requests that would otherwise return 500.
+      idleTimeoutMillis: 10_000,
+      connectionTimeoutMillis: 8_000,
+    })
+    global.__pgPool.on('error', (err) => {
+      console.error('pg pool error:', err)
     })
   }
   return global.__pgPool
@@ -25,6 +33,7 @@ export function getPool(): Pool {
 export async function ensureSchema(): Promise<void> {
   if (global.__pgSchemaReady) return
   const pool = getPool()
+  console.log('ensureSchema: creating tables and views…')
   await pool.query(`
     create table if not exists desk_notes (
       id            bigserial primary key,
