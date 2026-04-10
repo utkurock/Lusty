@@ -62,10 +62,21 @@ export default function LeaderboardPage() {
 
   useEffect(() => {
     fetchLeaderboard()
+    // Poll every 15s so newly-logged transactions show up without a manual refresh.
+    const id = setInterval(fetchLeaderboard, 15_000)
+    // Refresh immediately when the tab becomes visible again.
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') fetchLeaderboard()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      clearInterval(id)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
   }, [fetchLeaderboard])
 
-  // Fetch user's own stats
-  useEffect(() => {
+  // Fetch user's own stats — also polled so the "YOU" row updates after deposits.
+  const fetchYou = useCallback(() => {
     if (!connected || !address) {
       setYourRow(null)
       return
@@ -81,6 +92,13 @@ export default function LeaderboardPage() {
       })
       .catch(() => setYourRow(null))
   }, [connected, address])
+
+  useEffect(() => {
+    fetchYou()
+    if (!connected || !address) return
+    const id = setInterval(fetchYou, 15_000)
+    return () => clearInterval(id)
+  }, [fetchYou, connected, address])
 
   const sorted = useMemo(() => {
     const copy = [...rows]

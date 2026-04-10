@@ -12,7 +12,14 @@ export function Footer() {
         </div>
         <div className="font-mono text-xs text-[#6b6560] flex gap-6">
           <a href="/docs" className="hover:text-[#1a1a1a]">docs</a>
-          <a href="#" className="hover:text-[#1a1a1a]">github</a>
+          <a
+            href="https://github.com/utkurock/Lusty"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-[#1a1a1a]"
+          >
+            github
+          </a>
           <a href="#" className="hover:text-[#1a1a1a]">twitter</a>
         </div>
         <div className="font-mono text-xs text-[#6b6560]">testnet</div>
