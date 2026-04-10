@@ -1,0 +1,80 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Lusty Design Tokens */
+:root {
+  --bg-primary: #e8e4d9;
+  --bg-secondary: #d4cfc2;
+  --bg-card: #1a1a1a;
+  --bg-card-inner: #f0ece3;
+  --text-primary: #1a1a1a;
+  --text-secondary: #6b6560;
+  --text-on-dark: #e8e4d9;
+  --accent-green: #22c55e;
+  --accent-red: #ef4444;
+  --accent-yellow: #eab308;
+  --border: #c4bfb2;
+  --border-dark: #2a2a2a;
+  --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+  --font-sans: 'Inter', system-ui, sans-serif;
+}
+
+html, body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--accent-yellow);
+  color: var(--text-primary);
+}
+::-moz-selection {
+  background: var(--accent-yellow);
+  color: var(--text-primary);
+}
+
+.font-mono, code, pre {
+  font-family: var(--font-mono);
+}
+
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.apr {
+  font-family: var(--font-mono);
+  color: var(--accent-green);
+  font-weight: 700;
+}
+
+.dashed-row {
+  border-bottom: 1px dashed var(--border);
+}
+
+.terminal-card {
+  background: var(--bg-card);
+  color: var(--text-on-dark);
+  border: 1px solid var(--border-dark);
+}
+
+.light-card {
+  background: var(--bg-card-inner);
+  border: 1px solid var(--border);
+}
+
+button:focus-visible, a:focus-visible {
+  outline: 2px solid var(--accent-yellow);
+  outline-offset: 2px;
+}
+
+@keyframes progressFill {
+  from { width: 0%; }
+}
+.animate-fill {
+  animation: progressFill 800ms ease-out;
+}
