@@ -29,32 +29,60 @@ function daysBetween(a: Date, b: Date): number {
   return Math.max(0, Math.ceil((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24)))
 }
 
+interface RealVaultStats {
+  totalDeposited: number  // USD-equivalent already sold to the vault
+  vaultCap: number        // USD-equivalent total capacity
+}
+
 /**
  * Returns 3 rolling Friday expiries: ~1w, ~2w, ~3w ahead.
- * Utilization is mocked per expiry (stable across reloads within the same day)
- * and decreases as the expiry moves further out, simulating that most flow
- * clusters around the nearest expiry.
+ *
+ * If `realStats` is provided we use the live on-chain utilization for the
+ * nearest expiry and taper it out for farther expiries (since most flow
+ * clusters around the front-month). This makes the dynamic APR engine
+ * react to real deposits instead of mock data.
+ *
+ * If `realStats` is omitted we fall back to a deterministic mock — useful
+ * for SSR / first paint before /api/vault/stats has resolved.
  */
-export function getExpiryOptions(type: 'call' | 'put' = 'call'): ExpiryOption[] {
+export function getExpiryOptions(
+  type: 'call' | 'put' = 'call',
+  realStats?: RealVaultStats,
+): ExpiryOption[] {
   const now = new Date()
   const weeksAhead = [0, 1, 2]
 
-  // Deterministic-ish utilization per day so UI doesn't jitter every second.
+  // Deterministic-ish utilization per day so UI doesn't jitter every second
+  // when we don't have real data yet.
   const daySeed = Math.floor(now.getTime() / (1000 * 60 * 60 * 24))
   const rand = (n: number) => {
     const x = Math.sin(daySeed * 37 + n * 13 + (type === 'put' ? 7 : 0)) * 10000
     return x - Math.floor(x)
   }
 
+  // Distribute the live utilization across expiries: front month carries
+  // ~100% of it, mid ~60%, back ~30%. Reflects real-world flow concentration
+  // and means the front-week APR drops first when the vault fills.
+  const realU = realStats
+    ? Math.min(0.98, Math.max(0, realStats.totalDeposited / Math.max(realStats.vaultCap, 1)))
+    : null
+  const realDistribution = [1.0, 0.6, 0.3]
+
   return weeksAhead.map((w, i) => {
     const date = fridayAfter(now, w)
     const daysToExpiry = Math.max(1, daysBetween(now, date))
     const totalEpochDays = 7 + w * 7
-    const vaultCap = 5_000_000
-    // nearest expiry most utilized, back expiries thinner
-    const baseUtil = [0.68, 0.42, 0.18][i] ?? 0.3
-    const jitter = (rand(i) - 0.5) * 0.12
-    const utilization = Math.max(0.05, Math.min(0.95, baseUtil + jitter))
+
+    // Cap & utilization: prefer real on-chain data when available.
+    const vaultCap = realStats?.vaultCap ?? 5_000_000
+    let utilization: number
+    if (realU !== null) {
+      utilization = Math.max(0, Math.min(0.98, realU * realDistribution[i]))
+    } else {
+      const baseUtil = [0.68, 0.42, 0.18][i] ?? 0.3
+      const jitter = (rand(i) - 0.5) * 0.12
+      utilization = Math.max(0.05, Math.min(0.95, baseUtil + jitter))
+    }
     const totalDeposited = Math.round(vaultCap * utilization)
 
     const label = `${MONTH_ABBR[date.getMonth()]}_${String(date.getDate()).padStart(2, '0')}`

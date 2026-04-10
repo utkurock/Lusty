@@ -7,6 +7,7 @@ import { EarnButton } from './EarnButton'
 import { useWalletContext } from '@/providers/WalletProvider'
 import { MIN_DEPOSIT_XLM, MAX_DEPOSIT_XLM, formatExpiry, formatUsdc } from '@/lib/utils'
 import { useXlmPrice } from '@/hooks/useXlmPrice'
+import { useVaultStats } from '@/hooks/useVaultStats'
 import { generateCallStrikes, generatePutStrikes, StrikeOption } from '@/lib/pricing'
 import { getExpiryOptions, adjustApr, ExpiryOption } from '@/lib/expiries'
 import { StablePicker, Stable } from '@/components/shared/StablePicker'
@@ -24,11 +25,26 @@ interface StrikeSelectorProps {
 export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
   const { connected, connect, address, signTransaction } = useWalletContext()
   const { price: xlmPrice, change24h } = useXlmPrice()
+  const { stats: vaultStats, refresh: refreshVaultStats } = useVaultStats(30_000)
   const pricePositive = change24h >= 0
   const [txLoading, setTxLoading] = useState(false)
 
-  // Expiries — re-generate at mount so "day-seed" mock stays stable per day.
-  const baseExpiries = useMemo(() => getExpiryOptions(type), [type])
+  // Convert /api/vault/stats numbers (XLM) into a USD-denominated cap/util
+  // pair so the same expiries.ts code works for call and put vaults.
+  const realStats = useMemo(() => {
+    if (!vaultStats || !xlmPrice) return undefined
+    return {
+      totalDeposited: vaultStats.utilizedXlm * xlmPrice,
+      vaultCap: vaultStats.capXlm * xlmPrice,
+    }
+  }, [vaultStats, xlmPrice])
+
+  // Expiries derived from real on-chain utilization when available so the
+  // dynamic APR engine drops the offered APR as the vault fills up.
+  const baseExpiries = useMemo(
+    () => getExpiryOptions(type, realStats),
+    [type, realStats],
+  )
   const [expiries, setExpiries] = useState<ExpiryOption[]>(baseExpiries)
   useEffect(() => setExpiries(baseExpiries), [baseExpiries])
 
@@ -174,7 +190,8 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
         settled: false,
       })
 
-      // Bump utilization on the selected expiry so APR responds visibly.
+      // Optimistic UI: bump utilization on the selected expiry so APR
+      // responds immediately even before the next vault-stats poll lands.
       setExpiries((prev) =>
         prev.map((e, i) => {
           if (i !== selectedExpiryIdx) return e
@@ -187,6 +204,17 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
           }
         })
       )
+
+      // Trigger an immediate vault-stats refresh so other widgets (epoch
+      // utilization bar) reflect the new on-chain balance without waiting
+      // for the 30s poll cycle.
+      refreshVaultStats()
+
+      // Tell the leaderboard page (if mounted) to refetch immediately so
+      // the user sees their updated rank without waiting up to 2 minutes.
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('lustyLeaderboardRefresh'))
+      }
     } catch (e: any) {
       setError(e?.message ?? 'Transaction failed')
     } finally {
