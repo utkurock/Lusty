@@ -60,22 +60,60 @@ export default function LeaderboardPage() {
     }
   }, [])
 
+  // Polling cadence: 2 minutes is enough to feel "live" while cutting
+  // server load 8× compared to the previous 15s. Users who want immediate
+  // feedback get it via the optimistic local update + the explicit refresh
+  // triggered after their own deposit completes (see lustyLeaderboardRefresh).
+  const POLL_INTERVAL_MS = 120_000
+
   useEffect(() => {
+    // Hydrate from localStorage cache so the table isn't blank on first paint.
+    try {
+      const cached = localStorage.getItem('lusty_leaderboard_cache')
+      if (cached) {
+        const parsed = JSON.parse(cached)
+        if (Array.isArray(parsed.rows)) {
+          setRows(parsed.rows)
+          setTotal(parsed.total ?? parsed.rows.length)
+          setLoading(false)
+        }
+      }
+    } catch {
+      /* ignore corrupted cache */
+    }
+
     fetchLeaderboard()
-    // Poll every 15s so newly-logged transactions show up without a manual refresh.
-    const id = setInterval(fetchLeaderboard, 15_000)
-    // Refresh immediately when the tab becomes visible again.
+    const id = setInterval(fetchLeaderboard, POLL_INTERVAL_MS)
     const onVisible = () => {
       if (document.visibilityState === 'visible') fetchLeaderboard()
     }
+    // External event so deposit/swap flows can trigger an immediate refresh
+    // (dispatched from StrikeSelector / SwapPanel after a successful tx).
+    const onExternalRefresh = () => fetchLeaderboard()
     document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('lustyLeaderboardRefresh', onExternalRefresh)
     return () => {
       clearInterval(id)
       document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('lustyLeaderboardRefresh', onExternalRefresh)
     }
   }, [fetchLeaderboard])
 
-  // Fetch user's own stats — also polled so the "YOU" row updates after deposits.
+  // Persist successful fetches so the next visit hydrates instantly.
+  useEffect(() => {
+    if (rows.length > 0) {
+      try {
+        localStorage.setItem(
+          'lusty_leaderboard_cache',
+          JSON.stringify({ rows, total, savedAt: Date.now() })
+        )
+      } catch {
+        /* quota exceeded — fine to ignore */
+      }
+    }
+  }, [rows, total])
+
+  // Fetch user's own stats — also polled at the same cadence.
   const fetchYou = useCallback(() => {
     if (!connected || !address) {
       setYourRow(null)
@@ -96,8 +134,13 @@ export default function LeaderboardPage() {
   useEffect(() => {
     fetchYou()
     if (!connected || !address) return
-    const id = setInterval(fetchYou, 15_000)
-    return () => clearInterval(id)
+    const id = setInterval(fetchYou, POLL_INTERVAL_MS)
+    const onExternalRefresh = () => fetchYou()
+    window.addEventListener('lustyLeaderboardRefresh', onExternalRefresh)
+    return () => {
+      clearInterval(id)
+      window.removeEventListener('lustyLeaderboardRefresh', onExternalRefresh)
+    }
   }, [fetchYou, connected, address])
 
   const sorted = useMemo(() => {

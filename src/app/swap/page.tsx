@@ -132,6 +132,13 @@ export default function SwapPage() {
 
       setStatus(`✓ Swapped ${parsed} ${fromAsset} → ${parseFloat(swapData.destAmount).toFixed(4)} ${toAsset}`)
       setAmount('')
+
+      // Tell the leaderboard page (if mounted) to refetch immediately so
+      // the user sees their updated volume / rank without waiting for the
+      // 2-minute poll cycle.
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('lustyLeaderboardRefresh'))
+      }
     } catch (e: any) {
       setTxError(e?.message ?? 'Swap failed')
     } finally {

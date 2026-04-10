@@ -1,39 +1,14 @@
 'use client'
-import { useEffect, useState } from 'react'
 import { useXlmPrice } from '@/hooks/useXlmPrice'
+import { useVaultStats } from '@/hooks/useVaultStats'
 import { CapProgress } from '@/components/earn/CapProgress'
 import { AssetList } from '@/components/earn/AssetList'
 import { formatUsdc } from '@/lib/utils'
 import { TrendingUp, TrendingDown } from 'lucide-react'
 
-interface VaultStats {
-  utilizedXlm: number
-  capXlm: number
-  utilizationPct: number
-}
-
 export default function EarnPage() {
   const { price, change24h, loading } = useXlmPrice()
-  const [vaultStats, setVaultStats] = useState<VaultStats | null>(null)
-
-  useEffect(() => {
-    const load = () =>
-      fetch('/api/vault/stats')
-        .then((r) => r.json())
-        .then((d) => {
-          if (d.ok) {
-            setVaultStats({
-              utilizedXlm: d.utilizedXlm,
-              capXlm: d.capXlm,
-              utilizationPct: d.utilizationPct,
-            })
-          }
-        })
-        .catch(() => {})
-    load()
-    const id = setInterval(load, 30_000)
-    return () => clearInterval(id)
-  }, [])
+  const { stats: vaultStats } = useVaultStats(30_000)
 
   const positive = change24h >= 0
 

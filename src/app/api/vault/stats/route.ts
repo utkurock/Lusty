@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server'
 import { Horizon } from '@stellar/stellar-sdk'
 import { rateLimit } from '@/lib/rate-limit'
 
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
 const HORIZON =
   process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
 const LUSD_CODE = process.env.NEXT_PUBLIC_LUSD_CODE ?? 'LUSD'
@@ -44,16 +47,25 @@ export async function GET() {
     const utilizedXlm = Math.max(0, xlmBalance - XLM_BASELINE)
     const utilizationPct = Math.min(100, (utilizedXlm / VAULT_CAP_XLM) * 100)
 
-    return NextResponse.json({
-      ok: true,
-      distributor: LUSD_DISTRIBUTOR,
-      xlmBalance,
-      lusdBalance,
-      baseline: XLM_BASELINE,
-      utilizedXlm,
-      capXlm: VAULT_CAP_XLM,
-      utilizationPct,
-    })
+    return NextResponse.json(
+      {
+        ok: true,
+        distributor: LUSD_DISTRIBUTOR,
+        xlmBalance,
+        lusdBalance,
+        baseline: XLM_BASELINE,
+        utilizedXlm,
+        capXlm: VAULT_CAP_XLM,
+        utilizationPct,
+      },
+      {
+        headers: {
+          // Force the browser/edge to never cache vault stats — utilization
+          // must reflect the on-chain balance every time it's polled.
+          'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+        },
+      }
+    )
   } catch (e: any) {
     return NextResponse.json(
       { error: 'failed to read vault stats', detail: e?.message ?? 'unknown' },

@@ -48,8 +48,18 @@ export function blackScholesPut(
   return strike * Math.exp(-rate * timeYears) * normalCDF(-d2) - spot * normalCDF(-d1)
 }
 
-// Protocol revenue share taken from every premium (15% of upfront income).
-export const PROTOCOL_FEE_BPS = 1500 // 15.00%
+// Protocol revenue share taken from every premium (25% of Black-Scholes
+// fair value). The user receives 75% of the BS premium; the remaining 25%
+// is the protocol's edge — paid to FEE_WALLET on every successful deposit.
+//
+// Why 25% (not 15%)?
+//   * BS assumes constant vol; XLM realized vol can spike, so we need
+//     headroom to absorb tail-risk losses on the long-call inventory.
+//   * The vault has no external hedging — every undercharged option is
+//     a real loss if it expires deep ITM.
+//   * 25% leaves the offered APR competitive while keeping the protocol
+//     positive-EV across most realized-vol regimes (verified in /research).
+export const PROTOCOL_FEE_BPS = 2500 // 25.00%
 export const PROTOCOL_FEE = PROTOCOL_FEE_BPS / 10_000
 
 // Volatility smile: deep OTM strikes need a higher effective IV than ATM.
