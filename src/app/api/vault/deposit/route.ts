@@ -204,8 +204,12 @@ export async function POST(req: Request) {
         })
       )
 
-    // Send protocol fee to fee wallet (only if fee wallet has LUSD trustline)
+    // Send protocol fee to fee wallet.
+    //   1) Preferred: pay LUSD if the fee wallet has a LUSD trustline.
+    //   2) Fallback for `call` deposits: pay the equivalent in XLM (no trustline needed).
+    //   3) Otherwise: skip and log loudly so we don't silently lose revenue.
     let feeSent = false
+    let feeNote: string | undefined
     if (FEE_WALLET && fee > 0.0000001) {
       try {
         const feeAcc = await server.loadAccount(FEE_WALLET)
@@ -221,9 +225,31 @@ export async function POST(req: Request) {
             })
           )
           feeSent = true
+        } else if (body.type === 'call') {
+          // No LUSD trustline — pay the equivalent in native XLM instead.
+          const spot = await fetchXlmUsd().catch(() => null)
+          if (spot && spot > 0) {
+            const feeInXlm = fee / spot
+            if (feeInXlm > 0.0000001) {
+              txBuilder.addOperation(
+                Operation.payment({
+                  destination: FEE_WALLET,
+                  asset: Asset.native(),
+                  amount: feeInXlm.toFixed(7),
+                })
+              )
+              feeSent = true
+              feeNote = `paid ${feeInXlm.toFixed(4)} XLM (no LUSD trustline on fee wallet)`
+            }
+          }
         }
-      } catch {
-        // Fee wallet not found or unreachable — fee stays in distributor
+        if (!feeSent) {
+          feeNote = `FEE_WALLET ${FEE_WALLET} has no LUSD trustline — protocol fee of ${fee.toFixed(4)} LUSD NOT sent. Open a LUSD trustline on the fee wallet to receive fees.`
+          console.error('vault/deposit:', feeNote)
+        }
+      } catch (feeErr: any) {
+        feeNote = `FEE_WALLET load failed: ${feeErr?.message ?? 'unknown'} — fee of ${fee.toFixed(4)} LUSD NOT sent.`
+        console.error('vault/deposit:', feeNote)
       }
     }
 
@@ -261,6 +287,8 @@ export async function POST(req: Request) {
       depositHash: body.txHash,
       premiumHash: (payRes as any).hash,
       premium: premium.toFixed(4),
+      feeSent,
+      ...(feeNote ? { feeNote } : {}),
       ...(dbWarning ? { warning: `Leaderboard not updated: ${dbWarning}` } : {}),
     })
   } catch (e: any) {

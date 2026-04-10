@@ -150,13 +150,27 @@ export async function getUserStats(address: string): Promise<LeaderRow | null> {
 // ── Admin ──────────────────────────────────────────────────────────
 
 export async function isAdmin(address: string): Promise<boolean> {
-  await ensureSchema()
-  const pool = getPool()
-  const res = await pool.query(
-    'select 1 from admin_users where address = $1',
-    [address]
-  )
-  return res.rows.length > 0
+  // Env var fallback: ADMIN_WALLETS="GABC...,GDEF..." (comma-separated)
+  // Lets the admin panel work without needing to seed the database first.
+  const envList = (process.env.ADMIN_WALLETS ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  if (envList.includes(address)) return true
+
+  try {
+    await ensureSchema()
+    const pool = getPool()
+    const res = await pool.query(
+      'select 1 from admin_users where address = $1',
+      [address]
+    )
+    return res.rows.length > 0
+  } catch (e) {
+    // DB unreachable — env var was the only path; deny.
+    console.error('isAdmin: DB lookup failed', e)
+    return false
+  }
 }
 
 export interface AdminStats {

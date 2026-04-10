@@ -282,6 +282,30 @@ function rowToPayload(row: any) {
   }
 }
 
+// Last-resort fallback so the desk notes panel never goes blank, even when
+// Binance is unreachable AND the database has nothing cached. The numbers
+// are obviously stale (source = 'static') so the UI can flag it if needed.
+function staticFallbackPayload() {
+  const c = ruleBasedCommentary({
+    price: 0.12,
+    change24hPct: 0,
+    high24h: 0.13,
+    low24h: 0.115,
+    volume24h: 0,
+    quoteVolume24h: 50_000_000,
+  })
+  return {
+    generatedAt: new Date().toISOString(),
+    price: 0.12,
+    change24h: 0,
+    bias: c.bias,
+    headline: c.headline,
+    bullets: c.bullets,
+    suggestion: c.suggestion,
+    source: 'static',
+  }
+}
+
 export async function GET(req: Request) {
   try {
     const rl = rateLimit('commentary:global', 60_000, 30)
@@ -295,14 +319,20 @@ export async function GET(req: Request) {
     const url = new URL(req.url)
     const force = url.searchParams.get('force') === '1'
 
-    await ensureSchema()
-    const pool = getPool()
+    // Try to read latest cached row from DB. DB failure is non-fatal.
+    let row: any = null
+    let pool: ReturnType<typeof getPool> | null = null
+    try {
+      await ensureSchema()
+      pool = getPool()
+      const latest = await pool.query(
+        'select * from desk_notes order by generated_at desc limit 1'
+      )
+      row = latest.rows[0] ?? null
+    } catch (dbErr) {
+      console.error('commentary: DB read failed', dbErr)
+    }
 
-    // Latest row from DB.
-    const latest = await pool.query(
-      'select * from desk_notes order by generated_at desc limit 1'
-    )
-    const row = latest.rows[0]
     if (!force && row) {
       const ageMs = Date.now() - new Date(row.generated_at).getTime()
       if (ageMs < CACHE_TTL_MS) {
@@ -312,34 +342,56 @@ export async function GET(req: Request) {
 
     const [ticker, tech] = await Promise.all([fetchTicker(), fetchTech()])
     if (!ticker) {
-      if (row) return NextResponse.json({ ...rowToPayload(row), cached: true, stale: true })
-      return NextResponse.json({ error: 'ticker unavailable' }, { status: 502 })
+      // Binance unreachable. Serve stale cache if we have one, otherwise
+      // synthesize a static payload so the page never says "no data".
+      if (row) {
+        return NextResponse.json({ ...rowToPayload(row), cached: true, stale: true })
+      }
+      return NextResponse.json({ ...staticFallbackPayload(), cached: false, stale: true })
     }
 
     const fromGemini = await geminiCommentary(ticker, tech)
     const c = fromGemini ?? ruleBasedCommentary(ticker)
     const source = fromGemini ? 'gemini' : 'rules'
 
-    const inserted = await pool.query(
-      `insert into desk_notes (price, change_24h, bias, headline, bullets, suggestion, source)
-       values ($1, $2, $3, $4, $5::jsonb, $6, $7)
-       returning *`,
-      [
-        ticker.price,
-        ticker.change24hPct,
-        c.bias,
-        c.headline,
-        JSON.stringify(c.bullets),
-        c.suggestion,
-        source,
-      ]
-    )
+    // Try to persist; DB failure must not break the response.
+    if (pool) {
+      try {
+        const inserted = await pool.query(
+          `insert into desk_notes (price, change_24h, bias, headline, bullets, suggestion, source)
+           values ($1, $2, $3, $4, $5::jsonb, $6, $7)
+           returning *`,
+          [
+            ticker.price,
+            ticker.change24hPct,
+            c.bias,
+            c.headline,
+            JSON.stringify(c.bullets),
+            c.suggestion,
+            source,
+          ]
+        )
+        return NextResponse.json({ ...rowToPayload(inserted.rows[0]), cached: false })
+      } catch (insertErr) {
+        console.error('commentary: DB insert failed', insertErr)
+      }
+    }
 
-    return NextResponse.json({ ...rowToPayload(inserted.rows[0]), cached: false })
+    // DB unavailable — return computed commentary directly so the UI still works.
+    return NextResponse.json({
+      generatedAt: new Date().toISOString(),
+      price: ticker.price,
+      change24h: ticker.change24hPct,
+      bias: c.bias,
+      headline: c.headline,
+      bullets: c.bullets,
+      suggestion: c.suggestion,
+      source,
+      cached: false,
+    })
   } catch (e: any) {
-    return NextResponse.json(
-      { error: 'commentary failed', detail: e?.message ?? 'unknown' },
-      { status: 500 }
-    )
+    console.error('commentary: unexpected error', e)
+    // Even on totally unexpected errors, return the static fallback so the UI shows something.
+    return NextResponse.json({ ...staticFallbackPayload(), cached: false, stale: true })
   }
 }

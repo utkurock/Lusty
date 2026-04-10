@@ -165,7 +165,12 @@ export async function POST(req: Request) {
         })
       )
 
-    // Send swap fee to fee wallet in LUSD (only if fee wallet has LUSD trustline)
+    // Send swap fee to fee wallet.
+    //   1) Preferred: LUSD if the fee wallet has a LUSD trustline.
+    //   2) Fallback: XLM equivalent (no trustline needed for native).
+    //   3) Otherwise: skip and log loudly.
+    let feeSent = false
+    let feeNote: string | undefined
     if (FEE_WALLET && feeInLusd > 0.0000001) {
       try {
         const feeAcc = await server.loadAccount(FEE_WALLET)
@@ -180,9 +185,29 @@ export async function POST(req: Request) {
               amount: feeInLusd.toFixed(7),
             })
           )
+          feeSent = true
+        } else {
+          // Pay equivalent in XLM — works without a trustline.
+          const feeInXlm = feeInLusd / spot
+          if (feeInXlm > 0.0000001) {
+            txBuilder.addOperation(
+              Operation.payment({
+                destination: FEE_WALLET,
+                asset: Asset.native(),
+                amount: feeInXlm.toFixed(7),
+              })
+            )
+            feeSent = true
+            feeNote = `paid ${feeInXlm.toFixed(4)} XLM (no LUSD trustline on fee wallet)`
+          }
         }
-      } catch {
-        // Fee wallet not found — fee stays in distributor
+        if (!feeSent) {
+          feeNote = `FEE_WALLET ${FEE_WALLET} has no LUSD trustline — fee of ${feeInLusd.toFixed(4)} LUSD NOT sent.`
+          console.error('swap:', feeNote)
+        }
+      } catch (feeErr: any) {
+        feeNote = `FEE_WALLET load failed: ${feeErr?.message ?? 'unknown'}`
+        console.error('swap:', feeNote)
       }
     }
 
@@ -220,6 +245,8 @@ export async function POST(req: Request) {
       destAmount: destAmount.toFixed(7),
       payoutHash: (payRes as any).hash,
       spot,
+      feeSent,
+      ...(feeNote ? { feeNote } : {}),
       ...(dbWarning ? { warning: `Leaderboard not updated: ${dbWarning}` } : {}),
     })
   } catch (e: any) {
