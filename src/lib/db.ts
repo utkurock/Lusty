@@ -83,12 +83,20 @@ export async function ensureSchema(): Promise<void> {
     );
   `)
 
-  // Create or replace leaderboard view
+  // (Re)create leaderboard view.
+  // PostgreSQL's `CREATE OR REPLACE VIEW` cannot add/rename/reorder columns
+  // — it only allows changing the underlying query as long as the column
+  // shape is identical. We add columns over time (total_swapped, swap_count,
+  // etc.), so we have to DROP first to avoid:
+  //   "cannot change name of view column ... to ..."
+  // CASCADE so any dependent objects (none today, but be safe) are dropped too.
+  await pool.query(`drop view if exists leaderboard_view cascade`)
+
   // Points formula:
   //   Vault deposits (non-swap): 1× deposited USD + 3× premium earned
   //   Swaps: 0.5× swap volume USD
   await pool.query(`
-    create or replace view leaderboard_view as
+    create view leaderboard_view as
     select
       t.address,
       coalesce(sum(case when t.type = 'deposit' and (t.subtype is null or t.subtype != 'swap') then t.amount end), 0) as total_deposited,
