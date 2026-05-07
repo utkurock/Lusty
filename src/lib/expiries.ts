@@ -16,13 +16,31 @@ export interface ExpiryOption {
 
 const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
-function fridayAfter(date: Date, weeksAhead: number): Date {
-  const d = new Date(date)
-  const dow = d.getDay()
-  const daysUntilFriday = (5 - dow + 7) % 7 || 7
-  d.setDate(d.getDate() + daysUntilFriday + weeksAhead * 7)
-  d.setHours(8, 0, 0, 0)
-  return d
+// No deposits accepted with fewer days than this until the Friday expiry.
+// Prevents last-day rush where users grab a high-decay premium hours before
+// settlement and the vault carries assignment risk it can't price properly.
+export const MIN_DAYS_TO_EXPIRY = 2
+
+/**
+ * Returns the next `count` Friday 08:00 UTC expiries, skipping any Friday
+ * that is closer than MIN_DAYS_TO_EXPIRY days. Always rolls forward — the
+ * front-month expiry is guaranteed to be at least the cutoff away.
+ */
+function nextFridays(from: Date, count: number): Date[] {
+  const cutoff = new Date(from.getTime() + MIN_DAYS_TO_EXPIRY * 24 * 60 * 60 * 1000)
+  const dow = cutoff.getDay()
+  const daysUntilFriday = (5 - dow + 7) % 7
+  const first = new Date(cutoff)
+  first.setDate(first.getDate() + daysUntilFriday)
+  first.setHours(8, 0, 0, 0)
+
+  const out: Date[] = []
+  for (let i = 0; i < count; i++) {
+    const d = new Date(first)
+    d.setDate(d.getDate() + i * 7)
+    out.push(d)
+  }
+  return out
 }
 
 function daysBetween(a: Date, b: Date): number {
@@ -50,7 +68,7 @@ export function getExpiryOptions(
   realStats?: RealVaultStats,
 ): ExpiryOption[] {
   const now = new Date()
-  const weeksAhead = [0, 1, 2]
+  const fridays = nextFridays(now, 3)
 
   // Deterministic-ish utilization per day so UI doesn't jitter every second
   // when we don't have real data yet.
@@ -68,10 +86,9 @@ export function getExpiryOptions(
     : null
   const realDistribution = [1.0, 0.6, 0.3]
 
-  return weeksAhead.map((w, i) => {
-    const date = fridayAfter(now, w)
-    const daysToExpiry = Math.max(1, daysBetween(now, date))
-    const totalEpochDays = 7 + w * 7
+  return fridays.map((date, i) => {
+    const daysToExpiry = Math.max(MIN_DAYS_TO_EXPIRY, daysBetween(now, date))
+    const totalEpochDays = 7 + i * 7
 
     // Cap & utilization: prefer real on-chain data when available.
     const vaultCap = realStats?.vaultCap ?? 5_000_000
@@ -105,8 +122,10 @@ export function getExpiryOptions(
  *
  *   time factor:  APR tapers in the final days of the epoch. Rysk-style time
  *                 decay so short-dated quotes don't spike unrealistically.
- *   util factor:  APR falls as the pool fills (more sellers → cheaper premium)
- *                 and rises when the pool is empty.
+ *   util factor:  Kinked Aave/Compound-style curve. Empty pool boosts APR
+ *                 to attract LPs; once utilization crosses the kink the APR
+ *                 falls hard so late depositors can't crowd into a saturated
+ *                 vault and dilute the realised yield.
  */
 // Reference horizon: the APR shown on the UI is anchored to a 14-day weekly
 // selling window. Shorter residual windows shrink the quoted APR linearly so
@@ -114,8 +133,37 @@ export function getExpiryOptions(
 // actually harvest. 14-day and longer positions see their full BS APR.
 const APR_REFERENCE_DAYS = 14
 
+// Kinked utilization curve parameters.
+//
+// The factor is capped at 1.0 — we never boost APR above the post-fee fair
+// value because the deposit API derives the protocol fee assuming the
+// displayed APR already represents 75% of the BS fair (see route.ts).
+// Boosting above 1.0 double-counts: it inflates the user payout AND the
+// fee paid to FEE_WALLET, causing the vault to leak money on every deposit
+// at low utilization.
+//
+// Curve shape now: empty pool quotes the full fair APR, drifts gently below
+// the kink, then drops convexly so the last 20% of capacity quotes barely
+// anything. Protocol always keeps ≥25% of fair value.
+const UTIL_KINK = 0.80
+const UTIL_AT_EMPTY = 1.00
+const UTIL_AT_KINK = 0.85
+const UTIL_AT_FULL = 0.25
+
+function kinkedUtilFactor(u: number): number {
+  const uc = Math.max(0, Math.min(1, u))
+  if (uc <= UTIL_KINK) {
+    const t = uc / UTIL_KINK
+    return UTIL_AT_EMPTY + (UTIL_AT_KINK - UTIL_AT_EMPTY) * t
+  }
+  const over = (uc - UTIL_KINK) / (1 - UTIL_KINK)
+  // Convex drop above the kink so the last 20% of capacity quotes barely
+  // anything — discourages whales from front-running the cap.
+  return UTIL_AT_KINK + (UTIL_AT_FULL - UTIL_AT_KINK) * Math.pow(over, 1.5)
+}
+
 export function adjustApr(baseApr: number, expiry: ExpiryOption): number {
   const timeFactor = Math.min(1, expiry.daysToExpiry / APR_REFERENCE_DAYS)
-  const utilFactor = 1 + (0.5 - expiry.utilization) * 0.6
+  const utilFactor = kinkedUtilFactor(expiry.utilization)
   return Math.max(0, baseApr * timeFactor * utilFactor)
 }

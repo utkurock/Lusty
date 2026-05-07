@@ -20,7 +20,14 @@ export function Footer() {
           >
             github
           </a>
-          <a href="#" className="hover:text-[#1a1a1a]">twitter</a>
+          <a
+            href="https://x.com/Lustyfinance"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-[#1a1a1a]"
+          >
+            twitter
+          </a>
         </div>
         <div className="font-mono text-xs text-[#6b6560]">testnet</div>
       </div>

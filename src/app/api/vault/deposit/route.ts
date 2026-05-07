@@ -101,6 +101,15 @@ export async function POST(req: Request) {
     ) {
       return NextResponse.json({ error: 'invalid daysToExpiry' }, { status: 400 })
     }
+    // Mirrors expiries.ts MIN_DAYS_TO_EXPIRY — server-side floor so a client
+    // bypassing the UI can't sneak in a same-day deposit and grab decay.
+    const MIN_DAYS = 2
+    if (body.daysToExpiry < MIN_DAYS) {
+      return NextResponse.json(
+        { error: `deposits closed within ${MIN_DAYS} days of expiry` },
+        { status: 409 }
+      )
+    }
     if (
       body.strikePrice !== undefined &&
       (typeof body.strikePrice !== 'number' || !isFinite(body.strikePrice) || body.strikePrice <= 0)
