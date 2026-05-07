@@ -79,7 +79,7 @@ export async function getLeaderboard(
 
   const res = await pool.query(
     `select
-       rank() over (order by points desc) as rank,
+       row_number() over (order by points desc, total_deposited desc, address asc) as rank,
        address,
        points::numeric as points,
        total_deposited::numeric as total_deposited,
@@ -90,7 +90,7 @@ export async function getLeaderboard(
        claim_count::int as claim_count,
        faucet_count::int as faucet_count
      from leaderboard_view
-     order by points desc
+     order by points desc, total_deposited desc, address asc
      limit $1 offset $2`,
     [limit, offset]
   )
@@ -117,7 +117,11 @@ export async function getUserStats(address: string): Promise<LeaderRow | null> {
   const pool = getPool()
   const res = await pool.query(
     `select
-       (select count(*) + 1 from leaderboard_view lv2 where lv2.points > lv.points) as rank,
+       (select count(*) + 1 from leaderboard_view lv2
+          where lv2.points > lv.points
+             or (lv2.points = lv.points and lv2.total_deposited > lv.total_deposited)
+             or (lv2.points = lv.points and lv2.total_deposited = lv.total_deposited and lv2.address < lv.address)
+       ) as rank,
        lv.address,
        lv.points::numeric as points,
        lv.total_deposited::numeric as total_deposited,
