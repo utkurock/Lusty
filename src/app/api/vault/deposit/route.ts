@@ -246,6 +246,11 @@ export async function POST(req: Request) {
     // Both checks share a single DB connection and a single estimate of
     // notional USD (from the still-needed price feed) so we don't hit
     // Binance twice or the database twice for the same deposit.
+    //
+    // Fail-closed: if the DB is unreachable we can't enforce either cap, so
+    // we refuse the deposit (503) instead of waving it through. SCF review
+    // flagged that the previous "non-fatal" handling silently disabled the
+    // protocol's safety bounds whenever the DB was flaky.
     try {
       const { getPool, ensureSchema } = await import('@/lib/db')
       await ensureSchema()
@@ -253,12 +258,25 @@ export async function POST(req: Request) {
 
       // notionalUsd is computed properly below; here we just need an estimate
       // for the limit checks. For puts, paidAmount is already USD-equivalent.
-      const estimatedSpot = body.type === 'call'
-        ? await fetchXlmUsd().catch(() => 0.12)
-        : 1
-      const estimatedNotional = body.type === 'call'
-        ? paidAmount * estimatedSpot
-        : paidAmount
+      // For calls we MUST have a live spot — without it the per-user cap
+      // becomes meaningless, so fail-closed if Binance is also down.
+      let estimatedNotional: number
+      if (body.type === 'call') {
+        const estimatedSpot = await fetchXlmUsd().catch(() => null)
+        if (estimatedSpot === null) {
+          return NextResponse.json(
+            {
+              error:
+                'price feed unavailable — please retry in a few seconds',
+              code: 'price_feed_unavailable',
+            },
+            { status: 503 }
+          )
+        }
+        estimatedNotional = paidAmount * estimatedSpot
+      } else {
+        estimatedNotional = paidAmount
+      }
 
       // Per-user 30-day check
       const userRes = await pool.query(
@@ -281,34 +299,39 @@ export async function POST(req: Request) {
         )
       }
 
-      // Per-strike 14-day check (only if strikePrice was provided)
-      if (typeof body.strikePrice === 'number' && body.strikePrice > 0) {
-        const lo = body.strikePrice * (1 - STRIKE_BUCKET_PCT)
-        const hi = body.strikePrice * (1 + STRIKE_BUCKET_PCT)
-        const strikeRes = await pool.query(
-          `select coalesce(sum(amount), 0)::float as sum
-           from transactions
-           where type = 'deposit'
-             and (subtype is null or subtype != 'swap')
-             and metadata ? 'strikePrice'
-             and (metadata->>'strikePrice')::float8 between $1 and $2
-             and created_at > now() - interval '14 days'`,
-          [lo, hi]
+      // Per-strike 14-day check
+      const lo = body.strikePrice * (1 - STRIKE_BUCKET_PCT)
+      const hi = body.strikePrice * (1 + STRIKE_BUCKET_PCT)
+      const strikeRes = await pool.query(
+        `select coalesce(sum(amount), 0)::float as sum
+         from transactions
+         where type = 'deposit'
+           and (subtype is null or subtype != 'swap')
+           and metadata ? 'strikePrice'
+           and (metadata->>'strikePrice')::float8 between $1 and $2
+           and created_at > now() - interval '14 days'`,
+        [lo, hi]
+      )
+      const existingStrikeNotional = parseFloat(strikeRes.rows[0]?.sum ?? '0')
+      if (existingStrikeNotional + estimatedNotional > STRIKE_INVENTORY_LIMIT_USD) {
+        return NextResponse.json(
+          {
+            error: `strike $${body.strikePrice.toFixed(4)} is full — $${existingStrikeNotional.toFixed(0)} of $${STRIKE_INVENTORY_LIMIT_USD} already sold against this strike. Pick a different strike.`,
+            code: 'strike_limit_exceeded',
+          },
+          { status: 409 }
         )
-        const existingStrikeNotional = parseFloat(strikeRes.rows[0]?.sum ?? '0')
-        if (existingStrikeNotional + estimatedNotional > STRIKE_INVENTORY_LIMIT_USD) {
-          return NextResponse.json(
-            {
-              error: `strike $${body.strikePrice.toFixed(4)} is full — $${existingStrikeNotional.toFixed(0)} of $${STRIKE_INVENTORY_LIMIT_USD} already sold against this strike. Pick a different strike.`,
-              code: 'strike_limit_exceeded',
-            },
-            { status: 409 }
-          )
-        }
       }
     } catch (limitErr) {
-      console.error('vault/deposit: limit check failed', limitErr)
-      // Non-fatal: if DB is down we still allow the deposit rather than block users.
+      console.error('vault/deposit: limit check unavailable', limitErr)
+      return NextResponse.json(
+        {
+          error:
+            'deposit limit check unavailable — please retry in a few seconds',
+          code: 'limit_check_unavailable',
+        },
+        { status: 503 }
+      )
     }
 
     // ---- compute premium in LUSD
