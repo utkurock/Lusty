@@ -196,26 +196,48 @@ export async function POST(req: Request) {
     // the side that takes on short-call exposure. We read the distributor's
     // *current* balance from Horizon (post-deposit) so the check is naturally
     // race-safe: the latest deposit is already included in the balance.
+    //
+    // Fail-closed: if Horizon errors out we cannot prove we're under the
+    // cap, so we refuse the deposit (503) instead of waving it through.
+    // One retry covers the typical transient Horizon hiccup; anything past
+    // that is treated as a real outage and surfaced to the user.
     if (body.type === 'call') {
-      try {
-        const distAcc = await server.loadAccount(LUSD_DISTRIBUTOR)
-        const xlmBalance = parseFloat(
-          distAcc.balances.find((b: any) => b.asset_type === 'native')?.balance ?? '0'
-        )
-        const utilizedXlm = Math.max(0, xlmBalance - VAULT_XLM_BASELINE)
-        if (utilizedXlm > VAULT_CAP_XLM) {
-          return NextResponse.json(
-            {
-              error: `vault cap exceeded — ${utilizedXlm.toFixed(0)}/${VAULT_CAP_XLM.toFixed(0)} XLM utilized. Your collateral was received but no upfront will be paid. Withdraw via support.`,
-              code: 'cap_exceeded',
-            },
-            { status: 409 }
-          )
+      let distAcc: Awaited<ReturnType<typeof server.loadAccount>> | null = null
+      let lastErr: unknown = null
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          distAcc = await server.loadAccount(LUSD_DISTRIBUTOR)
+          break
+        } catch (capErr) {
+          lastErr = capErr
+          if (attempt === 0) {
+            await new Promise((r) => setTimeout(r, 250))
+          }
         }
-      } catch (capErr) {
-        console.error('vault/deposit: cap check failed', capErr)
-        // Fall through — failing the cap check shouldn't block deposits when
-        // Horizon is flaky, but we log it loudly so we notice.
+      }
+      if (!distAcc) {
+        console.error('vault/deposit: cap check unavailable', lastErr)
+        return NextResponse.json(
+          {
+            error:
+              'vault sanity check unavailable — please retry in a few seconds',
+            code: 'cap_check_unavailable',
+          },
+          { status: 503 }
+        )
+      }
+      const xlmBalance = parseFloat(
+        distAcc.balances.find((b: any) => b.asset_type === 'native')?.balance ?? '0'
+      )
+      const utilizedXlm = Math.max(0, xlmBalance - VAULT_XLM_BASELINE)
+      if (utilizedXlm > VAULT_CAP_XLM) {
+        return NextResponse.json(
+          {
+            error: `vault cap exceeded — ${utilizedXlm.toFixed(0)}/${VAULT_CAP_XLM.toFixed(0)} XLM utilized. Your collateral was received but no upfront will be paid. Withdraw via support.`,
+            code: 'cap_exceeded',
+          },
+          { status: 409 }
+        )
       }
     }
 
