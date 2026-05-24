@@ -11,6 +11,7 @@ import {
 import { logTransaction } from '@/lib/db-queries'
 import { rateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
+import { quoteOption } from '@/lib/pricing-server'
 
 const HORIZON =
   process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
@@ -50,10 +51,11 @@ interface DepositBody {
   txHash: string
   type: 'call' | 'put'
   collateralAmount: number
-  apr: number           // percent, e.g. 26.03
+  strikePrice: number      // required — server reprices BS from this
   daysToExpiry: number
-  strikePrice?: number  // needed for points calculation
-  expiryIso?: string    // canonical settlement timestamp; derived if absent
+  expiryIso?: string       // canonical settlement timestamp; derived if absent
+  /** Ignored — kept for legacy clients so they don't 400. Server recomputes. */
+  apr?: number
 }
 
 export async function POST(req: Request) {
@@ -87,14 +89,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'invalid amount' }, { status: 400 })
     }
     if (
-      typeof body.apr !== 'number' ||
-      !isFinite(body.apr) ||
-      body.apr < 0 ||
-      body.apr > 10_000
-    ) {
-      return NextResponse.json({ error: 'invalid apr' }, { status: 400 })
-    }
-    if (
       typeof body.daysToExpiry !== 'number' ||
       !isFinite(body.daysToExpiry) ||
       body.daysToExpiry <= 0 ||
@@ -111,9 +105,12 @@ export async function POST(req: Request) {
         { status: 409 }
       )
     }
+    // Strike is now required: the server reprices Black-Scholes from it,
+    // so it can't be optional any more (no strike → no quote → no payout).
     if (
-      body.strikePrice !== undefined &&
-      (typeof body.strikePrice !== 'number' || !isFinite(body.strikePrice) || body.strikePrice <= 0)
+      typeof body.strikePrice !== 'number' ||
+      !isFinite(body.strikePrice) ||
+      body.strikePrice <= 0
     ) {
       return NextResponse.json({ error: 'invalid strikePrice' }, { status: 400 })
     }
@@ -294,26 +291,41 @@ export async function POST(req: Request) {
 
     // ---- compute premium in LUSD
     //
-    // For covered call: collateral is XLM. We need the USD notional to
-    // derive the premium. Fetch spot from Binance server-side.
-    let notionalUsd: number
-    if (body.type === 'call') {
-      const spot = await fetchXlmUsd()
-      notionalUsd = paidAmount * spot
-    } else {
-      notionalUsd = paidAmount // already USD (LUSD ≈ $1)
+    // Server-canonical premium. Strike and daysToExpiry come from the user
+    // (they're choosing the option, not its price); spot comes from Binance
+    // server-side; everything else flows from quoteOption() — never from any
+    // APR or premium field the client might supply. The previous code
+    // multiplied notionalUsd by a client-supplied APR, which let an
+    // attacker tune APR up to ~10% (capped at 10_000) and drain the
+    // distributor up to the per-call MAX_PREMIUM_LUSD cap on every hit.
+    const spot = await fetchXlmUsd()
+    const notionalUsd =
+      body.type === 'call' ? paidAmount * spot : paidAmount // LUSD ≈ $1
+
+    const quote = quoteOption({
+      side: body.type,
+      spot,
+      strike: body.strikePrice,
+      daysToExpiry: body.daysToExpiry,
+    })
+
+    // Observability only: log when the legacy client APR field differs from
+    // what we'd quote. The server never reads body.apr — this just helps us
+    // notice clients drifting out of sync with pricing changes.
+    if (
+      typeof body.apr === 'number' &&
+      isFinite(body.apr) &&
+      Math.abs(body.apr - quote.apr) / Math.max(quote.apr, 1e-6) > 0.05
+    ) {
+      console.warn('vault/deposit: client APR diverged from server quote', {
+        clientApr: body.apr,
+        serverApr: quote.apr,
+        strike: body.strikePrice,
+        days: body.daysToExpiry,
+      })
     }
 
-    // The frontend already discounted the Black-Scholes fair value by
-    // PROTOCOL_FEE_RATE in pricing.ts before computing the displayed APR,
-    // so `body.apr` represents what the user will actually receive (not the
-    // gross BS APR). We pay that amount directly — no second discount.
-    //
-    // The fee paid to FEE_WALLET is the protocol's edge, derived so that
-    //   user_premium + fee = original BS gross
-    //   ⇒ fee = user_premium × (PROTOCOL_FEE_RATE / (1 − PROTOCOL_FEE_RATE))
-    // For PROTOCOL_FEE_RATE = 0.25, fee ≈ user_premium × 0.3333.
-    const premium = notionalUsd * (body.apr / 100) * (body.daysToExpiry / 365)
+    const premium = notionalUsd * (quote.apr / 100) * (body.daysToExpiry / 365)
     const fee = premium * (PROTOCOL_FEE_RATE / (1 - PROTOCOL_FEE_RATE))
     const grossPremium = premium + fee // == original BS fair value
 
@@ -379,9 +391,10 @@ export async function POST(req: Request) {
           )
           feeSent = true
         } else if (body.type === 'call') {
-          // No LUSD trustline — pay the equivalent in native XLM instead.
-          const spot = await fetchXlmUsd().catch(() => null)
-          if (spot && spot > 0) {
+          // No LUSD trustline — pay the equivalent in native XLM. Reuse
+          // the spot we already fetched for the quote so we don't make a
+          // second round-trip to Binance on the same request.
+          if (spot > 0) {
             const feeInXlm = fee / spot
             if (feeInXlm > 0.0000001) {
               txBuilder.addOperation(
@@ -425,10 +438,13 @@ export async function POST(req: Request) {
         premiumAmount: premium,
         metadata: {
           collateralAmount: paidAmount,
-          strikePrice: body.strikePrice ?? null,
-          apr: body.apr,
+          strikePrice: body.strikePrice,
+          apr: quote.apr,
           daysToExpiry: body.daysToExpiry,
           expiryIso: canonicalExpiryIso,
+          spot,
+          baseIv: quote.baseIv,
+          ivEff: quote.ivEff,
         },
       })
     } catch (dbErr: any) {
