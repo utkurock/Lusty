@@ -43,16 +43,15 @@ export default function DashboardPage() {
     setClaimingId(p.id)
     setToast(null)
     try {
+      // Server reads type/strike/expiry/collateral from the deposit record
+      // it logged at deposit time, so the client only identifies which
+      // position to settle. See /api/vault/claim for the binding logic.
       const res = await fetch('/api/vault/claim', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           address: p.address,
           depositHash: p.depositHash,
-          type: p.type,
-          collateralAmount: p.collateralAmount,
-          strikePrice: p.strikePrice,
-          expiryIso: p.expiryIso,
         }),
       })
       const data = await res.json()
