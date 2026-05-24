@@ -52,6 +52,94 @@ export async function logTransaction(params: LogTxParams) {
   )
 }
 
+// ── Deposit lookup ─────────────────────────────────────────────────
+
+export interface DepositRecord {
+  address: string
+  type: 'call' | 'put'
+  collateralAmount: number
+  strikePrice: number | null
+  expiryIso: string | null
+  apr: number | null
+  daysToExpiry: number | null
+  premiumAmount: number | null
+  createdAt: string
+}
+
+/**
+ * Canonical, server-trusted view of a deposit. Used by the claim endpoint
+ * to bind strike/type/expiry/collateral to what was recorded at deposit
+ * time, instead of trusting whatever the client sends at claim. Returns
+ * null if no row matches (claim should 404 in that case, fail-closed).
+ *
+ * `expiryIso` is read directly from metadata when present (new positions),
+ * otherwise derived from created_at + metadata.daysToExpiry for legacy
+ * positions that pre-date explicit-expiry storage.
+ */
+export async function getDepositRecord(
+  depositHash: string
+): Promise<DepositRecord | null> {
+  if (!depositHash) return null
+  await ensureSchema()
+  const pool = getPool()
+  const res = await pool.query(
+    `select address, subtype, amount, premium_amount, metadata, created_at
+     from transactions
+     where type = 'deposit'
+       and (subtype = 'call' or subtype = 'put')
+       and tx_hash = $1
+     order by created_at asc
+     limit 1`,
+    [depositHash]
+  )
+  if (res.rows.length === 0) return null
+  const r = res.rows[0]
+  const meta = (r.metadata ?? {}) as Record<string, unknown>
+
+  const strikeRaw = meta.strikePrice
+  const strikePrice =
+    typeof strikeRaw === 'number' && isFinite(strikeRaw) ? strikeRaw : null
+
+  const aprRaw = meta.apr
+  const apr =
+    typeof aprRaw === 'number' && isFinite(aprRaw) ? aprRaw : null
+
+  const dteRaw = meta.daysToExpiry
+  const daysToExpiry =
+    typeof dteRaw === 'number' && isFinite(dteRaw) ? dteRaw : null
+
+  const collateralRaw = meta.collateralAmount
+  const collateralAmount =
+    typeof collateralRaw === 'number' && isFinite(collateralRaw)
+      ? collateralRaw
+      : null
+
+  // expiry: prefer the explicit ISO if stored at deposit; fall back to
+  // created_at + daysToExpiry for legacy rows that don't have it.
+  const explicitExpiry =
+    typeof meta.expiryIso === 'string' && meta.expiryIso ? meta.expiryIso : null
+  let expiryIso: string | null = explicitExpiry
+  if (!expiryIso && daysToExpiry !== null) {
+    const createdMs = new Date(r.created_at).getTime()
+    if (isFinite(createdMs)) {
+      expiryIso = new Date(createdMs + daysToExpiry * 86400_000).toISOString()
+    }
+  }
+
+  return {
+    address: r.address,
+    type: r.subtype as 'call' | 'put',
+    collateralAmount:
+      collateralAmount !== null ? collateralAmount : parseFloat(r.amount),
+    strikePrice,
+    expiryIso,
+    apr,
+    daysToExpiry,
+    premiumAmount: r.premium_amount !== null ? parseFloat(r.premium_amount) : null,
+    createdAt: r.created_at,
+  }
+}
+
 // ── Leaderboard ────────────────────────────────────────────────────
 
 export interface LeaderRow {
