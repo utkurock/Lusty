@@ -148,6 +148,9 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
 
       // 3. Ask the server to verify the deposit and drip the upfront.
       setSuccess(`Deposit confirmed · claiming upfront…`)
+      // Server reprices the premium itself from (spot, strike, days, side)
+      // — it ignores any APR the client sends. We omit `apr` from the body
+      // so the wire matches what the server actually trusts.
       const res = await fetch('/api/vault/deposit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -157,7 +160,6 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
           type,
           collateralAmount: amount,
           strikePrice: selectedStrike!.strike,
-          apr,
           daysToExpiry: expiry.daysToExpiry,
           expiryIso: expiry.date.toISOString(),
         }),
