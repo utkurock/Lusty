@@ -81,6 +81,21 @@ export async function ensureSchema(): Promise<void> {
       added_at timestamptz not null default now(),
       label    text
     );
+
+    -- Idempotency ledger: prevents the same on-chain source hash from being
+    -- processed twice by the claim or swap endpoints. The composite primary
+    -- key is the replay guard; UNIQUE alone would also work but PK doubles as
+    -- the lookup index.
+    create table if not exists processed_actions (
+      action_type   text not null check (action_type in ('claim','swap')),
+      source_hash   text not null,
+      reserved_at   timestamptz not null default now(),
+      confirmed_at  timestamptz,
+      payout_hash   text,
+      primary key (action_type, source_hash)
+    );
+    create index if not exists processed_actions_reserved_at_idx
+      on processed_actions (reserved_at desc);
   `)
 
   // (Re)create leaderboard view.
