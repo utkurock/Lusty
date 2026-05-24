@@ -159,6 +159,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
           strikePrice: selectedStrike!.strike,
           apr,
           daysToExpiry: expiry.daysToExpiry,
+          expiryIso: expiry.date.toISOString(),
         }),
       })
       const data = await res.json()

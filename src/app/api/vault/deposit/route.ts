@@ -53,6 +53,7 @@ interface DepositBody {
   apr: number           // percent, e.g. 26.03
   daysToExpiry: number
   strikePrice?: number  // needed for points calculation
+  expiryIso?: string    // canonical settlement timestamp; derived if absent
 }
 
 export async function POST(req: Request) {
@@ -115,6 +116,21 @@ export async function POST(req: Request) {
       (typeof body.strikePrice !== 'number' || !isFinite(body.strikePrice) || body.strikePrice <= 0)
     ) {
       return NextResponse.json({ error: 'invalid strikePrice' }, { status: 400 })
+    }
+    // Canonical expiry timestamp persisted with the deposit. Trust the
+    // client-supplied ISO if it parses and is reasonable; otherwise derive
+    // from daysToExpiry so the claim endpoint always has a definite value.
+    let canonicalExpiryIso: string
+    if (typeof body.expiryIso === 'string' && body.expiryIso) {
+      const t = new Date(body.expiryIso).getTime()
+      if (!isFinite(t) || t <= Date.now()) {
+        return NextResponse.json({ error: 'invalid expiryIso' }, { status: 400 })
+      }
+      canonicalExpiryIso = new Date(t).toISOString()
+    } else {
+      canonicalExpiryIso = new Date(
+        Date.now() + body.daysToExpiry * 86400_000
+      ).toISOString()
     }
     if (!LUSD_ISSUER || !DISTRIBUTOR_SECRET) {
       return NextResponse.json(
@@ -412,6 +428,7 @@ export async function POST(req: Request) {
           strikePrice: body.strikePrice ?? null,
           apr: body.apr,
           daysToExpiry: body.daysToExpiry,
+          expiryIso: canonicalExpiryIso,
         },
       })
     } catch (dbErr: any) {
