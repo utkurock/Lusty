@@ -8,7 +8,7 @@ import {
   Networks,
   BASE_FEE,
 } from '@stellar/stellar-sdk'
-import { logTransaction } from '@/lib/db-queries'
+import { logTransaction, getDepositRecord } from '@/lib/db-queries'
 import { rateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
 import {
@@ -24,13 +24,20 @@ const LUSD_ISSUER = process.env.NEXT_PUBLIC_LUSD_ISSUER ?? ''
 const LUSD_DISTRIBUTOR = process.env.NEXT_PUBLIC_LUSD_DISTRIBUTOR ?? ''
 const DISTRIBUTOR_SECRET = process.env.LUSD_DISTRIBUTOR_SECRET ?? ''
 
+// Server-canonical claim. The client only needs to identify *which* deposit
+// to settle (address + depositHash). Every parameter that affects assignment
+// math — type, strike, expiry, collateral — is read from the deposit row the
+// server recorded at deposit time. Anything the client also sends in these
+// fields is logged for mismatch detection but otherwise ignored.
 interface ClaimBody {
   address: string
   depositHash: string
-  type: 'call' | 'put'
-  collateralAmount: number
-  strikePrice: number
-  expiryIso: string
+  // Optional, ignored — kept in the type so older clients don't break, and
+  // so we can warn on mismatch.
+  type?: 'call' | 'put'
+  collateralAmount?: number
+  strikePrice?: number
+  expiryIso?: string
 }
 
 export async function POST(req: Request) {
@@ -53,27 +60,6 @@ export async function POST(req: Request) {
         { status: 429 }
       )
     }
-    if (body.type !== 'call' && body.type !== 'put') {
-      return NextResponse.json({ error: 'invalid type' }, { status: 400 })
-    }
-    if (typeof body.collateralAmount !== 'number' || body.collateralAmount <= 0) {
-      return NextResponse.json({ error: 'invalid amount' }, { status: 400 })
-    }
-    if (typeof body.strikePrice !== 'number' || body.strikePrice <= 0) {
-      return NextResponse.json({ error: 'invalid strike' }, { status: 400 })
-    }
-
-    // Expiry must be in the past.
-    const expiryMs = new Date(body.expiryIso).getTime()
-    if (!isFinite(expiryMs)) {
-      return NextResponse.json({ error: 'invalid expiry' }, { status: 400 })
-    }
-    if (expiryMs > Date.now()) {
-      return NextResponse.json(
-        { error: 'position not yet expired' },
-        { status: 409 }
-      )
-    }
 
     if (!DISTRIBUTOR_SECRET || !LUSD_ISSUER || !LUSD_DISTRIBUTOR) {
       return NextResponse.json(
@@ -82,9 +68,83 @@ export async function POST(req: Request) {
       )
     }
 
+    // ---- load the server-trusted position
+    //
+    // This is the single source of truth for the position. Replaces the
+    // client-supplied strike / expiry / type / collateral, which an attacker
+    // could otherwise tune to extract upside on an ITM position.
+    const record = await getDepositRecord(body.depositHash)
+    if (!record) {
+      return NextResponse.json(
+        { error: 'deposit record not found' },
+        { status: 404 }
+      )
+    }
+    if (record.address !== body.address) {
+      return NextResponse.json(
+        { error: 'deposit does not belong to this address' },
+        { status: 403 }
+      )
+    }
+    if (record.strikePrice === null || record.strikePrice <= 0) {
+      return NextResponse.json(
+        { error: 'deposit has no strike on record — manual review required' },
+        { status: 409 }
+      )
+    }
+    if (!record.expiryIso) {
+      return NextResponse.json(
+        { error: 'deposit has no expiry on record — manual review required' },
+        { status: 409 }
+      )
+    }
+
+    const type = record.type
+    const collateralAmount = record.collateralAmount
+    const strikePrice = record.strikePrice
+    const expiryIso = record.expiryIso
+
+    // Defense-in-depth: surface (don't enforce, to stay backward-compatible
+    // with older clients) any mismatch between what the client thought the
+    // position was and what the server knows it is. Pure observability — the
+    // server still trusts only its own record.
+    if (
+      (body.type && body.type !== type) ||
+      (typeof body.strikePrice === 'number' &&
+        Math.abs(body.strikePrice - strikePrice) > 1e-6) ||
+      (typeof body.collateralAmount === 'number' &&
+        Math.abs(body.collateralAmount - collateralAmount) > 0.01) ||
+      (body.expiryIso && body.expiryIso !== expiryIso)
+    ) {
+      console.warn('claim: client/server position mismatch', {
+        depositHash: body.depositHash,
+        client: {
+          type: body.type,
+          strike: body.strikePrice,
+          collateral: body.collateralAmount,
+          expiry: body.expiryIso,
+        },
+        server: { type, strike: strikePrice, collateral: collateralAmount, expiry: expiryIso },
+      })
+    }
+
+    // Expiry must be in the past (per server record).
+    const expiryMs = new Date(expiryIso).getTime()
+    if (!isFinite(expiryMs)) {
+      return NextResponse.json({ error: 'invalid expiry on record' }, { status: 500 })
+    }
+    if (expiryMs > Date.now()) {
+      return NextResponse.json(
+        { error: 'position not yet expired' },
+        { status: 409 }
+      )
+    }
+
     const server = new Horizon.Server(HORIZON)
 
-    // Verify the original deposit exists and matches.
+    // Verify the original deposit exists on-chain and matches the recorded
+    // collateral amount. (The DB record already binds address; this guards
+    // against a corrupted/forged DB row pointing at someone else's tx.)
     const depTx = await server
       .transactions()
       .transaction(body.depositHash)
@@ -102,14 +162,14 @@ export async function POST(req: Request) {
       )
     }
     const actualAmount = parseFloat(payment.amount)
-    if (Math.abs(actualAmount - body.collateralAmount) > 0.01) {
+    if (Math.abs(actualAmount - collateralAmount) > 0.01) {
       return NextResponse.json(
-        { error: 'deposit amount mismatch' },
+        { error: 'deposit amount mismatch with on-chain payment' },
         { status: 400 }
       )
     }
 
-    // ---- settle: compare spot at settlement to strike
+    // ---- settle: compare spot at settlement to the server-canonical strike
     const spot = await fetchXlmUsd()
 
     const distributor = Keypair.fromSecret(DISTRIBUTOR_SECRET)
@@ -122,24 +182,24 @@ export async function POST(req: Request) {
     let payoutAsset: Asset
     let payoutAmount: number
     let outcome: 'kept' | 'assigned'
-    if (body.type === 'call') {
-      if (spot <= body.strikePrice) {
+    if (type === 'call') {
+      if (spot <= strikePrice) {
         payoutAsset = xlm
-        payoutAmount = body.collateralAmount
+        payoutAmount = collateralAmount
         outcome = 'kept'
       } else {
         payoutAsset = lusd
-        payoutAmount = body.collateralAmount * body.strikePrice
+        payoutAmount = collateralAmount * strikePrice
         outcome = 'assigned'
       }
     } else {
-      if (spot >= body.strikePrice) {
+      if (spot >= strikePrice) {
         payoutAsset = lusd
-        payoutAmount = body.collateralAmount
+        payoutAmount = collateralAmount
         outcome = 'kept'
       } else {
         payoutAsset = xlm
-        payoutAmount = body.collateralAmount / body.strikePrice
+        payoutAmount = collateralAmount / strikePrice
         outcome = 'assigned'
       }
     }
@@ -203,7 +263,7 @@ export async function POST(req: Request) {
       await logTransaction({
         address: body.address,
         type: 'claim',
-        subtype: body.type,
+        subtype: type,
         amount: payoutAmount,
         asset: payoutAsset.isNative() ? 'XLM' : 'LUSD',
         txHash: (res as any).hash,
@@ -211,7 +271,7 @@ export async function POST(req: Request) {
           depositHash: body.depositHash,
           outcome,
           settlementSpot: spot,
-          strikePrice: body.strikePrice,
+          strikePrice,
         },
       })
     } catch (dbErr: any) {
