@@ -11,6 +11,11 @@ import {
 import { logTransaction } from '@/lib/db-queries'
 import { rateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
+import {
+  reserveAction,
+  releaseAction,
+  confirmAction,
+} from '@/lib/idempotency'
 
 const HORIZON =
   process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
@@ -154,6 +159,19 @@ export async function POST(req: Request) {
       }
     }
 
+    // Replay guard: atomically reserve this depositHash before any payout.
+    // A duplicate request — same hash, after a successful settle — hits the
+    // UNIQUE constraint on processed_actions and is rejected with 409. If
+    // the downstream Horizon submit fails, we release the reservation so the
+    // user can retry; on success we record the payout hash for audit.
+    const reservation = await reserveAction('claim', body.depositHash)
+    if (reservation.alreadyProcessed) {
+      return NextResponse.json(
+        { error: 'deposit already claimed' },
+        { status: 409 }
+      )
+    }
+
     const distAccount = await server.loadAccount(distributor.publicKey())
     const tx = new TransactionBuilder(distAccount, {
       fee: BASE_FEE,
@@ -169,7 +187,15 @@ export async function POST(req: Request) {
       .setTimeout(60)
       .build()
     tx.sign(distributor)
-    const res = await server.submitTransaction(tx as any)
+    let res: Awaited<ReturnType<typeof server.submitTransaction>>
+    try {
+      res = await server.submitTransaction(tx as any)
+    } catch (submitErr) {
+      await releaseAction('claim', body.depositHash)
+      throw submitErr
+    }
+
+    await confirmAction('claim', body.depositHash, (res as any).hash)
 
     // Log claim to database
     let dbWarning: string | undefined
