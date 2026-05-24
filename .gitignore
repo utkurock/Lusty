@@ -31,3 +31,6 @@ yarn-error.log*
 Thumbs.db
 *.swp
 *.swo
+
+# planning notes (local only)
+update.md
