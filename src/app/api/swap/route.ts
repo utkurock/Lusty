@@ -11,6 +11,11 @@ import {
 import { logTransaction } from '@/lib/db-queries'
 import { rateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
+import {
+  reserveAction,
+  releaseAction,
+  confirmAction,
+} from '@/lib/idempotency'
 
 const HORIZON =
   process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
@@ -211,10 +216,30 @@ export async function POST(req: Request) {
       }
     }
 
+    // Replay guard: atomically reserve the user's source txHash before the
+    // distributor payout. Same source hash submitted twice → 409. If Horizon
+    // submit fails, release so the user can retry; on success record the
+    // payout hash for audit.
+    const reservation = await reserveAction('swap', body.txHash)
+    if (reservation.alreadyProcessed) {
+      return NextResponse.json(
+        { error: 'swap already processed for this txHash' },
+        { status: 409 }
+      )
+    }
+
     const payoutTx = txBuilder.setTimeout(60).build()
     payoutTx.sign(distributor)
 
-    const payRes = await server.submitTransaction(payoutTx as any)
+    let payRes: Awaited<ReturnType<typeof server.submitTransaction>>
+    try {
+      payRes = await server.submitTransaction(payoutTx as any)
+    } catch (submitErr) {
+      await releaseAction('swap', body.txHash)
+      throw submitErr
+    }
+
+    await confirmAction('swap', body.txHash, (payRes as any).hash)
 
     // Log swap to database
     let dbWarning: string | undefined
