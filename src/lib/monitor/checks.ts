@@ -129,7 +129,7 @@ function logReturns(closes: number[]): number[] {
   return r
 }
 
-async function fetchCloses(interval: string, limit: number): Promise<number[]> {
+export async function fetchCloses(interval: string, limit: number): Promise<number[]> {
   const url = `https://api.binance.com/api/v3/klines?symbol=XLMUSDT&interval=${interval}&limit=${limit}`
   const res = await fetch(url, { cache: 'no-store' })
   if (!res.ok) throw new Error(`binance klines ${res.status}`)
@@ -140,34 +140,42 @@ async function fetchCloses(interval: string, limit: number): Promise<number[]> {
     .filter((n) => isFinite(n) && n > 0)
 }
 
+/**
+ * Ratio of short-window (last ~1h) annualized realized vol to the 24h
+ * baseline. Shared by the vol-spike alert and the auto-halt trigger so both
+ * read the same number. Returns null if there isn't enough data.
+ */
+export async function computeVolRatio(): Promise<number | null> {
+  // Short window: 60×1m ≈ last hour. Baseline: 24×1h ≈ last day.
+  const [shortCloses, baseCloses] = await Promise.all([
+    fetchCloses('1m', 60),
+    fetchCloses('1h', 24),
+  ])
+  const shortRet = logReturns(shortCloses)
+  const baseRet = logReturns(baseCloses)
+  if (shortRet.length < 10 || baseRet.length < 10) return null
+
+  // Annualize both so the ratio compares like with like.
+  const MIN_PER_YEAR = 525_600
+  const HOURS_PER_YEAR = 8_760
+  const shortVol = stdev(shortRet) * Math.sqrt(MIN_PER_YEAR)
+  const baseVol = stdev(baseRet) * Math.sqrt(HOURS_PER_YEAR)
+  if (baseVol <= 0) return null
+  return shortVol / baseVol
+}
+
 async function checkVolSpike(): Promise<Alert | null> {
   try {
-    // Short window: 60×1m ≈ last hour. Baseline: 24×1h ≈ last day.
-    const [shortCloses, baseCloses] = await Promise.all([
-      fetchCloses('1m', 60),
-      fetchCloses('1h', 24),
-    ])
-    const shortRet = logReturns(shortCloses)
-    const baseRet = logReturns(baseCloses)
-    if (shortRet.length < 10 || baseRet.length < 10) return null
-
-    // Annualize both so the ratio compares like with like.
-    const MIN_PER_YEAR = 525_600
-    const HOURS_PER_YEAR = 8_760
-    const shortVol = stdev(shortRet) * Math.sqrt(MIN_PER_YEAR)
-    const baseVol = stdev(baseRet) * Math.sqrt(HOURS_PER_YEAR)
-    if (baseVol <= 0) return null
-
-    const ratio = shortVol / baseVol
+    const ratio = await computeVolRatio()
+    if (ratio === null) return null
     if (ratio >= VOL_SPIKE_MULT) {
       return {
         severity: 'warning',
         title: 'XLM volatility spike',
         message: `1h realized vol is ${ratio.toFixed(2)}× the 24h baseline (threshold ${VOL_SPIKE_MULT}×). Consider tightening caps or halting deposits.`,
         fields: [
-          { label: '1h_vol_annualized', value: shortVol.toFixed(3) },
-          { label: '24h_vol_annualized', value: baseVol.toFixed(3) },
-          { label: 'ratio', value: ratio.toFixed(2) },
+          { label: 'vol_ratio', value: ratio.toFixed(2) },
+          { label: 'warn_threshold', value: `${VOL_SPIKE_MULT}x` },
         ],
       }
     }

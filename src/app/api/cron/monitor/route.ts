@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { runMonitorChecks } from '@/lib/monitor/checks'
 import { sendAlert } from '@/lib/monitor/notify'
+import { applyAutoBreaker } from '@/lib/monitor/triggers'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -34,6 +35,24 @@ async function handle(req: Request) {
   const alerts = await runMonitorChecks()
   const toDeliver = alerts.filter((a) => a.severity !== 'info')
 
+  // Auto circuit breaker: trip/clear deposits based on the halt conditions
+  // (vol spike, oracle stress, per-epoch loss cap). A state change is itself
+  // a critical alert so operators see the kill-switch flip in real time.
+  const breaker = await applyAutoBreaker()
+  if (breaker.changed) {
+    toDeliver.push({
+      severity: 'critical',
+      title: breaker.state.tripped ? 'Deposits auto-halted' : 'Deposits auto-resumed',
+      message: breaker.state.tripped
+        ? `Circuit breaker tripped automatically. ${breaker.state.reason ?? ''}`
+        : 'Risk conditions normalized — deposits resumed automatically.',
+      fields: breaker.evaluation.reasons.map((r, i) => ({
+        label: `reason_${i + 1}`,
+        value: r,
+      })),
+    })
+  }
+
   const deliveries = await Promise.all(toDeliver.map((a) => sendAlert(a)))
   const delivered = deliveries.filter((d) => d.delivered).length
 
@@ -42,6 +61,11 @@ async function handle(req: Request) {
     checkedAt: new Date().toISOString(),
     triggered: alerts.length,
     delivered,
+    breaker: {
+      tripped: breaker.state.tripped,
+      source: breaker.state.source,
+      changed: breaker.changed,
+    },
     alerts: alerts.map((a) => ({ severity: a.severity, title: a.title })),
   })
 }
