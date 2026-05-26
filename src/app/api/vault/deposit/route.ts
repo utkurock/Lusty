@@ -12,6 +12,7 @@ import { logTransaction } from '@/lib/db-queries'
 import { rateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
 import { quoteOption } from '@/lib/pricing-server'
+import { computeOpenExposure } from '@/lib/vault-state'
 
 const HORIZON =
   process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
@@ -24,10 +25,9 @@ const FEE_WALLET = process.env.FEE_WALLET ?? ''
 // API route to client-side modules. If you change one, change both.
 const PROTOCOL_FEE_RATE = 0.25 // 25% revenue share — see pricing.ts for rationale
 
-// Vault capacity. The total XLM the call vault can absorb above its
-// baseline. New deposits that would push utilization past this cap are
-// rejected so the protocol doesn't take on unbounded short-call exposure.
-const VAULT_XLM_BASELINE = Number(process.env.VAULT_XLM_BASELINE ?? 30000)
+// Vault capacity. The total XLM of open covered-call collateral the vault can
+// carry. New deposits that would push open exposure past this cap are rejected
+// so the protocol doesn't take on unbounded short-call exposure.
 const VAULT_CAP_XLM = Number(process.env.VAULT_CAP_XLM ?? 1_000_000)
 // Per-wallet position cap (in USD notional) — stops a single user from
 // monopolizing the entire vault by stacking back-to-back deposits.
@@ -192,31 +192,24 @@ export async function POST(req: Request) {
 
     // ---- enforce vault cap
     //
-    // The cap is enforced on the call vault's XLM balance because that's
-    // the side that takes on short-call exposure. We read the distributor's
-    // *current* balance from Horizon (post-deposit) so the check is naturally
-    // race-safe: the latest deposit is already included in the balance.
+    // The cap is enforced on open covered-call exposure — the collateral the
+    // vault is still on the hook for — read from the protocol's own record of
+    // unclaimed positions (see vault-state.ts / BUG-1), not the distributor's
+    // raw Horizon balance. The old balance-based check counted faucet XLM,
+    // seed capital and stale test positions as "utilized", which both
+    // mis-reported utilization and tripped this cap off noise.
     //
-    // Fail-closed: if Horizon errors out we cannot prove we're under the
+    // This deposit's own collateral is not in the DB yet (it's logged after
+    // payout), so we add it explicitly to the projected exposure.
+    //
+    // Fail-closed: if the DB is unreachable we cannot prove we're under the
     // cap, so we refuse the deposit (503) instead of waving it through.
-    // One retry covers the typical transient Horizon hiccup; anything past
-    // that is treated as a real outage and surfaced to the user.
     if (body.type === 'call') {
-      let distAcc: Awaited<ReturnType<typeof server.loadAccount>> | null = null
-      let lastErr: unknown = null
-      for (let attempt = 0; attempt < 2; attempt++) {
-        try {
-          distAcc = await server.loadAccount(LUSD_DISTRIBUTOR)
-          break
-        } catch (capErr) {
-          lastErr = capErr
-          if (attempt === 0) {
-            await new Promise((r) => setTimeout(r, 250))
-          }
-        }
-      }
-      if (!distAcc) {
-        console.error('vault/deposit: cap check unavailable', lastErr)
+      let openCallXlm: number
+      try {
+        openCallXlm = (await computeOpenExposure()).callXlm
+      } catch (capErr) {
+        console.error('vault/deposit: cap check unavailable', capErr)
         return NextResponse.json(
           {
             error:
@@ -226,14 +219,11 @@ export async function POST(req: Request) {
           { status: 503 }
         )
       }
-      const xlmBalance = parseFloat(
-        distAcc.balances.find((b: any) => b.asset_type === 'native')?.balance ?? '0'
-      )
-      const utilizedXlm = Math.max(0, xlmBalance - VAULT_XLM_BASELINE)
-      if (utilizedXlm > VAULT_CAP_XLM) {
+      const projectedXlm = openCallXlm + paidAmount
+      if (projectedXlm > VAULT_CAP_XLM) {
         return NextResponse.json(
           {
-            error: `vault cap exceeded — ${utilizedXlm.toFixed(0)}/${VAULT_CAP_XLM.toFixed(0)} XLM utilized. Your collateral was received but no upfront will be paid. Withdraw via support.`,
+            error: `vault cap exceeded — ${projectedXlm.toFixed(0)}/${VAULT_CAP_XLM.toFixed(0)} XLM utilized. Your collateral was received but no upfront will be paid. Withdraw via support.`,
             code: 'cap_exceeded',
           },
           { status: 409 }
