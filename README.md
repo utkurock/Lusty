@@ -8,6 +8,21 @@ DeFi options yield protocol on Stellar. Sell covered calls and cash-secured puts
 
 ---
 
+## Status: where Lusty is today
+
+Lusty today is a **server-settled options venue on Stellar Classic**. Collateral
+is held by a protocol-operated distributor account, pricing and settlement run
+**server-side** against a Binance spot feed, and positions are recorded in a
+database. It is **custodial and pre-audit** — testnet only.
+
+The trustless rebuild — Soroban vault contracts, on-chain settlement, and a
+**Reflector** oracle — is **roadmap work for T2/T3**, not the current
+deployment. Wherever this repo says "on-chain", "trustless", "non-custodial" or
+"oracle-driven", it is describing that target architecture, and those sections
+are labelled as roadmap.
+
+---
+
 ## What is Lusty?
 
 Lusty lets you earn yield by selling options on XLM. You pick a strike price, deposit collateral, and receive LUSD upfront immediately. At expiry, you either get your collateral back or get assigned at the strike you chose — either way, the upfront is yours to keep.

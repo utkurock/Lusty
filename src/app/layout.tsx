@@ -8,7 +8,7 @@ import { AdminOverlay } from '@/components/admin/AdminOverlay'
 
 export const metadata: Metadata = {
   title: 'Lusty — Earn yield upfront',
-  description: 'DeFi options yield protocol on Stellar/Soroban. Sell covered calls and cash-secured puts, receive premium instantly.',
+  description: 'Options yield venue on Stellar. Sell covered calls and cash-secured puts, receive premium upfront. Server-settled today; trustless Soroban rebuild on the roadmap.',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

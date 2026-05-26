@@ -43,6 +43,26 @@ const List = ({ children }: { children: React.ReactNode }) => (
   <ul className="list-disc pl-5 space-y-1.5 my-3">{children}</ul>
 )
 
+// Honest-framing callouts: clearly separate what runs today from the
+// trustless Soroban + Reflector architecture, which is T2/T3 roadmap work.
+const Today = ({ children }: { children: React.ReactNode }) => (
+  <div className="my-4 rounded-lg border-l-4 border-[#1a1a1a] bg-[#f0ece3] p-4 text-[14px] leading-relaxed">
+    <div className="font-mono text-[11px] uppercase tracking-wider text-[#1a1a1a] font-bold mb-1.5">
+      Where Lusty is today
+    </div>
+    {children}
+  </div>
+)
+
+const Roadmap = ({ children }: { children: React.ReactNode }) => (
+  <div className="my-4 rounded-lg border-l-4 border-[#eab308] bg-[#f0ece3] p-4 text-[14px] leading-relaxed">
+    <div className="font-mono text-[11px] uppercase tracking-wider text-[#eab308] font-bold mb-1.5">
+      Roadmap — T2 / T3
+    </div>
+    {children}
+  </div>
+)
+
 const GROUPS: Group[] = [
   {
     id: 'getting-started',
@@ -64,13 +84,21 @@ const GROUPS: Group[] = [
               </div>
             </div>
             <P>
-              Lusty is a <strong>DeFi options yield protocol</strong> built on
-              Stellar and Soroban. It introduces the first fully on-chain
-              primitive for <strong>covered calls</strong> and{' '}
-              <strong>cash-secured puts</strong> on the Stellar ecosystem, giving
-              depositors a transparent, non-custodial way to earn yield by
-              monetizing the volatility of XLM and USDC.
+              Lusty is a <strong>DeFi options yield venue</strong> on Stellar
+              for <strong>covered calls</strong> and{' '}
+              <strong>cash-secured puts</strong>, giving depositors a simple way
+              to earn yield by monetizing the volatility of XLM and USDC.
             </P>
+            <Today>
+              Lusty today runs as a <strong>server-settled venue on Stellar
+              Classic</strong>. Collateral is held by a protocol-operated
+              distributor account; pricing and settlement run server-side
+              against a Binance spot feed; positions are recorded in a database.
+              It is <strong>custodial and pre-audit (testnet only)</strong>. The
+              fully on-chain, non-custodial Soroban version described in the
+              roadmap callouts below is <strong>T2/T3 work</strong>, not the
+              current deployment.
+            </Today>
             <P>
               Lusty makes <strong>option strategies accessible</strong> to anyone
               with a Stellar wallet. You don&apos;t need to understand greeks, manage
@@ -91,11 +119,18 @@ const GROUPS: Group[] = [
               never flowed back to XLM and USDC holders.
             </P>
             <P>
-              Lusty closes that gap. Every position, every strike, every upfront
-              quote and every settlement happens on-chain and is independently
-              verifiable. There are no custodians, no off-chain market makers,
-              and no counterparty credit risk.
+              Lusty closes that gap. The depositor always picks the trade and
+              always sees the math behind the quote — no off-chain market
+              makers, no opaque OTC pricing.
             </P>
+            <Roadmap>
+              The end-state goal is that every position, strike, quote and
+              settlement is on-chain and independently verifiable, with no
+              custodian and no counterparty credit risk. That requires the
+              Soroban vault contracts and Reflector settlement on the roadmap.
+              Until then, settlement is performed server-side by the protocol
+              operator.
+            </Roadmap>
             <H>What you can do on Lusty</H>
             <List>
               <li>
@@ -178,10 +213,11 @@ const GROUPS: Group[] = [
               that the premium they were paid was fair.
             </P>
             <P>
-              Lusty is a direct response to all four of these problems: an
-              on-chain, non-custodial, four-strikes-per-vault, Black-Scholes
-              priced options venue where the depositor always picks the trade
-              and always sees the math.
+              Lusty is a direct response to all four of these problems: a
+              four-strikes-per-vault, Black-Scholes priced options venue where
+              the depositor always picks the trade and always sees the math —
+              server-settled today, with an on-chain, non-custodial rebuild on
+              the roadmap.
             </P>
           </>
         ),
@@ -195,10 +231,12 @@ const GROUPS: Group[] = [
         body: (
           <>
             <P>
-              Lusty V1 ships two product vaults on Stellar/Soroban and a dynamic
+              Lusty V1 ships two product vaults on Stellar and a dynamic
               pricing engine that quotes them in real time. The interface is
               intentionally minimal — the goal is that any user can go from
-              wallet-connect to earning premium in under a minute.
+              wallet-connect to earning premium in under a minute. Today the
+              vaults are operated as server-settled Stellar Classic payments;
+              the Soroban contract implementation is roadmap work.
             </P>
             <H>The two vaults</H>
             <List>
@@ -227,19 +265,27 @@ cash-secured put:  0.85x · 0.70x · 0.55x · 0.40x   (below spot)`}
             <H>Weekly epochs</H>
             <P>
               Every position is written into the current epoch, and every epoch
-              expires at <strong>Friday 08:00 UTC</strong>. Settlement is
-              automatic and on-chain: the Reflector oracle price is read, every
-              position is compared to its strike, and collateral is either
-              returned or converted to the other side. Once an epoch is
-              settled, users can immediately roll into the next one.
+              expires at <strong>Friday 08:00 UTC</strong>. At expiry the
+              settlement spot price is snapshotted, every position is compared
+              to its strike, and collateral is either returned or converted to
+              the other side. Once an epoch is settled, users can immediately
+              roll into the next one.
             </P>
+            <Today>
+              Settlement is performed <strong>server-side</strong> by the
+              protocol operator using the Binance spot price at expiry. On-chain
+              settlement driven by the <strong>Reflector</strong> oracle is
+              roadmap work (T2/T3).
+            </Today>
             <H>Pricing you can verify</H>
             <P>
-              Premiums are quoted by an on-chain Black-Scholes engine with a
-              volatility smile, then adjusted by a transparent dynamic-APR layer
-              that accounts for vault utilization, inventory skew, strike
-              concentration and short-term flow momentum. Every component of
-              the final APR is visible on the research page.
+              Premiums are quoted by a Black-Scholes engine with a volatility
+              smile, then adjusted by a transparent dynamic-APR layer that
+              accounts for vault utilization, inventory skew, strike
+              concentration and short-term flow momentum. The engine runs
+              server-side today (moving on-chain with the Soroban migration),
+              and every component of the final APR is visible on the research
+              page.
             </P>
             <H>Quickstart</H>
             <List>
@@ -283,10 +329,10 @@ cash-secured put:  0.85x · 0.70x · 0.55x · 0.40x   (below spot)`}
             <H>How a position works</H>
             <P>
               You deposit a whole amount of XLM into the vault and select one
-              strike multiplier. The contract computes the gross premium from
+              strike multiplier. The protocol computes the gross premium from
               the Black-Scholes engine, subtracts the 15% revenue share, and
-              transfers the net upfront LUSD into your wallet in the same
-              transaction. Your XLM is then locked into the current epoch until
+              transfers the net upfront LUSD to your wallet once your deposit
+              settles. Your XLM is then locked into the current epoch until
               Friday 08:00 UTC.
             </P>
             <H>Settlement outcomes</H>
@@ -345,7 +391,7 @@ cash-secured put:  0.85x · 0.70x · 0.55x · 0.40x   (below spot)`}
             <H>How a position works</H>
             <P>
               You deposit LUSD into the vault and select one strike multiplier
-              under spot. The contract reserves enough LUSD to buy XLM at your
+              under spot. The protocol reserves enough LUSD to buy XLM at your
               chosen strike, pays you the net upfront, and locks your
               collateral into the epoch until Friday 08:00 UTC.
             </P>
@@ -438,7 +484,7 @@ APR_fair     = fair_prem / S × (365 / days) × 100`}
               </li>
             </List>
             <P>
-              Every component is computed on-chain from public state and is
+              Every component is computed from public protocol state and is
               visible on the <Code>/research</Code> page, so depositors can
               always reconstruct why a strike is quoted at the APR they see.
             </P>
@@ -450,7 +496,7 @@ APR_fair     = fair_prem / S × (365 / days) × 100`}
         icon: '⏱️',
         title: 'Epochs & settlement',
         eyebrow: 'PROTOCOL AND PRODUCT',
-        tagline: 'Weekly, deterministic, oracle-settled.',
+        tagline: 'Weekly, deterministic, server-settled today.',
         body: (
           <>
             <P>
@@ -473,28 +519,31 @@ APR_fair     = fair_prem / S × (365 / days) × 100`}
                 is where spot is trading relative to each strike.
               </li>
               <li>
-                <strong>Expiry:</strong> at Friday 08:00 UTC, a single on-chain
-                transaction reads the Reflector settlement price and snapshots
-                it for the epoch. From that moment on, every position is
-                settleable.
+                <strong>Expiry:</strong> at Friday 08:00 UTC the settlement
+                price is snapshotted for the epoch. From that moment on, every
+                position is settleable.
               </li>
               <li>
-                <strong>Settle &amp; claim:</strong> users call the settle
-                function to release their collateral — in-the-money positions
-                are converted at the strike; out-of-the-money positions are
-                returned as-is. Claims can be rolled directly into the next
-                epoch in one transaction.
+                <strong>Settle &amp; claim:</strong> the depositor claims to
+                release their collateral — in-the-money positions are converted
+                at the strike; out-of-the-money positions are returned as-is.
+                Claims can be rolled directly into the next epoch.
               </li>
             </List>
             <H>Oracle</H>
             <P>
-              Live spot for the UI is streamed from Binance&apos;s public websocket
-              (for responsiveness), but the only price that matters for
-              settlement is the one returned by <strong>Reflector</strong>,
-              Stellar&apos;s native decentralized oracle. The UI never lies about
-              this: wherever a settlement price is shown, it is labelled
-              explicitly as the Reflector price for the given epoch.
+              Both the live UI tape and the settlement price come from{' '}
+              <strong>Binance</strong> today: the public websocket drives the
+              UI, and the server reads the Binance spot price at expiry to
+              settle the epoch.
             </P>
+            <Roadmap>
+              Settlement will move to <strong>Reflector</strong>, Stellar&apos;s
+              native decentralized oracle, alongside the Soroban contracts.
+              At that point the settlement price becomes on-chain and
+              independently verifiable, and the UI will label it explicitly as
+              the Reflector price for the given epoch.
+            </Roadmap>
           </>
         ),
       },
@@ -686,19 +735,37 @@ APR_fair     = fair_prem / S × (365 / days) × 100`}
       {
         id: 'smart-contract',
         icon: '🔐',
-        title: 'Smart contract risk',
+        title: 'Custody & contract risk',
         eyebrow: 'RISK',
-        tagline: 'Testnet only until audited — please read this carefully.',
+        tagline: 'Custodial and server-settled today — please read this carefully.',
         body: (
           <>
+            <Today>
+              There are <strong>no Soroban smart contracts deployed yet</strong>.
+              Today Lusty is <strong>custodial</strong>: your deposit is sent to
+              a protocol-operated distributor account, and pricing, settlement
+              and payouts are executed <strong>server-side</strong>. You are
+              trusting the Lusty operator to settle and return collateral
+              correctly. This is testnet only, with test XLM and test USDC that
+              have no real value.
+            </Today>
             <P>
-              Lusty is in active testnet development on Soroban. The Soroban
-              contracts have been written in-house, reviewed internally, and
-              exercised with unit and property tests, but they have{' '}
-              <strong>not yet been externally audited</strong>. Until that audit
-              is complete and the audit report is published on this page, you
-              should assume the contracts may contain bugs.
+              Because settlement is server-side, the main risks today are{' '}
+              <strong>operator risk</strong> (the distributor account and the
+              settlement server) and ordinary web-application risk, rather than
+              smart-contract bugs. We have hardened the API surface (server-side
+              repricing, server-canonical strike binding, replay protection,
+              fail-closed caps), but a custodial server is a trust assumption
+              you should weigh.
             </P>
+            <Roadmap>
+              The Soroban vault, pricing and settlement contracts are{' '}
+              <strong>in development</strong>. When they ship they will be
+              externally audited before any mainnet launch, followed by a bug
+              bounty, and contract upgrades will sit behind a timelock. Until
+              the audit report is published on this page, assume the eventual
+              contracts may contain bugs.
+            </Roadmap>
             <H>What this means for you</H>
             <List>
               <li>
@@ -745,24 +812,29 @@ APR_fair     = fair_prem / S × (365 / days) × 100`}
               meaningful dependency the protocol and the frontend currently
               rely on. If something is not on this list, Lusty does not use it.
             </P>
-            <H>Blockchain</H>
+            <H>Blockchain (today)</H>
             <List>
               <li>
-                <strong>Stellar</strong> — settlement layer for all collateral
-                and LUSD upfront transfers.
+                <strong>Stellar Classic</strong> — settlement layer for all
+                collateral and LUSD upfront transfers, via a protocol-operated
+                distributor account.
               </li>
               <li>
+                <strong>Binance API</strong> — server-side spot price used for
+                pricing and settlement, plus a public websocket for the live UI
+                tape.
+              </li>
+            </List>
+            <H>Blockchain (roadmap — T2/T3)</H>
+            <List>
+              <li>
                 <strong>Soroban</strong> — Stellar&apos;s smart-contract runtime;
-                all Lusty contracts (vaults, pricing, settlement) are written
-                in Rust and compiled to Soroban.
+                the Lusty vault, pricing and settlement contracts are in
+                development in Rust, not yet deployed.
               </li>
               <li>
                 <strong>Reflector</strong> — decentralized Stellar-native oracle
-                used for on-chain settlement prices at epoch expiry.
-              </li>
-              <li>
-                <strong>Binance public websocket</strong> — used <em>only</em>{' '}
-                as a live UI tape; it never influences settlement.
+                planned for on-chain settlement prices at epoch expiry.
               </li>
             </List>
             <H>Smart-contract tooling</H>
@@ -992,17 +1064,22 @@ Cash-secured put     :  TBD — deploying before mainnet`}
               documentation are informational only. You are solely responsible
               for your own decisions.
             </P>
-            <H>3. Non-custodial</H>
+            <H>3. Custody</H>
             <P>
-              Lusty does not custody user funds. All deposits are held by
-              Soroban smart contracts that the user interacts with directly.
-              The Lusty team cannot freeze, reverse or seize user positions.
+              During the current server-settled testnet phase, Lusty is{' '}
+              <strong>custodial</strong>: deposits are held by a
+              protocol-operated distributor account and settlement is executed
+              server-side. You are trusting the Lusty operator to settle and
+              return collateral correctly. The non-custodial model — collateral
+              held by Soroban contracts the user interacts with directly, with
+              no ability for the team to freeze or seize positions — is a
+              roadmap target that arrives with the Soroban migration.
             </P>
             <H>4. Assignment &amp; settlement</H>
             <P>
               By depositing into any vault you explicitly accept that your
               collateral may be converted to the opposite asset at the selected
-              strike if the oracle price at Friday 08:00 UTC meets the
+              strike if the settlement price at Friday 08:00 UTC meets the
               assignment condition. This is the core product behaviour and is
               not a bug.
             </P>
