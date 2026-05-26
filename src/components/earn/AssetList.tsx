@@ -2,11 +2,21 @@
 import { useState } from 'react'
 import { AssetRow } from './AssetRow'
 import { cn } from '@/lib/utils'
+import { useVaultStats } from '@/hooks/useVaultStats'
 
 type Tab = 'calls' | 'puts'
 
 export function AssetList() {
   const [tab, setTab] = useState<Tab>('calls')
+  const { stats } = useVaultStats()
+  // The vault cap is on covered-call XLM exposure, so gating applies to the
+  // calls entry point only. Block it when the vault is at/over cap so a user
+  // can't reach the strike selector, sign a deposit, lock collateral on-chain,
+  // and only then hit the server's 409 cap rejection (BUG-2). The metric is
+  // now the real open exposure (BUG-1), so "full" is no longer a false
+  // positive off wallet-balance noise.
+  const callsFull =
+    !!stats && stats.capXlm > 0 && stats.utilizedXlm >= stats.capXlm
 
   return (
     <div className="terminal-card rounded-sm overflow-hidden">
@@ -51,6 +61,8 @@ export function AssetList() {
             maxAPR={113.4}
             minAPR={24.1}
             href="/earn/xlm"
+            disabled={callsFull}
+            disabledReason="Vault full"
           />
         ) : (
           <AssetRow

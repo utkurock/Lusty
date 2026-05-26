@@ -93,6 +93,20 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
     return notionalUsd * (apr / 100) * (expiry.daysToExpiry / 365)
   }, [selectedStrike, expiry, amount, xlmPrice, apr, type])
 
+  // Double-check the vault cap in the UI (the AssetList entry point already
+  // gates this, but a user can deep-link straight to /earn/xlm). The cap is on
+  // covered-call XLM exposure, so it only applies to the call vault. Blocking
+  // here stops the user from signing a deposit that the server will reject
+  // with a 409 *after* their collateral is already locked on-chain (BUG-2).
+  const vaultFull = useMemo(
+    () =>
+      type === 'call' &&
+      !!vaultStats &&
+      vaultStats.capXlm > 0 &&
+      vaultStats.utilizedXlm >= vaultStats.capXlm,
+    [type, vaultStats],
+  )
+
   const minAmount =
     type === 'call' ? MIN_DEPOSIT_XLM : MIN_DEPOSIT_XLM * (xlmPrice || 0.1)
   const maxAmount =
@@ -103,6 +117,10 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
   const handleEarn = async () => {
     setError(null); setSuccess(null)
     if (!connected) { await connect(); return }
+    if (vaultFull) {
+      setError('Vault is full — the covered-call cap is reached. Try again next epoch.')
+      return
+    }
     if (amount <= 0) { setError('Enter an amount'); return }
     if (amount < minAmount) {
       setError(`Minimum deposit is ${minAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${type === 'call' ? assetSymbol : stable}`)
@@ -370,11 +388,25 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
         </div>
       )}
 
+      {vaultFull && (
+        <div className="p-3 border border-[#eab308]/40 bg-[#eab308]/10 font-mono text-xs text-[#1a1a1a] rounded-sm">
+          Covered-call vault is full for this epoch — deposits are paused until
+          the cap frees up. Your collateral would be rejected, so the button is
+          disabled.
+        </div>
+      )}
+
       <EarnButton
         onClick={handleEarn}
         loading={txLoading}
-        disabled={amount <= 0 || amount < minAmount || amount > maxAmount}
-        label={connected ? 'Earn upfront now' : 'Connect wallet to earn'}
+        disabled={vaultFull || amount <= 0 || amount < minAmount || amount > maxAmount}
+        label={
+          vaultFull
+            ? 'Vault full'
+            : connected
+              ? 'Earn upfront now'
+              : 'Connect wallet to earn'
+        }
       />
     </div>
   )
