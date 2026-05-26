@@ -676,6 +676,114 @@ APR_fair     = fair_prem / S × (365 / days) × 100`}
           </>
         ),
       },
+      {
+        id: 'lusd',
+        icon: '🪙',
+        title: 'LUSD stablecoin',
+        eyebrow: 'PROTOCOL AND PRODUCT',
+        tagline: 'What LUSD is, how it is issued and redeemed, and what backs it.',
+        body: (
+          <>
+            <P>
+              <strong>LUSD</strong> is the unit of account inside Lusty. It is
+              the asset you receive as your upfront premium, the collateral for
+              the cash-secured put vault, and one side of the{' '}
+              <Code>XLM ↔ LUSD</Code> swap. It is a Stellar asset issued by the
+              Lusty issuer account and is intended to track <strong>1 USD</strong>.
+            </P>
+            <Today>
+              On testnet, LUSD is a <strong>faucet-issued test token with no
+              real-world backing</strong>. The 1:1 USD value is a convention for
+              pricing and accounting, not a redeemable claim on reserves. Do not
+              treat testnet LUSD as money — it exists so users can exercise the
+              full deposit → premium → settle → swap loop without real funds.
+            </Today>
+
+            <H>Issuance (mint)</H>
+            <P>
+              LUSD is minted by the <strong>issuer account</strong> and
+              distributed from the <strong>distributor account</strong>. On
+              testnet, new LUSD enters circulation through three paths:
+            </P>
+            <List>
+              <li>
+                <strong>Faucet:</strong> the <Code>/api/faucet/lusd</Code>{' '}
+                endpoint sends test LUSD to a user so they can try the put vault
+                and swap.
+              </li>
+              <li>
+                <strong>Upfront premium:</strong> when you open a position, the
+                net premium is paid to you in LUSD from the distributor.
+              </li>
+              <li>
+                <strong>Swap:</strong> swapping XLM into LUSD draws LUSD from the
+                distributor at the live Binance spot price.
+              </li>
+            </List>
+
+            <H>Redemption (burn / exit)</H>
+            <P>
+              There is no fiat redemption window. You exit LUSD the same way you
+              entered it — by <strong>swapping LUSD back to XLM</strong> through
+              the <Code>/swap</Code> page at the live spot price (0.1% spread),
+              or by holding it as put-vault collateral until settlement. LUSD
+              returned to the distributor is held there; the issuer can burn
+              supply by clawing returned LUSD back to the issuer account.
+            </P>
+
+            <H>Reserve & backing</H>
+            <P>
+              The peg is maintained operationally, not by an over-collateralized
+              reserve:
+            </P>
+            <List>
+              <li>
+                <strong>Testnet (today):</strong> no reserve. LUSD is
+                faucet-issued and priced at 1 USD by convention. The swap is the
+                only price-discovery surface, and it quotes against the Binance
+                XLM/USD feed.
+              </li>
+              <li>
+                <strong>Mainnet (planned):</strong> LUSD upfront and swap
+                liquidity is intended to be backed by a{' '}
+                <strong>USDC reserve</strong> held by the protocol, with the
+                reserve ratio and attestation method documented here before any
+                mainnet launch.
+              </li>
+            </List>
+            <Roadmap>
+              The trust-minimized design — LUSD mint/burn governed by a Soroban
+              contract against an on-chain USDC reserve, with a verifiable
+              reserve ratio — arrives with the Soroban migration (T2/T3). Until
+              then, supply and reserve are operator-controlled.
+            </Roadmap>
+
+            <H>Stress scenarios</H>
+            <List>
+              <li>
+                <strong>Distributor drained:</strong> if the distributor runs
+                low on LUSD or XLM, swaps and premium payouts in that direction
+                are paused rather than partially filled. Caps and the per-epoch
+                limits exist to keep payout obligations inside the distributor
+                balance.
+              </li>
+              <li>
+                <strong>Peg break:</strong> because testnet LUSD has no reserve,
+                its &quot;value&quot; is purely the swap rate. If the swap is paused,
+                LUSD cannot be marked to USD until it resumes. On mainnet, a peg
+                deviation would be defended by the USDC reserve and, failing
+                that, by halting new issuance.
+              </li>
+              <li>
+                <strong>Price feed down:</strong> if the Binance feed is
+                unreachable, deposits, claims and swaps are rejected (no stale
+                fallback price), so no LUSD is minted or redeemed at a wrong
+                rate while the peg reference is unavailable.
+              </li>
+            </List>
+          </>
+        ),
+      },
     ],
   },
   {

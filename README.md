@@ -67,7 +67,7 @@ LUSD distributor   GBAIN6CHZJGBL365JNXSRQEKALXYTWKXANQZ3RBM7AGUEYYKLJJ6SNR6
 USDC (SAC)         CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA
 ```
 
-**LUSD** is a testnet stablecoin (pegged 1:1 to USD) minted by the Lusty protocol. It is used for upfront payments, put vault collateral, and swap liquidity.
+**LUSD** is the protocol's unit of account, used for upfront payments, put vault collateral, and swap liquidity. On testnet it is a **faucet-issued test token with no real-world backing** — the 1:1 USD value is a pricing convention, not a redeemable claim on reserves. A USDC-backed reserve model is planned for mainnet. Full mint/redemption/reserve/stress details: **Docs → LUSD stablecoin**.
 
 ## Pricing model
 
