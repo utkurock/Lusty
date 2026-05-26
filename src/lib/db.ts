@@ -96,6 +96,21 @@ export async function ensureSchema(): Promise<void> {
     );
     create index if not exists processed_actions_reserved_at_idx
       on processed_actions (reserved_at desc);
+
+    -- Circuit breaker: a single-row kill-switch for new deposits (P1-8).
+    -- When tripped, the deposit endpoint fails closed (503). Can be set
+    -- manually by an admin or automatically by a future risk trigger
+    -- (vol spike / oracle stress / per-epoch loss cap).
+    create table if not exists circuit_breaker (
+      id          integer primary key default 1 check (id = 1),
+      tripped     boolean not null default false,
+      reason      text,
+      source      text not null default 'manual' check (source in ('manual','auto')),
+      updated_by  text,
+      updated_at  timestamptz not null default now()
+    );
+    insert into circuit_breaker (id, tripped) values (1, false)
+      on conflict (id) do nothing;
   `)
 
   // (Re)create leaderboard view.

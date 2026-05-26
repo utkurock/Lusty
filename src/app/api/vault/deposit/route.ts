@@ -13,6 +13,7 @@ import { rateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
 import { quoteOption } from '@/lib/pricing-server'
 import { computeOpenExposure } from '@/lib/vault-state'
+import { getBreakerState } from '@/lib/circuit-breaker'
 
 const HORIZON =
   process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
@@ -133,6 +134,35 @@ export async function POST(req: Request) {
       return NextResponse.json(
         { error: 'vault not configured on the server' },
         { status: 500 }
+      )
+    }
+
+    // ---- circuit breaker (P1-8)
+    //
+    // Halt new deposits when the breaker is tripped (manually by an admin, or
+    // automatically by a risk trigger). Checked before any on-chain work so we
+    // reject the user *before* they sign and lock collateral. Fail-closed: if
+    // we can't read the breaker state we cannot prove deposits are allowed, so
+    // we refuse rather than wave through.
+    try {
+      const breaker = await getBreakerState()
+      if (breaker.tripped) {
+        return NextResponse.json(
+          {
+            error: `deposits are paused${breaker.reason ? ` — ${breaker.reason}` : ''}. Please try again later.`,
+            code: 'circuit_breaker_open',
+          },
+          { status: 503 }
+        )
+      }
+    } catch (breakerErr) {
+      console.error('vault/deposit: breaker check unavailable', breakerErr)
+      return NextResponse.json(
+        {
+          error: 'deposit safety check unavailable — please retry in a few seconds',
+          code: 'breaker_check_unavailable',
+        },
+        { status: 503 }
       )
     }
 
