@@ -1,16 +1,21 @@
 'use client'
+import { useState } from 'react'
 import { useXlmPrice } from '@/hooks/useXlmPrice'
 import { useVaultStats } from '@/hooks/useVaultStats'
 import { CapProgress } from '@/components/earn/CapProgress'
-import { AssetList } from '@/components/earn/AssetList'
+import { AssetList, type Tab } from '@/components/earn/AssetList'
 import { formatUsdc } from '@/lib/utils'
 import { TrendingUp, TrendingDown } from 'lucide-react'
 
 export default function EarnPage() {
   const { price, change24h, loading } = useXlmPrice()
   const { stats: vaultStats } = useVaultStats(30_000)
+  const [tab, setTab] = useState<Tab>('calls')
 
   const positive = change24h >= 0
+  // Each side has its own independent per-epoch utilization; show the bar that
+  // matches the active tab (call → XLM cap, put → USD cap).
+  const side = tab === 'calls' ? vaultStats?.call : vaultStats?.put
 
   return (
     <div className="max-w-7xl mx-auto px-6 py-10 space-y-10">
@@ -52,15 +57,21 @@ export default function EarnPage() {
         </div>
       </section>
 
-      {vaultStats && (
+      {side && (
         <section>
-          <div className="font-mono text-xs uppercase text-[#6b6560] mb-2">Current epoch utilization</div>
-          <CapProgress utilized={vaultStats.utilizedXlm} cap={vaultStats.capXlm} />
+          <div className="font-mono text-xs uppercase text-[#6b6560] mb-2">
+            Current epoch utilization — {tab === 'calls' ? 'covered calls' : 'cash secured puts'}
+          </div>
+          <CapProgress
+            utilized={side.utilized}
+            cap={side.cap}
+            unit={tab === 'calls' ? 'XLM' : 'USD'}
+          />
         </section>
       )}
 
       <section>
-        <AssetList />
+        <AssetList tab={tab} onTabChange={setTab} />
       </section>
     </div>
   )

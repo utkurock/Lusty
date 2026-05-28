@@ -1,7 +1,20 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
 
+export interface VaultSideStats {
+  /** Amount sold this epoch (XLM for calls, USD for puts). */
+  utilized: number
+  /** Per-epoch cap (XLM for calls, USD for puts). */
+  cap: number
+  utilizationPct: number
+}
+
 export interface VaultStatsPayload {
+  // Per-epoch, per-side utilization.
+  call: VaultSideStats
+  put: VaultSideStats
+  epoch: { start: string; end: string; index: number; monthKey: string }
+  // Back-compat aliases (call side).
   utilizedXlm: number
   capXlm: number
   utilizationPct: number
@@ -27,6 +40,17 @@ export function useVaultStats(intervalMs = 30_000) {
       const d = await res.json()
       if (d.ok) {
         setStats({
+          call: {
+            utilized: d.call?.utilizedXlm ?? d.utilizedXlm ?? 0,
+            cap: d.call?.capXlm ?? d.capXlm ?? 0,
+            utilizationPct: d.call?.utilizationPct ?? d.utilizationPct ?? 0,
+          },
+          put: {
+            utilized: d.put?.utilizedUsd ?? 0,
+            cap: d.put?.capUsd ?? 0,
+            utilizationPct: d.put?.utilizationPct ?? 0,
+          },
+          epoch: d.epoch ?? { start: '', end: '', index: 0, monthKey: '' },
           utilizedXlm: d.utilizedXlm,
           capXlm: d.capXlm,
           utilizationPct: d.utilizationPct,

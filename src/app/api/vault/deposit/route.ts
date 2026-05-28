@@ -12,7 +12,11 @@ import { logTransaction } from '@/lib/db-queries'
 import { rateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
 import { quoteOption } from '@/lib/pricing-server'
-import { computeOpenExposure } from '@/lib/vault-state'
+import {
+  computeEpochFlow,
+  CALL_EPOCH_CAP_XLM,
+  PUT_EPOCH_CAP_USD,
+} from '@/lib/vault-state'
 import { getBreakerState } from '@/lib/circuit-breaker'
 
 const HORIZON =
@@ -26,10 +30,11 @@ const FEE_WALLET = process.env.FEE_WALLET ?? ''
 // API route to client-side modules. If you change one, change both.
 const PROTOCOL_FEE_RATE = 0.25 // 25% revenue share — see pricing.ts for rationale
 
-// Vault capacity. The total XLM of open covered-call collateral the vault can
-// carry. New deposits that would push open exposure past this cap are rejected
-// so the protocol doesn't take on unbounded short-call exposure.
-const VAULT_CAP_XLM = Number(process.env.VAULT_CAP_XLM ?? 1_000_000)
+// Vault capacity is enforced per epoch and per side (CALL_EPOCH_CAP_XLM /
+// PUT_EPOCH_CAP_USD from vault-state.ts): the monthly budget for each book
+// divided across the three epochs in a month. New deposits that would push the
+// current epoch's flow past its side's cap are rejected, so the book fills
+// gradually and the limit resets each epoch.
 // Per-wallet position cap (in USD notional) — stops a single user from
 // monopolizing the entire vault by stacking back-to-back deposits.
 const MAX_USER_NOTIONAL_USD = Number(process.env.MAX_USER_NOTIONAL_USD ?? 50_000)
@@ -220,24 +225,24 @@ export async function POST(req: Request) {
       )
     }
 
-    // ---- enforce vault cap
+    // ---- enforce per-epoch vault cap
     //
-    // The cap is enforced on open covered-call exposure — the collateral the
-    // vault is still on the hook for — read from the protocol's own record of
-    // unclaimed positions (see vault-state.ts / BUG-1), not the distributor's
-    // raw Horizon balance. The old balance-based check counted faucet XLM,
-    // seed capital and stale test positions as "utilized", which both
-    // mis-reported utilization and tripped this cap off noise.
+    // The cap is enforced on the *current epoch's flow* — how much each side
+    // has sold this epoch — read from the protocol's own record of deposits
+    // (see vault-state.ts / computeEpochFlow), not the distributor's raw
+    // Horizon balance. It resets every epoch and tracks each side
+    // independently: call exposure in XLM, put exposure in USD notional.
     //
     // This deposit's own collateral is not in the DB yet (it's logged after
-    // payout), so we add it explicitly to the projected exposure.
+    // payout), so we add it explicitly to the projected flow. For puts the
+    // collateral is LUSD ≈ $1, so paidAmount is already the USD notional.
     //
     // Fail-closed: if the DB is unreachable we cannot prove we're under the
     // cap, so we refuse the deposit (503) instead of waving it through.
-    if (body.type === 'call') {
-      let openCallXlm: number
+    {
+      let flow
       try {
-        openCallXlm = (await computeOpenExposure()).callXlm
+        flow = await computeEpochFlow()
       } catch (capErr) {
         console.error('vault/deposit: cap check unavailable', capErr)
         return NextResponse.json(
@@ -249,15 +254,28 @@ export async function POST(req: Request) {
           { status: 503 }
         )
       }
-      const projectedXlm = openCallXlm + paidAmount
-      if (projectedXlm > VAULT_CAP_XLM) {
-        return NextResponse.json(
-          {
-            error: `vault cap exceeded — ${projectedXlm.toFixed(0)}/${VAULT_CAP_XLM.toFixed(0)} XLM utilized. Your collateral was received but no upfront will be paid. Withdraw via support.`,
-            code: 'cap_exceeded',
-          },
-          { status: 409 }
-        )
+      if (body.type === 'call') {
+        const projectedXlm = flow.callXlm + paidAmount
+        if (projectedXlm > CALL_EPOCH_CAP_XLM) {
+          return NextResponse.json(
+            {
+              error: `covered-call vault cap exceeded for this epoch — ${projectedXlm.toFixed(0)}/${CALL_EPOCH_CAP_XLM.toFixed(0)} XLM utilized. Your collateral was received but no upfront will be paid. Withdraw via support.`,
+              code: 'cap_exceeded',
+            },
+            { status: 409 }
+          )
+        }
+      } else {
+        const projectedUsd = flow.putUsd + paidAmount
+        if (projectedUsd > PUT_EPOCH_CAP_USD) {
+          return NextResponse.json(
+            {
+              error: `cash-secured-put vault cap exceeded for this epoch — $${projectedUsd.toFixed(0)}/$${PUT_EPOCH_CAP_USD.toFixed(0)} utilized. Your collateral was received but no upfront will be paid. Withdraw via support.`,
+              code: 'cap_exceeded',
+            },
+            { status: 409 }
+          )
+        }
       }
     }
 

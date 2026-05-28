@@ -29,15 +29,23 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
   const pricePositive = change24h >= 0
   const [txLoading, setTxLoading] = useState(false)
 
-  // Convert /api/vault/stats numbers (XLM) into a USD-denominated cap/util
-  // pair so the same expiries.ts code works for call and put vaults.
+  // Feed the dynamic APR engine a USD-denominated cap/util pair for the side
+  // being traded. The call vault is denominated in XLM (convert via spot); the
+  // put vault is already in USD, so it's passed straight through.
   const realStats = useMemo(() => {
-    if (!vaultStats || !xlmPrice) return undefined
-    return {
-      totalDeposited: vaultStats.utilizedXlm * xlmPrice,
-      vaultCap: vaultStats.capXlm * xlmPrice,
+    if (!vaultStats) return undefined
+    if (type === 'call') {
+      if (!xlmPrice) return undefined
+      return {
+        totalDeposited: vaultStats.call.utilized * xlmPrice,
+        vaultCap: vaultStats.call.cap * xlmPrice,
+      }
     }
-  }, [vaultStats, xlmPrice])
+    return {
+      totalDeposited: vaultStats.put.utilized,
+      vaultCap: vaultStats.put.cap,
+    }
+  }, [vaultStats, xlmPrice, type])
 
   // Expiries derived from real on-chain utilization when available so the
   // dynamic APR engine drops the offered APR as the vault fills up.
@@ -94,18 +102,15 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
   }, [selectedStrike, expiry, amount, xlmPrice, apr, type])
 
   // Double-check the vault cap in the UI (the AssetList entry point already
-  // gates this, but a user can deep-link straight to /earn/xlm). The cap is on
-  // covered-call XLM exposure, so it only applies to the call vault. Blocking
-  // here stops the user from signing a deposit that the server will reject
-  // with a 409 *after* their collateral is already locked on-chain (BUG-2).
-  const vaultFull = useMemo(
-    () =>
-      type === 'call' &&
-      !!vaultStats &&
-      vaultStats.capXlm > 0 &&
-      vaultStats.utilizedXlm >= vaultStats.capXlm,
-    [type, vaultStats],
-  )
+  // gates this, but a user can deep-link straight to /earn/xlm). Each side has
+  // its own per-epoch cap. Blocking here stops the user from signing a deposit
+  // that the server will reject with a 409 *after* their collateral is already
+  // locked on-chain (BUG-2).
+  const vaultFull = useMemo(() => {
+    if (!vaultStats) return false
+    const s = type === 'call' ? vaultStats.call : vaultStats.put
+    return s.cap > 0 && s.utilized >= s.cap
+  }, [type, vaultStats])
 
   const minAmount =
     type === 'call' ? MIN_DEPOSIT_XLM : MIN_DEPOSIT_XLM * (xlmPrice || 0.1)
@@ -118,7 +123,9 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
     setError(null); setSuccess(null)
     if (!connected) { await connect(); return }
     if (vaultFull) {
-      setError('Vault is full — the covered-call cap is reached. Try again next epoch.')
+      setError(
+        `Vault is full — the ${type === 'call' ? 'covered-call' : 'cash-secured-put'} cap for this epoch is reached. Try again next epoch.`
+      )
       return
     }
     if (amount <= 0) { setError('Enter an amount'); return }
@@ -390,9 +397,9 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
 
       {vaultFull && (
         <div className="p-3 border border-[#eab308]/40 bg-[#eab308]/10 font-mono text-xs text-[#1a1a1a] rounded-sm">
-          Covered-call vault is full for this epoch — deposits are paused until
-          the cap frees up. Your collateral would be rejected, so the button is
-          disabled.
+          {type === 'call' ? 'Covered-call' : 'Cash-secured-put'} vault is full
+          for this epoch — deposits are paused until the next epoch resets the
+          cap. Your collateral would be rejected, so the button is disabled.
         </div>
       )}
 

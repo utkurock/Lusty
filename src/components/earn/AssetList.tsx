@@ -1,22 +1,26 @@
 'use client'
-import { useState } from 'react'
 import { AssetRow } from './AssetRow'
 import { cn } from '@/lib/utils'
 import { useVaultStats } from '@/hooks/useVaultStats'
 
-type Tab = 'calls' | 'puts'
+export type Tab = 'calls' | 'puts'
 
-export function AssetList() {
-  const [tab, setTab] = useState<Tab>('calls')
+interface AssetListProps {
+  tab: Tab
+  onTabChange: (tab: Tab) => void
+}
+
+export function AssetList({ tab, onTabChange }: AssetListProps) {
   const { stats } = useVaultStats()
-  // The vault cap is on covered-call XLM exposure, so gating applies to the
-  // calls entry point only. Block it when the vault is at/over cap so a user
-  // can't reach the strike selector, sign a deposit, lock collateral on-chain,
-  // and only then hit the server's 409 cap rejection (BUG-2). The metric is
-  // now the real open exposure (BUG-1), so "full" is no longer a false
-  // positive off wallet-balance noise.
+  // Each side has its own per-epoch cap (call in XLM, put in USD). Block the
+  // matching entry point when its vault is at/over cap so a user can't reach
+  // the strike selector, sign a deposit, lock collateral on-chain, and only
+  // then hit the server's 409 cap rejection (BUG-2). The metric is the
+  // current-epoch flow (resets each epoch), so "full" is real, not noise.
   const callsFull =
-    !!stats && stats.capXlm > 0 && stats.utilizedXlm >= stats.capXlm
+    !!stats && stats.call.cap > 0 && stats.call.utilized >= stats.call.cap
+  const putsFull =
+    !!stats && stats.put.cap > 0 && stats.put.utilized >= stats.put.cap
 
   return (
     <div className="terminal-card rounded-sm overflow-hidden">
@@ -24,7 +28,7 @@ export function AssetList() {
         <div className="font-mono text-sm text-[#e8e4d9]">~/assets</div>
         <div className="flex gap-1">
           <button
-            onClick={() => setTab('calls')}
+            onClick={() => onTabChange('calls')}
             className={cn(
               'font-mono text-xs px-3 py-1 rounded-sm transition',
               tab === 'calls' ? 'bg-[#eab308] text-[#1a1a1a]' : 'text-[#e8e4d9] hover:bg-[#2a2a2a]'
@@ -33,7 +37,7 @@ export function AssetList() {
             covered calls
           </button>
           <button
-            onClick={() => setTab('puts')}
+            onClick={() => onTabChange('puts')}
             className={cn(
               'font-mono text-xs px-3 py-1 rounded-sm transition',
               tab === 'puts' ? 'bg-[#eab308] text-[#1a1a1a]' : 'text-[#e8e4d9] hover:bg-[#2a2a2a]'
@@ -72,6 +76,8 @@ export function AssetList() {
             maxAPR={96.8}
             minAPR={18.7}
             href="/earn/xlm?type=put"
+            disabled={putsFull}
+            disabledReason="Vault full"
           />
         )}
       </div>

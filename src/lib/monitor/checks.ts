@@ -1,6 +1,6 @@
 import { Horizon } from '@stellar/stellar-sdk'
 import { getPool, ensureSchema } from '@/lib/db'
-import { computeOpenExposure } from '@/lib/vault-state'
+import { computeEpochFlow, CALL_EPOCH_CAP_XLM } from '@/lib/vault-state'
 import type { Alert } from './notify'
 
 /**
@@ -13,7 +13,6 @@ import type { Alert } from './notify'
 const HORIZON =
   process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
 const LUSD_DISTRIBUTOR = process.env.NEXT_PUBLIC_LUSD_DISTRIBUTOR ?? ''
-const VAULT_CAP_XLM = Number(process.env.VAULT_CAP_XLM ?? 1_000_000)
 
 // Cap utilization at/above this percent fires a warning; at/above 100 a
 // critical. Horizon/DB latency above the budget fires a warning.
@@ -78,18 +77,18 @@ async function checkDb(): Promise<Alert | null> {
 
 async function checkCapBreach(): Promise<Alert | null> {
   try {
-    const { callXlm } = await computeOpenExposure()
-    const pct = VAULT_CAP_XLM > 0 ? (callXlm / VAULT_CAP_XLM) * 100 : 0
+    const { callXlm } = await computeEpochFlow()
+    const pct = CALL_EPOCH_CAP_XLM > 0 ? (callXlm / CALL_EPOCH_CAP_XLM) * 100 : 0
     const fields = [
-      { label: 'open_call_xlm', value: callXlm.toFixed(0) },
-      { label: 'cap_xlm', value: VAULT_CAP_XLM.toFixed(0) },
+      { label: 'epoch_call_xlm', value: callXlm.toFixed(0) },
+      { label: 'cap_xlm', value: CALL_EPOCH_CAP_XLM.toFixed(0) },
       { label: 'utilization_pct', value: pct.toFixed(2) },
     ]
     if (pct >= 100) {
       return {
         severity: 'critical',
         title: 'Vault cap reached',
-        message: `Covered-call vault is at ${pct.toFixed(1)}% of cap. New call deposits are being rejected.`,
+        message: `Covered-call vault is at ${pct.toFixed(1)}% of this epoch's cap. New call deposits are being rejected.`,
         fields,
       }
     }
@@ -106,7 +105,7 @@ async function checkCapBreach(): Promise<Alert | null> {
     return {
       severity: 'critical',
       title: 'Cap check blind',
-      message: `Could not compute open exposure: ${e?.message ?? 'unknown'}. Utilization is unknown.`,
+      message: `Could not compute epoch flow: ${e?.message ?? 'unknown'}. Utilization is unknown.`,
     }
   }
 }

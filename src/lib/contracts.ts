@@ -3,7 +3,13 @@ import { CONTRACTS } from './stellar'
 
 export { CONTRACTS }
 
-export const VAULT_CAP_XLM = 5_000_000
+// Per-side monthly budgets, split across 3 epochs/month (one epoch = a third
+// of the calendar month). The authoritative, env-overridable values live in
+// lib/vault-state.ts (CALL_EPOCH_CAP_XLM / PUT_EPOCH_CAP_USD); these mirror the
+// defaults for reference.
+export const CALL_MONTHLY_CAP_XLM = 1_500_000 // → 500,000 XLM per epoch
+export const PUT_MONTHLY_CAP_USD = 150_000 //    → 50,000 USD per epoch
+export const EPOCHS_PER_MONTH = 3
 export const EPOCH_DURATION_LEDGERS = 120_960 // 7 days, 1 ledger ≈ 5s
 export const DEFAULT_IV = 0.80
 export const RISK_FREE_RATE = 0.05

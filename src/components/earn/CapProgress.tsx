@@ -1,17 +1,21 @@
 interface CapProgressProps {
   utilized: number
   cap: number
+  /** Unit the cap is denominated in. 'XLM' for the call vault, 'USD' for puts. */
+  unit?: 'XLM' | 'USD'
 }
 
-export function CapProgress({ utilized, cap }: CapProgressProps) {
+export function CapProgress({ utilized, cap, unit = 'XLM' }: CapProgressProps) {
   // True utilization for the label; the bar width is clamped to 100% so a
   // full/over-full vault doesn't overflow the track. Keeping the label
-  // unclamped means the text and the "X / Y XLM" readout below can never
-  // disagree (the old code clamped both and could show "100.00%" next to a
-  // raw figure many times the cap).
+  // unclamped means the text and the readout below can never disagree.
   const rawPct = cap > 0 ? (utilized / cap) * 100 : 0
   const barPct = Math.min(100, rawPct)
   const full = rawPct >= 100
+  const fmt = (n: number) =>
+    unit === 'USD'
+      ? `$${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+      : `${n.toLocaleString(undefined, { maximumFractionDigits: 0 })} XLM`
   return (
     <div className="w-full">
       <div className="relative h-10 bg-[#f0ece3] border border-[#c4bfb2] rounded-sm overflow-hidden">
@@ -24,7 +28,7 @@ export function CapProgress({ utilized, cap }: CapProgressProps) {
         </div>
       </div>
       <div className="flex justify-between mt-2 font-mono text-xs text-[#6b6560]">
-        <span className="num">{utilized.toLocaleString()} / {cap.toLocaleString()} XLM</span>
+        <span className="num">{fmt(utilized)} / {fmt(cap)}</span>
         <span>updates every epoch</span>
       </div>
     </div>
