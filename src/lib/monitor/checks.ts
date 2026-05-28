@@ -1,6 +1,6 @@
 import { Horizon } from '@stellar/stellar-sdk'
 import { getPool, ensureSchema } from '@/lib/db'
-import { computeEpochFlow, CALL_EPOCH_CAP_XLM } from '@/lib/vault-state'
+import { computeOpenBuckets, CALL_EPOCH_CAP_XLM } from '@/lib/vault-state'
 import type { Alert } from './notify'
 
 /**
@@ -77,18 +77,24 @@ async function checkDb(): Promise<Alert | null> {
 
 async function checkCapBreach(): Promise<Alert | null> {
   try {
-    const { callXlm } = await computeEpochFlow()
-    const pct = CALL_EPOCH_CAP_XLM > 0 ? (callXlm / CALL_EPOCH_CAP_XLM) * 100 : 0
+    const buckets = await computeOpenBuckets()
+    const combinedXlm = buckets.reduce((a, b) => a + b.callXlm, 0)
+    const combinedCap = CALL_EPOCH_CAP_XLM * Math.max(1, buckets.length)
+    const pct = combinedCap > 0 ? (combinedXlm / combinedCap) * 100 : 0
+    const fullExpiries = buckets.filter(
+      (b) => b.callXlm >= CALL_EPOCH_CAP_XLM
+    ).length
     const fields = [
-      { label: 'epoch_call_xlm', value: callXlm.toFixed(0) },
-      { label: 'cap_xlm', value: CALL_EPOCH_CAP_XLM.toFixed(0) },
+      { label: 'open_call_xlm', value: combinedXlm.toFixed(0) },
+      { label: 'cap_xlm', value: combinedCap.toFixed(0) },
       { label: 'utilization_pct', value: pct.toFixed(2) },
+      { label: 'full_expiries', value: `${fullExpiries}/${buckets.length}` },
     ]
-    if (pct >= 100) {
+    if (fullExpiries >= buckets.length && buckets.length > 0) {
       return {
         severity: 'critical',
-        title: 'Vault cap reached',
-        message: `Covered-call vault is at ${pct.toFixed(1)}% of this epoch's cap. New call deposits are being rejected.`,
+        title: 'All covered-call epochs full',
+        message: `Every open covered-call expiry is full (${fullExpiries}/${buckets.length}). New call deposits are being rejected until an expiry rolls off.`,
         fields,
       }
     }
@@ -105,7 +111,7 @@ async function checkCapBreach(): Promise<Alert | null> {
     return {
       severity: 'critical',
       title: 'Cap check blind',
-      message: `Could not compute epoch flow: ${e?.message ?? 'unknown'}. Utilization is unknown.`,
+      message: `Could not compute expiry buckets: ${e?.message ?? 'unknown'}. Utilization is unknown.`,
     }
   }
 }

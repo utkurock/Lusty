@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { useXlmPrice } from '@/hooks/useXlmPrice'
 import { useVaultStats } from '@/hooks/useVaultStats'
-import { CapProgress } from '@/components/earn/CapProgress'
+import { EpochCapProgress } from '@/components/earn/EpochCapProgress'
 import { AssetList, type Tab } from '@/components/earn/AssetList'
 import { formatUsdc } from '@/lib/utils'
 import { TrendingUp, TrendingDown } from 'lucide-react'
@@ -13,9 +13,16 @@ export default function EarnPage() {
   const [tab, setTab] = useState<Tab>('calls')
 
   const positive = change24h >= 0
-  // Each side has its own independent per-epoch utilization; show the bar that
-  // matches the active tab (call → XLM cap, put → USD cap).
-  const side = tab === 'calls' ? vaultStats?.call : vaultStats?.put
+  // Each side has its own independent capacity; show the bar that matches the
+  // active tab (call → XLM cap, put → USD cap).
+  const isCalls = tab === 'calls'
+  const side = isCalls ? vaultStats?.call : vaultStats?.put
+  // Map each open expiry bucket to this side's numbers for the timeline.
+  const segments = (vaultStats?.buckets ?? []).map((b) =>
+    isCalls
+      ? { label: b.label, utilized: b.callXlm, cap: b.callCapXlm, full: b.callFull }
+      : { label: b.label, utilized: b.putUsd, cap: b.putCapUsd, full: b.putFull }
+  )
 
   return (
     <div className="max-w-7xl mx-auto px-6 py-10 space-y-10">
@@ -57,15 +64,14 @@ export default function EarnPage() {
         </div>
       </section>
 
-      {side && (
+      {side && vaultStats && (
         <section>
-          <div className="font-mono text-xs uppercase text-[#6b6560] mb-2">
-            Current epoch utilization — {tab === 'calls' ? 'covered calls' : 'cash secured puts'}
-          </div>
-          <CapProgress
+          <EpochCapProgress
             utilized={side.utilized}
             cap={side.cap}
-            unit={tab === 'calls' ? 'XLM' : 'USD'}
+            unit={isCalls ? 'XLM' : 'USD'}
+            label={isCalls ? 'covered calls' : 'cash secured puts'}
+            segments={segments}
           />
         </section>
       )}

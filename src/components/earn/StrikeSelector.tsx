@@ -101,16 +101,45 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
     return notionalUsd * (apr / 100) * (expiry.daysToExpiry / 365)
   }, [selectedStrike, expiry, amount, xlmPrice, apr, type])
 
-  // Double-check the vault cap in the UI (the AssetList entry point already
-  // gates this, but a user can deep-link straight to /earn/xlm). Each side has
-  // its own per-epoch cap. Blocking here stops the user from signing a deposit
-  // that the server will reject with a 409 *after* their collateral is already
-  // locked on-chain (BUG-2).
+  // Each expiry is its own capacity bucket ("epoch"). Find the one for the
+  // currently-selected expiry so the cap gating and the "% used" donut reflect
+  // exactly the expiry the user is about to deposit into.
+  const selectedBucket = useMemo(() => {
+    if (!vaultStats || !expiry) return undefined
+    const key = expiry.date.toISOString().slice(0, 10)
+    return vaultStats.buckets.find((b) => b.dateKey === key)
+  }, [vaultStats, expiry])
+
+  // Which expiries are already full (for this side) — used to flag them in the
+  // expiry dropdown so the user can pick an open one.
+  const fullByKey = useMemo(() => {
+    const m = new Map<string, boolean>()
+    for (const b of vaultStats?.buckets ?? []) {
+      m.set(b.dateKey, type === 'call' ? b.callFull : b.putFull)
+    }
+    return m
+  }, [vaultStats, type])
+
+  // Double-check the cap in the UI (the AssetList entry point already gates
+  // this, but a user can deep-link straight to /earn/xlm). Only the *selected
+  // expiry's* bucket matters — a full expiry blocks only itself. Blocking here
+  // stops the user from signing a deposit that the server will reject with a
+  // 409 *after* their collateral is already locked on-chain (BUG-2).
   const vaultFull = useMemo(() => {
-    if (!vaultStats) return false
-    const s = type === 'call' ? vaultStats.call : vaultStats.put
-    return s.cap > 0 && s.utilized >= s.cap
-  }, [type, vaultStats])
+    if (!selectedBucket) return false
+    return type === 'call' ? selectedBucket.callFull : selectedBucket.putFull
+  }, [type, selectedBucket])
+
+  // The "% used" donut mirrors the selected expiry's own bucket fill — the
+  // same number that expiry shows on the Earn timeline — so it's consistent
+  // everywhere. 0 until real stats load (no mock). Clamped to 1.
+  const epochUtil = useMemo(() => {
+    if (!selectedBucket) return 0
+    const u = type === 'call' ? selectedBucket.callXlm : selectedBucket.putUsd
+    const c =
+      type === 'call' ? selectedBucket.callCapXlm : selectedBucket.putCapUsd
+    return c > 0 ? Math.min(1, u / c) : 0
+  }, [type, selectedBucket])
 
   const minAmount =
     type === 'call' ? MIN_DEPOSIT_XLM : MIN_DEPOSIT_XLM * (xlmPrice || 0.1)
@@ -124,7 +153,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
     if (!connected) { await connect(); return }
     if (vaultFull) {
       setError(
-        `Vault is full — the ${type === 'call' ? 'covered-call' : 'cash-secured-put'} cap for this epoch is reached. Try again next epoch.`
+        `This expiry's ${type === 'call' ? 'covered-call' : 'cash-secured-put'} epoch is full. Pick another expiry.`
       )
       return
     }
@@ -279,20 +308,24 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
           </button>
           {expiryOpen && (
             <div className="absolute left-0 top-full mt-1 z-20 min-w-[140px] rounded-sm border border-[#c4bfb2] bg-[#f0ece3] shadow-md py-1">
-              {expiries.map((e, i) => (
-                <button
-                  key={e.id}
-                  onClick={() => { setSelectedExpiryIdx(i); setExpiryOpen(false) }}
-                  className={
-                    'w-full text-left px-3 py-1.5 font-mono text-xs transition ' +
-                    (i === selectedExpiryIdx
-                      ? 'bg-[#1a1a1a] text-[#eab308]'
-                      : 'text-[#1a1a1a] hover:bg-[#e8e4d9]')
-                  }
-                >
-                  {e.label} · {e.daysToExpiry}d
-                </button>
-              ))}
+              {expiries.map((e, i) => {
+                const eFull = fullByKey.get(e.date.toISOString().slice(0, 10)) ?? false
+                return (
+                  <button
+                    key={e.id}
+                    onClick={() => { setSelectedExpiryIdx(i); setExpiryOpen(false) }}
+                    className={
+                      'w-full text-left px-3 py-1.5 font-mono text-xs transition flex items-center justify-between gap-2 ' +
+                      (i === selectedExpiryIdx
+                        ? 'bg-[#1a1a1a] text-[#eab308]'
+                        : 'text-[#1a1a1a] hover:bg-[#e8e4d9]')
+                    }
+                  >
+                    <span>{e.label} · {e.daysToExpiry}d</span>
+                    {eFull && <span className="text-[#ef4444] font-semibold">FULL</span>}
+                  </button>
+                )
+              })}
             </div>
           )}
         </div>
@@ -313,17 +346,18 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
             <svg viewBox="0 0 32 32" className="w-8 h-8 -rotate-90">
               <circle cx="16" cy="16" r="13" fill="none" stroke="#c4bfb2" strokeWidth="3" />
               <circle
-                cx="16" cy="16" r="13" fill="none" stroke="#eab308" strokeWidth="3"
-                strokeDasharray={`${(expiry?.utilization ?? 0) * 81.68} 81.68`}
+                cx="16" cy="16" r="13" fill="none"
+                stroke={vaultFull ? '#ef4444' : '#eab308'} strokeWidth="3"
+                strokeDasharray={`${epochUtil * 81.68} 81.68`}
                 strokeLinecap="round"
               />
             </svg>
           </div>
           <div className="text-[10px] leading-tight">
-            <div className="num text-[#1a1a1a] font-semibold">
-              {((expiry?.utilization ?? 0) * 100).toFixed(0)}%
+            <div className={`num font-semibold ${vaultFull ? 'text-[#ef4444]' : 'text-[#1a1a1a]'}`}>
+              {vaultFull ? 'FULL' : `${(epochUtil * 100).toFixed(0)}%`}
             </div>
-            <div className="text-[#6b6560]">used</div>
+            <div className="text-[#6b6560]">{vaultFull ? 'this expiry' : 'used'}</div>
           </div>
         </div>
       </div>
@@ -396,10 +430,10 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
       )}
 
       {vaultFull && (
-        <div className="p-3 border border-[#eab308]/40 bg-[#eab308]/10 font-mono text-xs text-[#1a1a1a] rounded-sm">
-          {type === 'call' ? 'Covered-call' : 'Cash-secured-put'} vault is full
-          for this epoch — deposits are paused until the next epoch resets the
-          cap. Your collateral would be rejected, so the button is disabled.
+        <div className="p-3 border border-[#ef4444]/40 bg-[#ef4444]/10 font-mono text-xs text-[#1a1a1a] rounded-sm">
+          This expiry&apos;s {type === 'call' ? 'covered-call' : 'cash-secured-put'} epoch is
+          full — pick a different expiry above with open capacity. Depositing here
+          would be rejected, so the button is disabled.
         </div>
       )}
 

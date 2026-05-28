@@ -21,26 +21,49 @@ const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep
 // settlement and the vault carries assignment risk it can't price properly.
 export const MIN_DAYS_TO_EXPIRY = 2
 
+// How many rolling expiries ("epochs") are open at once. Mirrors
+// VAULT_EPOCHS_PER_MONTH on the server — each open expiry is its own capacity
+// bucket, so this is also the number of buckets the Earn UI shows.
+export const ACTIVE_EXPIRY_COUNT = 3
+
+/** Short label for an expiry, e.g. "May_01" (UTC). */
+export function expiryLabel(date: Date): string {
+  return `${MONTH_ABBR[date.getUTCMonth()]}_${String(date.getUTCDate()).padStart(2, '0')}`
+}
+
 /**
- * Returns the next `count` Friday 08:00 UTC expiries, skipping any Friday
- * that is closer than MIN_DAYS_TO_EXPIRY days. Always rolls forward — the
- * front-month expiry is guaranteed to be at least the cutoff away.
+ * Returns the next `count` Friday 08:00 **UTC** expiries, skipping any Friday
+ * closer than MIN_DAYS_TO_EXPIRY days. UTC (not local) so the canonical
+ * expiry timestamp is identical for every client and the server — this is what
+ * lets the per-expiry capacity buckets match deposits reliably.
  */
 function nextFridays(from: Date, count: number): Date[] {
   const cutoff = new Date(from.getTime() + MIN_DAYS_TO_EXPIRY * 24 * 60 * 60 * 1000)
-  const dow = cutoff.getDay()
+  const dow = cutoff.getUTCDay()
   const daysUntilFriday = (5 - dow + 7) % 7
   const first = new Date(cutoff)
-  first.setDate(first.getDate() + daysUntilFriday)
-  first.setHours(8, 0, 0, 0)
+  first.setUTCDate(first.getUTCDate() + daysUntilFriday)
+  first.setUTCHours(8, 0, 0, 0)
 
   const out: Date[] = []
   for (let i = 0; i < count; i++) {
     const d = new Date(first)
-    d.setDate(d.getDate() + i * 7)
+    d.setUTCDate(d.getUTCDate() + i * 7)
     out.push(d)
   }
   return out
+}
+
+/**
+ * The currently-open expiry dates (canonical UTC Fridays). Shared by the UI
+ * (strike selector / Earn timeline) and the server's capacity buckets so both
+ * agree on exactly which expiries exist.
+ */
+export function upcomingExpiryDates(
+  from: Date = new Date(),
+  count: number = ACTIVE_EXPIRY_COUNT,
+): Date[] {
+  return nextFridays(from, count)
 }
 
 function daysBetween(a: Date, b: Date): number {
@@ -68,7 +91,7 @@ export function getExpiryOptions(
   realStats?: RealVaultStats,
 ): ExpiryOption[] {
   const now = new Date()
-  const fridays = nextFridays(now, 3)
+  const fridays = upcomingExpiryDates(now, ACTIVE_EXPIRY_COUNT)
 
   // Deterministic-ish utilization per day so UI doesn't jitter every second
   // when we don't have real data yet.
@@ -102,7 +125,7 @@ export function getExpiryOptions(
     }
     const totalDeposited = Math.round(vaultCap * utilization)
 
-    const label = `${MONTH_ABBR[date.getMonth()]}_${String(date.getDate()).padStart(2, '0')}`
+    const label = expiryLabel(date)
 
     return {
       id: label,

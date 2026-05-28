@@ -13,7 +13,8 @@ import { rateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
 import { quoteOption } from '@/lib/pricing-server'
 import {
-  computeEpochFlow,
+  computeExpirySold,
+  expiryDateKey,
   CALL_EPOCH_CAP_XLM,
   PUT_EPOCH_CAP_USD,
 } from '@/lib/vault-state'
@@ -225,24 +226,29 @@ export async function POST(req: Request) {
       )
     }
 
-    // ---- enforce per-epoch vault cap
+    // ---- enforce per-expiry ("per-epoch") vault cap
     //
-    // The cap is enforced on the *current epoch's flow* — how much each side
-    // has sold this epoch — read from the protocol's own record of deposits
-    // (see vault-state.ts / computeEpochFlow), not the distributor's raw
-    // Horizon balance. It resets every epoch and tracks each side
-    // independently: call exposure in XLM, put exposure in USD notional.
+    // Each option expiry is its own capacity bucket: this deposit is gated only
+    // against how much has already been sold *for the same expiry*, read from
+    // the protocol's own record of deposits (vault-state.ts / computeExpirySold)
+    // — not the distributor's raw Horizon balance. A full expiry blocks only
+    // that expiry; the others stay open. Sides are independent: call in XLM, put
+    // in USD notional.
     //
     // This deposit's own collateral is not in the DB yet (it's logged after
-    // payout), so we add it explicitly to the projected flow. For puts the
+    // payout), so we add it explicitly to the projected bucket. For puts the
     // collateral is LUSD ≈ $1, so paidAmount is already the USD notional.
     //
     // Fail-closed: if the DB is unreachable we cannot prove we're under the
     // cap, so we refuse the deposit (503) instead of waving it through.
     {
-      let flow
+      const dateKey = expiryDateKey(canonicalExpiryIso)
+      let sold
       try {
-        flow = await computeEpochFlow()
+        sold = (await computeExpirySold([dateKey])).get(dateKey) ?? {
+          callXlm: 0,
+          putUsd: 0,
+        }
       } catch (capErr) {
         console.error('vault/deposit: cap check unavailable', capErr)
         return NextResponse.json(
@@ -255,22 +261,22 @@ export async function POST(req: Request) {
         )
       }
       if (body.type === 'call') {
-        const projectedXlm = flow.callXlm + paidAmount
+        const projectedXlm = sold.callXlm + paidAmount
         if (projectedXlm > CALL_EPOCH_CAP_XLM) {
           return NextResponse.json(
             {
-              error: `covered-call vault cap exceeded for this epoch — ${projectedXlm.toFixed(0)}/${CALL_EPOCH_CAP_XLM.toFixed(0)} XLM utilized. Your collateral was received but no upfront will be paid. Withdraw via support.`,
+              error: `covered-call epoch is full for this expiry — ${projectedXlm.toFixed(0)}/${CALL_EPOCH_CAP_XLM.toFixed(0)} XLM. Pick another expiry. Your collateral was received but no upfront will be paid. Withdraw via support.`,
               code: 'cap_exceeded',
             },
             { status: 409 }
           )
         }
       } else {
-        const projectedUsd = flow.putUsd + paidAmount
+        const projectedUsd = sold.putUsd + paidAmount
         if (projectedUsd > PUT_EPOCH_CAP_USD) {
           return NextResponse.json(
             {
-              error: `cash-secured-put vault cap exceeded for this epoch — $${projectedUsd.toFixed(0)}/$${PUT_EPOCH_CAP_USD.toFixed(0)} utilized. Your collateral was received but no upfront will be paid. Withdraw via support.`,
+              error: `cash-secured-put epoch is full for this expiry — $${projectedUsd.toFixed(0)}/$${PUT_EPOCH_CAP_USD.toFixed(0)}. Pick another expiry. Your collateral was received but no upfront will be paid. Withdraw via support.`,
               code: 'cap_exceeded',
             },
             { status: 409 }

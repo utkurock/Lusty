@@ -1,4 +1,5 @@
 import { getPool, ensureSchema } from './db'
+import { upcomingExpiryDates, expiryLabel } from './expiries'
 
 /**
  * Vault exposure, computed from the protocol's own record of open positions.
@@ -32,19 +33,20 @@ import { getPool, ensureSchema } from './db'
 const EXPOSURE_GRACE_DAYS = Number(process.env.VAULT_EXPOSURE_GRACE_DAYS ?? 7)
 
 // ---------------------------------------------------------------------------
-// Per-epoch vault capacity
+// Per-expiry vault capacity ("epochs")
 //
-// Each side of the book carries its own monthly budget, split across three
-// epochs per month (a "vault epoch" is one third of a calendar month — see
-// currentVaultEpoch). New flow is gated against the *current epoch's* share so
-// the book fills gradually instead of all at once, and the cap automatically
-// resets when the next epoch begins.
+// Each option expiry (the rolling Fridays users pick in the strike selector)
+// is an independent capacity bucket. All EPOCHS_PER_MONTH upcoming expiries are
+// open for deposits at the same time; each carries its own cap:
 //
-//   covered call:      1,500,000 XLM / month  → 500,000 XLM per epoch
-//   cash-secured put:    150,000 USD / month  →  50,000 USD per epoch
+//   covered call:      500,000 XLM  per expiry   (1,500,000 / month combined)
+//   cash-secured put:   50,000 USD  per expiry   (  150,000 / month combined)
 //
-// The two sides are tracked independently: a full call vault never blocks puts
-// and vice versa.
+// A single expiry filling up blocks only that expiry — the others stay open.
+// The Earn page bar shows the combined fill across all open expiries; the
+// timeline and strike selector show each expiry's own fill and "full" state.
+//
+// The two sides are tracked independently: a full call bucket never blocks puts.
 // ---------------------------------------------------------------------------
 export const EPOCHS_PER_MONTH = Number(process.env.VAULT_EPOCHS_PER_MONTH ?? 3)
 export const CALL_MONTHLY_CAP_XLM = Number(
@@ -53,101 +55,98 @@ export const CALL_MONTHLY_CAP_XLM = Number(
 export const PUT_MONTHLY_CAP_USD = Number(
   process.env.VAULT_PUT_MONTHLY_CAP_USD ?? 150_000
 )
+// Per-expiry ("per-epoch") caps — the cap that gates a single expiry bucket.
 export const CALL_EPOCH_CAP_XLM = CALL_MONTHLY_CAP_XLM / EPOCHS_PER_MONTH
 export const PUT_EPOCH_CAP_USD = PUT_MONTHLY_CAP_USD / EPOCHS_PER_MONTH
 
-export interface VaultEpoch {
-  /** Inclusive start of the current epoch (UTC). */
-  start: Date
-  /** Exclusive end of the current epoch (UTC) — start of the next one. */
-  end: Date
-  /** 0, 1 or 2 — which third of the month this epoch is. */
-  index: number
-  /** e.g. "2026-05" — the calendar month this epoch belongs to. */
-  monthKey: string
+/** UTC calendar-date key (YYYY-MM-DD) identifying an expiry bucket. */
+export function expiryDateKey(d: Date | string): string {
+  return new Date(d).toISOString().slice(0, 10)
 }
 
-/**
- * The current "vault epoch": one third of the calendar month, in UTC.
- *   index 0 → days 1–10
- *   index 1 → days 11–20
- *   index 2 → day 21 → end of month
- * Three epochs per month by construction, so the monthly cap divided by
- * EPOCHS_PER_MONTH is exactly one epoch's share. Distinct from the weekly
- * risk epoch in triggers.ts (which gates the loss-cap breaker).
- */
-export function currentVaultEpoch(now = new Date()): VaultEpoch {
-  const y = now.getUTCFullYear()
-  const m = now.getUTCMonth()
-  const day = now.getUTCDate()
-
-  let index: number
-  let startDay: number
-  if (day <= 10) {
-    index = 0
-    startDay = 1
-  } else if (day <= 20) {
-    index = 1
-    startDay = 11
-  } else {
-    index = 2
-    startDay = 21
-  }
-
-  const start = new Date(Date.UTC(y, m, startDay, 0, 0, 0, 0))
-  const end =
-    index === 0
-      ? new Date(Date.UTC(y, m, 11, 0, 0, 0, 0))
-      : index === 1
-        ? new Date(Date.UTC(y, m, 21, 0, 0, 0, 0))
-        : new Date(Date.UTC(y, m + 1, 1, 0, 0, 0, 0))
-
-  return {
-    start,
-    end,
-    index,
-    monthKey: `${y}-${String(m + 1).padStart(2, '0')}`,
-  }
-}
-
-export interface EpochFlow {
-  /** XLM collateral sold into the covered-call vault this epoch. */
+export interface ExpirySold {
+  /** XLM covered-call collateral sold for this expiry. */
   callXlm: number
-  /** USD notional sold into the cash-secured-put vault this epoch (LUSD ≈ $1). */
+  /** USD put notional sold for this expiry (LUSD ≈ $1). */
   putUsd: number
-  epoch: VaultEpoch
 }
 
 /**
- * How much each side has sold *in the current epoch* — the flow the per-epoch
- * caps gate against. Unlike open exposure this resets every epoch, so stale
- * test positions from earlier epochs never inflate it. Throws if the DB is
- * unreachable so callers fail closed.
+ * Collateral sold per expiry bucket, keyed by UTC date (YYYY-MM-DD). Matches on
+ * the leading 10 chars of the stored expiryIso — canonical expiries are
+ * "YYYY-MM-DDT08:00:00.000Z", so this needs no timestamptz cast (a single
+ * malformed legacy row therefore can't throw and, because the cap fails closed,
+ * block every deposit). Every requested key is present (zero-filled). Throws if
+ * the DB is unreachable so callers fail closed.
  */
-export async function computeEpochFlow(now = new Date()): Promise<EpochFlow> {
+export async function computeExpirySold(
+  dateKeys: string[]
+): Promise<Map<string, ExpirySold>> {
+  const map = new Map<string, ExpirySold>()
+  for (const k of dateKeys) map.set(k, { callXlm: 0, putUsd: 0 })
+  if (dateKeys.length === 0) return map
   await ensureSchema()
-  const pool = getPool()
-  const epoch = currentVaultEpoch(now)
-  const res = await pool.query(
-    `select
-       coalesce(sum(case when subtype = 'call'
-                         then (metadata->>'collateralAmount')::float8 end), 0)::float8 as call_xlm,
-       coalesce(sum(case when subtype = 'put'
-                         then amount end), 0)::float8 as put_usd
-     from transactions
-     where type = 'deposit'
-       and subtype in ('call', 'put')
-       and tx_hash is not null
-       and created_at >= $1
-       and created_at < $2`,
-    [epoch.start.toISOString(), epoch.end.toISOString()]
+  const res = await getPool().query(
+    `select left(metadata->>'expiryIso', 10) as date_key,
+            coalesce(sum(case when subtype = 'call'
+                              then (metadata->>'collateralAmount')::float8 end), 0)::float8 as call_xlm,
+            coalesce(sum(case when subtype = 'put'
+                              then amount end), 0)::float8 as put_usd
+       from transactions
+      where type = 'deposit'
+        and subtype in ('call', 'put')
+        and tx_hash is not null
+        and metadata ? 'expiryIso'
+        and left(metadata->>'expiryIso', 10) = any($1::text[])
+      group by 1`,
+    [dateKeys]
   )
-  const row = res.rows[0] ?? {}
-  return {
-    callXlm: Number(row.call_xlm ?? 0),
-    putUsd: Number(row.put_usd ?? 0),
-    epoch,
+  for (const row of res.rows) {
+    if (!row.date_key) continue
+    map.set(row.date_key, {
+      callXlm: Number(row.call_xlm ?? 0),
+      putUsd: Number(row.put_usd ?? 0),
+    })
   }
+  return map
+}
+
+export interface ExpiryBucket {
+  /** Canonical UTC expiry timestamp (Friday 08:00 UTC). */
+  expiryIso: string
+  /** UTC date key (YYYY-MM-DD). */
+  dateKey: string
+  /** Short label, e.g. "May_01". */
+  label: string
+  /** XLM sold into this expiry's covered-call bucket. */
+  callXlm: number
+  /** USD sold into this expiry's cash-secured-put bucket. */
+  putUsd: number
+}
+
+/**
+ * The currently-open expiry buckets (the next EPOCHS_PER_MONTH rolling Fridays)
+ * with how much has been sold into each. Uses the shared expiry generator so
+ * these stay in lockstep with the expiries the UI offers. Throws if the DB is
+ * unreachable.
+ */
+export async function computeOpenBuckets(
+  now = new Date()
+): Promise<ExpiryBucket[]> {
+  const dates = upcomingExpiryDates(now, EPOCHS_PER_MONTH)
+  const keys = dates.map((d) => expiryDateKey(d))
+  const sold = await computeExpirySold(keys)
+  return dates.map((d) => {
+    const dateKey = expiryDateKey(d)
+    const s = sold.get(dateKey) ?? { callXlm: 0, putUsd: 0 }
+    return {
+      expiryIso: d.toISOString(),
+      dateKey,
+      label: expiryLabel(d),
+      callXlm: s.callXlm,
+      putUsd: s.putUsd,
+    }
+  })
 }
 
 export interface OpenExposure {

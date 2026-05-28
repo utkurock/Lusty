@@ -12,15 +12,18 @@ interface AssetListProps {
 
 export function AssetList({ tab, onTabChange }: AssetListProps) {
   const { stats } = useVaultStats()
-  // Each side has its own per-epoch cap (call in XLM, put in USD). Block the
-  // matching entry point when its vault is at/over cap so a user can't reach
-  // the strike selector, sign a deposit, lock collateral on-chain, and only
-  // then hit the server's 409 cap rejection (BUG-2). The metric is the
-  // current-epoch flow (resets each epoch), so "full" is real, not noise.
+  // Each expiry is its own capacity bucket. Only block the entry point when
+  // *every* open expiry is full — if any expiry still has room, the user can
+  // pick it inside the strike selector. Blocking here stops them reaching the
+  // selector only when there's genuinely nowhere to deposit (BUG-2).
   const callsFull =
-    !!stats && stats.call.cap > 0 && stats.call.utilized >= stats.call.cap
+    !!stats &&
+    stats.buckets.length > 0 &&
+    stats.buckets.every((b) => b.callFull)
   const putsFull =
-    !!stats && stats.put.cap > 0 && stats.put.utilized >= stats.put.cap
+    !!stats &&
+    stats.buckets.length > 0 &&
+    stats.buckets.every((b) => b.putFull)
 
   return (
     <div className="terminal-card rounded-sm overflow-hidden">

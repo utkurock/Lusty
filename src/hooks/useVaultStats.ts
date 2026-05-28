@@ -2,18 +2,33 @@
 import { useEffect, useState, useCallback } from 'react'
 
 export interface VaultSideStats {
-  /** Amount sold this epoch (XLM for calls, USD for puts). */
+  /** Combined amount sold across all open expiries (XLM for calls, USD for puts). */
   utilized: number
-  /** Per-epoch cap (XLM for calls, USD for puts). */
+  /** Combined cap across all open expiries (XLM for calls, USD for puts). */
   cap: number
   utilizationPct: number
 }
 
+export interface VaultBucket {
+  index: number
+  label: string
+  expiryIso: string
+  dateKey: string
+  callXlm: number
+  callCapXlm: number
+  callFull: boolean
+  putUsd: number
+  putCapUsd: number
+  putFull: boolean
+}
+
 export interface VaultStatsPayload {
-  // Per-epoch, per-side utilization.
+  // Combined (all open expiries) per-side utilization — drives the Earn bar.
   call: VaultSideStats
   put: VaultSideStats
-  epoch: { start: string; end: string; index: number; monthKey: string }
+  /** Each open expiry's own fill + per-expiry cap + "full" flag. */
+  buckets: VaultBucket[]
+  epochsPerMonth: number
   // Back-compat aliases (call side).
   utilizedXlm: number
   capXlm: number
@@ -50,7 +65,8 @@ export function useVaultStats(intervalMs = 30_000) {
             cap: d.put?.capUsd ?? 0,
             utilizationPct: d.put?.utilizationPct ?? 0,
           },
-          epoch: d.epoch ?? { start: '', end: '', index: 0, monthKey: '' },
+          buckets: Array.isArray(d.buckets) ? d.buckets : [],
+          epochsPerMonth: d.epochsPerMonth ?? 3,
           utilizedXlm: d.utilizedXlm,
           capXlm: d.capXlm,
           utilizationPct: d.utilizationPct,

@@ -2,9 +2,10 @@ import { NextResponse } from 'next/server'
 import { Horizon } from '@stellar/stellar-sdk'
 import { rateLimit } from '@/lib/rate-limit'
 import {
-  computeEpochFlow,
+  computeOpenBuckets,
   CALL_EPOCH_CAP_XLM,
   PUT_EPOCH_CAP_USD,
+  EPOCHS_PER_MONTH,
 } from '@/lib/vault-state'
 
 export const dynamic = 'force-dynamic'
@@ -35,23 +36,39 @@ export async function GET() {
       return NextResponse.json({ error: 'vault not configured' }, { status: 500 })
     }
 
-    // Utilization is the *current-epoch flow* recorded by the protocol — how
-    // much each side has sold this epoch — read from the DB, not the
-    // distributor's raw wallet balance (BUG-1). Resets every epoch, so stale
-    // test positions from earlier epochs can't inflate it. The two sides are
-    // independent: call (XLM) and put (USD) each have their own cap. If the DB
-    // is unreachable we surface an error rather than report a falsely-low
-    // number that would un-gate the UI.
-    const flow = await computeEpochFlow()
-    const callUtilizedXlm = flow.callXlm
-    const putUtilizedUsd = flow.putUsd
+    // Each open expiry is an independent capacity bucket (call cap in XLM, put
+    // cap in USD). Read the per-expiry sold amounts from the DB (not the
+    // distributor's raw wallet balance — BUG-1). The Earn bar shows the
+    // combined fill across all open expiries; each bucket also reports its own
+    // fill and "full" flag so the timeline/strike-selector can gate per expiry.
+    // If the DB is unreachable we surface an error rather than report a
+    // falsely-low number that would un-gate the UI.
+    const openBuckets = await computeOpenBuckets()
+
+    const buckets = openBuckets.map((b, i) => ({
+      index: i,
+      label: b.label,
+      expiryIso: b.expiryIso,
+      dateKey: b.dateKey,
+      callXlm: b.callXlm,
+      callCapXlm: CALL_EPOCH_CAP_XLM,
+      callFull: b.callXlm >= CALL_EPOCH_CAP_XLM,
+      putUsd: b.putUsd,
+      putCapUsd: PUT_EPOCH_CAP_USD,
+      putFull: b.putUsd >= PUT_EPOCH_CAP_USD,
+    }))
+
+    const callUtilizedXlm = buckets.reduce((a, b) => a + b.callXlm, 0)
+    const putUtilizedUsd = buckets.reduce((a, b) => a + b.putUsd, 0)
+    const callCapXlm = CALL_EPOCH_CAP_XLM * buckets.length
+    const putCapUsd = PUT_EPOCH_CAP_USD * buckets.length
     const callUtilizationPct = Math.min(
       100,
-      CALL_EPOCH_CAP_XLM > 0 ? (callUtilizedXlm / CALL_EPOCH_CAP_XLM) * 100 : 0
+      callCapXlm > 0 ? (callUtilizedXlm / callCapXlm) * 100 : 0
     )
     const putUtilizationPct = Math.min(
       100,
-      PUT_EPOCH_CAP_USD > 0 ? (putUtilizedUsd / PUT_EPOCH_CAP_USD) * 100 : 0
+      putCapUsd > 0 ? (putUtilizedUsd / putCapUsd) * 100 : 0
     )
 
     // Wallet balances are display/debug only now. Best-effort: a Horizon
@@ -81,26 +98,24 @@ export async function GET() {
         xlmBalance,
         lusdBalance,
         baseline: XLM_BASELINE,
-        // Per-epoch, per-side utilization (the metric the UI/caps gate on).
+        // Combined (all open expiries) per-side utilization — what the Earn
+        // bar shows. Per-bucket detail is in `buckets`.
         call: {
           utilizedXlm: callUtilizedXlm,
-          capXlm: CALL_EPOCH_CAP_XLM,
+          capXlm: callCapXlm,
           utilizationPct: callUtilizationPct,
         },
         put: {
           utilizedUsd: putUtilizedUsd,
-          capUsd: PUT_EPOCH_CAP_USD,
+          capUsd: putCapUsd,
           utilizationPct: putUtilizationPct,
         },
-        epoch: {
-          start: flow.epoch.start.toISOString(),
-          end: flow.epoch.end.toISOString(),
-          index: flow.epoch.index,
-          monthKey: flow.epoch.monthKey,
-        },
+        // Each open expiry's own fill + per-expiry cap + "full" flag.
+        buckets,
+        epochsPerMonth: EPOCHS_PER_MONTH,
         // Back-compat aliases (call side) for older clients.
         utilizedXlm: callUtilizedXlm,
-        capXlm: CALL_EPOCH_CAP_XLM,
+        capXlm: callCapXlm,
         utilizationPct: callUtilizationPct,
       },
       {
