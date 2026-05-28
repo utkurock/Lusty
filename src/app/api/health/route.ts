@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { Horizon } from '@stellar/stellar-sdk'
+import { LUSD_DISTRIBUTOR } from '@/lib/lusd'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -16,7 +17,6 @@ export const revalidate = 0
 
 const HORIZON =
   process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
-const LUSD_DISTRIBUTOR = process.env.NEXT_PUBLIC_LUSD_DISTRIBUTOR ?? ''
 
 interface ComponentStatus {
   ok: boolean

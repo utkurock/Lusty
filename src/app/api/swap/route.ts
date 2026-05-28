@@ -16,12 +16,10 @@ import {
   releaseAction,
   confirmAction,
 } from '@/lib/idempotency'
+import { LUSD_CODE, LUSD_ISSUER, LUSD_DISTRIBUTOR } from '@/lib/lusd'
 
 const HORIZON =
   process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
-const LUSD_CODE = process.env.NEXT_PUBLIC_LUSD_CODE ?? 'LUSD'
-const LUSD_ISSUER = process.env.NEXT_PUBLIC_LUSD_ISSUER ?? ''
-const LUSD_DISTRIBUTOR = process.env.NEXT_PUBLIC_LUSD_DISTRIBUTOR ?? ''
 const DISTRIBUTOR_SECRET = process.env.LUSD_DISTRIBUTOR_SECRET ?? ''
 const FEE_WALLET = process.env.FEE_WALLET ?? ''
 

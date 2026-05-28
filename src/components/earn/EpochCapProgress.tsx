@@ -6,14 +6,10 @@ interface EpochSegment {
 }
 
 interface EpochCapProgressProps {
-  /** Combined amount sold across all open expiries. */
   utilized: number
-  /** Combined cap across all open expiries (monthly). */
   cap: number
   unit?: 'XLM' | 'USD'
-  /** e.g. "covered calls" / "cash secured puts". */
   label: string
-  /** One entry per open expiry ("epoch"), already mapped to this side. */
   segments: EpochSegment[]
 }
 
@@ -44,7 +40,6 @@ export function EpochCapProgress({
         </div>
       </div>
 
-      {/* Per-expiry epoch buckets — each fills (and goes FULL) on its own. */}
       {segments.length > 0 && (
         <div className="flex gap-1.5 mb-2">
           {segments.map((s, i) => {
@@ -73,7 +68,6 @@ export function EpochCapProgress({
         </div>
       )}
 
-      {/* Combined fill across all open epochs. */}
       <div className="relative h-10 bg-[#f0ece3] border border-[#c4bfb2] rounded-sm overflow-hidden">
         <div
           className={`absolute inset-y-0 left-0 animate-fill transition-all duration-700 ${full ? 'bg-[#ef4444]' : 'bg-[#22c55e]'}`}

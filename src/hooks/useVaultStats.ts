@@ -2,9 +2,7 @@
 import { useEffect, useState, useCallback } from 'react'
 
 export interface VaultSideStats {
-  /** Combined amount sold across all open expiries (XLM for calls, USD for puts). */
   utilized: number
-  /** Combined cap across all open expiries (XLM for calls, USD for puts). */
   cap: number
   utilizationPct: number
 }
@@ -23,10 +21,8 @@ export interface VaultBucket {
 }
 
 export interface VaultStatsPayload {
-  // Combined (all open expiries) per-side utilization — drives the Earn bar.
   call: VaultSideStats
   put: VaultSideStats
-  /** Each open expiry's own fill + per-expiry cap + "full" flag. */
   buckets: VaultBucket[]
   epochsPerMonth: number
   // Back-compat aliases (call side).
@@ -38,12 +34,7 @@ export interface VaultStatsPayload {
   baseline: number
 }
 
-/**
- * Polls /api/vault/stats every `intervalMs` (default 30s). Always uses
- * `cache: 'no-store'` so the browser/CDN never serves a stale snapshot —
- * the value here drives both the "Current epoch utilization" widget and
- * the dynamic APR engine, so freshness matters.
- */
+// Polls /api/vault/stats (no-store) every `intervalMs`.
 export function useVaultStats(intervalMs = 30_000) {
   const [stats, setStats] = useState<VaultStatsPayload | null>(null)
   const [loading, setLoading] = useState(true)

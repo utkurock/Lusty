@@ -1,6 +1,7 @@
 import { Horizon } from '@stellar/stellar-sdk'
 import { getPool, ensureSchema } from '@/lib/db'
 import { computeOpenBuckets, CALL_EPOCH_CAP_XLM } from '@/lib/vault-state'
+import { LUSD_DISTRIBUTOR } from '@/lib/lusd'
 import type { Alert } from './notify'
 
 /**
@@ -12,7 +13,6 @@ import type { Alert } from './notify'
 
 const HORIZON =
   process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
-const LUSD_DISTRIBUTOR = process.env.NEXT_PUBLIC_LUSD_DISTRIBUTOR ?? ''
 
 // Cap utilization at/above this percent fires a warning; at/above 100 a
 // critical. Horizon/DB latency above the budget fires a warning.

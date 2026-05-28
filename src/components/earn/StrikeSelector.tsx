@@ -29,9 +29,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
   const pricePositive = change24h >= 0
   const [txLoading, setTxLoading] = useState(false)
 
-  // Feed the dynamic APR engine a USD-denominated cap/util pair for the side
-  // being traded. The call vault is denominated in XLM (convert via spot); the
-  // put vault is already in USD, so it's passed straight through.
+  // USD-denominated cap/util for the dynamic APR engine (call: XLM × spot).
   const realStats = useMemo(() => {
     if (!vaultStats) return undefined
     if (type === 'call') {
@@ -101,17 +99,14 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
     return notionalUsd * (apr / 100) * (expiry.daysToExpiry / 365)
   }, [selectedStrike, expiry, amount, xlmPrice, apr, type])
 
-  // Each expiry is its own capacity bucket ("epoch"). Find the one for the
-  // currently-selected expiry so the cap gating and the "% used" donut reflect
-  // exactly the expiry the user is about to deposit into.
+  // The capacity bucket for the selected expiry — drives the cap gate + donut.
   const selectedBucket = useMemo(() => {
     if (!vaultStats || !expiry) return undefined
     const key = expiry.date.toISOString().slice(0, 10)
     return vaultStats.buckets.find((b) => b.dateKey === key)
   }, [vaultStats, expiry])
 
-  // Which expiries are already full (for this side) — used to flag them in the
-  // expiry dropdown so the user can pick an open one.
+  // Which expiries are full, to flag them in the dropdown.
   const fullByKey = useMemo(() => {
     const m = new Map<string, boolean>()
     for (const b of vaultStats?.buckets ?? []) {
@@ -120,19 +115,13 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
     return m
   }, [vaultStats, type])
 
-  // Double-check the cap in the UI (the AssetList entry point already gates
-  // this, but a user can deep-link straight to /earn/xlm). Only the *selected
-  // expiry's* bucket matters — a full expiry blocks only itself. Blocking here
-  // stops the user from signing a deposit that the server will reject with a
-  // 409 *after* their collateral is already locked on-chain (BUG-2).
+  // Block deposits when the selected expiry is full (a full expiry blocks only
+  // itself). Mirrors the server's 409 so the user can't sign a doomed deposit.
   const vaultFull = useMemo(() => {
     if (!selectedBucket) return false
     return type === 'call' ? selectedBucket.callFull : selectedBucket.putFull
   }, [type, selectedBucket])
 
-  // The "% used" donut mirrors the selected expiry's own bucket fill — the
-  // same number that expiry shows on the Earn timeline — so it's consistent
-  // everywhere. 0 until real stats load (no mock). Clamped to 1.
   const epochUtil = useMemo(() => {
     if (!selectedBucket) return 0
     const u = type === 'call' ? selectedBucket.callXlm : selectedBucket.putUsd

@@ -7,15 +7,13 @@ import {
   PUT_EPOCH_CAP_USD,
   EPOCHS_PER_MONTH,
 } from '@/lib/vault-state'
+import { LUSD_CODE, LUSD_ISSUER, LUSD_DISTRIBUTOR } from '@/lib/lusd'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
 const HORIZON =
   process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
-const LUSD_CODE = process.env.NEXT_PUBLIC_LUSD_CODE ?? 'LUSD'
-const LUSD_ISSUER = process.env.NEXT_PUBLIC_LUSD_ISSUER ?? ''
-const LUSD_DISTRIBUTOR = process.env.NEXT_PUBLIC_LUSD_DISTRIBUTOR ?? ''
 
 // Informational only — the distributor's seed XLM. No longer part of the
 // utilization metric (see vault-state.ts / BUG-1); kept for the UI's debug
@@ -36,13 +34,6 @@ export async function GET() {
       return NextResponse.json({ error: 'vault not configured' }, { status: 500 })
     }
 
-    // Each open expiry is an independent capacity bucket (call cap in XLM, put
-    // cap in USD). Read the per-expiry sold amounts from the DB (not the
-    // distributor's raw wallet balance — BUG-1). The Earn bar shows the
-    // combined fill across all open expiries; each bucket also reports its own
-    // fill and "full" flag so the timeline/strike-selector can gate per expiry.
-    // If the DB is unreachable we surface an error rather than report a
-    // falsely-low number that would un-gate the UI.
     const openBuckets = await computeOpenBuckets()
 
     const buckets = openBuckets.map((b, i) => ({
@@ -71,8 +62,7 @@ export async function GET() {
       putCapUsd > 0 ? (putUtilizedUsd / putCapUsd) * 100 : 0
     )
 
-    // Wallet balances are display/debug only now. Best-effort: a Horizon
-    // hiccup must not blank out the (DB-sourced) utilization the UI gates on.
+    // Wallet balances are display/debug only — best-effort.
     let xlmBalance = 0
     let lusdBalance = 0
     try {
@@ -98,8 +88,6 @@ export async function GET() {
         xlmBalance,
         lusdBalance,
         baseline: XLM_BASELINE,
-        // Combined (all open expiries) per-side utilization — what the Earn
-        // bar shows. Per-bucket detail is in `buckets`.
         call: {
           utilizedXlm: callUtilizedXlm,
           capXlm: callCapXlm,
@@ -110,18 +98,15 @@ export async function GET() {
           capUsd: putCapUsd,
           utilizationPct: putUtilizationPct,
         },
-        // Each open expiry's own fill + per-expiry cap + "full" flag.
         buckets,
         epochsPerMonth: EPOCHS_PER_MONTH,
-        // Back-compat aliases (call side) for older clients.
+        // Back-compat aliases (call side).
         utilizedXlm: callUtilizedXlm,
         capXlm: callCapXlm,
         utilizationPct: callUtilizationPct,
       },
       {
         headers: {
-          // Force the browser/edge to never cache vault stats — utilization
-          // must reflect the on-chain balance every time it's polled.
           'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
         },
       }

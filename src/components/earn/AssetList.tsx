@@ -12,10 +12,7 @@ interface AssetListProps {
 
 export function AssetList({ tab, onTabChange }: AssetListProps) {
   const { stats } = useVaultStats()
-  // Each expiry is its own capacity bucket. Only block the entry point when
-  // *every* open expiry is full — if any expiry still has room, the user can
-  // pick it inside the strike selector. Blocking here stops them reaching the
-  // selector only when there's genuinely nowhere to deposit (BUG-2).
+  // Only block the entry point when every open expiry is full.
   const callsFull =
     !!stats &&
     stats.buckets.length > 0 &&

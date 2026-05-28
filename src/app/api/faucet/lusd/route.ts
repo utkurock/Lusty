@@ -11,10 +11,9 @@ import {
 import { logTransaction } from '@/lib/db-queries'
 import { rateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
+import { LUSD_CODE, LUSD_ISSUER } from '@/lib/lusd'
 
 const HORIZON = process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
-const LUSD_CODE = process.env.NEXT_PUBLIC_LUSD_CODE ?? 'LUSD'
-const LUSD_ISSUER = process.env.NEXT_PUBLIC_LUSD_ISSUER ?? ''
 const DISTRIBUTOR_SECRET = process.env.LUSD_DISTRIBUTOR_SECRET ?? ''
 
 const AMOUNT = '1000' // 1,000 LUSD per drip

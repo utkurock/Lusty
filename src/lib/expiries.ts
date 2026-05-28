@@ -21,22 +21,15 @@ const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep
 // settlement and the vault carries assignment risk it can't price properly.
 export const MIN_DAYS_TO_EXPIRY = 2
 
-// How many rolling expiries ("epochs") are open at once. Mirrors
-// VAULT_EPOCHS_PER_MONTH on the server — each open expiry is its own capacity
-// bucket, so this is also the number of buckets the Earn UI shows.
+// Rolling expiries open at once — mirrors VAULT_EPOCHS_PER_MONTH on the server.
 export const ACTIVE_EXPIRY_COUNT = 3
 
-/** Short label for an expiry, e.g. "May_01" (UTC). */
 export function expiryLabel(date: Date): string {
   return `${MONTH_ABBR[date.getUTCMonth()]}_${String(date.getUTCDate()).padStart(2, '0')}`
 }
 
-/**
- * Returns the next `count` Friday 08:00 **UTC** expiries, skipping any Friday
- * closer than MIN_DAYS_TO_EXPIRY days. UTC (not local) so the canonical
- * expiry timestamp is identical for every client and the server — this is what
- * lets the per-expiry capacity buckets match deposits reliably.
- */
+// Next `count` Friday 08:00 UTC expiries (UTC so client and server agree on the
+// canonical timestamp, which is what lets capacity buckets match deposits).
 function nextFridays(from: Date, count: number): Date[] {
   const cutoff = new Date(from.getTime() + MIN_DAYS_TO_EXPIRY * 24 * 60 * 60 * 1000)
   const dow = cutoff.getUTCDay()
@@ -54,11 +47,8 @@ function nextFridays(from: Date, count: number): Date[] {
   return out
 }
 
-/**
- * The currently-open expiry dates (canonical UTC Fridays). Shared by the UI
- * (strike selector / Earn timeline) and the server's capacity buckets so both
- * agree on exactly which expiries exist.
- */
+// Open expiry dates (canonical UTC Fridays). Shared by the UI and the server's
+// capacity buckets so both agree on which expiries exist.
 export function upcomingExpiryDates(
   from: Date = new Date(),
   count: number = ACTIVE_EXPIRY_COUNT,

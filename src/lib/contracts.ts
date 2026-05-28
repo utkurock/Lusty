@@ -3,11 +3,7 @@ import { CONTRACTS } from './stellar'
 
 export { CONTRACTS }
 
-// Per-side monthly budgets, split across the open expiries ("epochs"). Each
-// open expiry is its own capacity bucket; with 3 open at once the cap is
-// monthly / 3 per expiry. Authoritative, env-overridable values live in
-// lib/vault-state.ts (CALL_EPOCH_CAP_XLM / PUT_EPOCH_CAP_USD); these mirror the
-// defaults for reference.
+// Reference mirror of the env-overridable caps in lib/vault-state.ts.
 export const CALL_MONTHLY_CAP_XLM = 1_500_000 // → 500,000 XLM per expiry
 export const PUT_MONTHLY_CAP_USD = 150_000 //    → 50,000 USD per expiry
 export const EPOCHS_PER_MONTH = 3

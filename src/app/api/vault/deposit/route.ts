@@ -19,25 +19,17 @@ import {
   PUT_EPOCH_CAP_USD,
 } from '@/lib/vault-state'
 import { getBreakerState } from '@/lib/circuit-breaker'
+import { LUSD_CODE, LUSD_ISSUER, LUSD_DISTRIBUTOR } from '@/lib/lusd'
 
 const HORIZON =
   process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
-const LUSD_CODE = process.env.NEXT_PUBLIC_LUSD_CODE ?? 'LUSD'
-const LUSD_ISSUER = process.env.NEXT_PUBLIC_LUSD_ISSUER ?? ''
-const LUSD_DISTRIBUTOR = process.env.NEXT_PUBLIC_LUSD_DISTRIBUTOR ?? ''
 const DISTRIBUTOR_SECRET = process.env.LUSD_DISTRIBUTOR_SECRET ?? ''
 const FEE_WALLET = process.env.FEE_WALLET ?? ''
 // Must match pricing.ts PROTOCOL_FEE_BPS — kept here to avoid coupling the
 // API route to client-side modules. If you change one, change both.
 const PROTOCOL_FEE_RATE = 0.25 // 25% revenue share — see pricing.ts for rationale
 
-// Vault capacity is enforced per epoch and per side (CALL_EPOCH_CAP_XLM /
-// PUT_EPOCH_CAP_USD from vault-state.ts): the monthly budget for each book
-// divided across the three epochs in a month. New deposits that would push the
-// current epoch's flow past its side's cap are rejected, so the book fills
-// gradually and the limit resets each epoch.
-// Per-wallet position cap (in USD notional) — stops a single user from
-// monopolizing the entire vault by stacking back-to-back deposits.
+// Per-wallet position cap (USD notional) — stops one user monopolizing the vault.
 const MAX_USER_NOTIONAL_USD = Number(process.env.MAX_USER_NOTIONAL_USD ?? 50_000)
 // Per-strike inventory cap (in USD notional). Stops one strike from
 // soaking up all the vault's risk budget. Without this, a whale could
@@ -226,21 +218,9 @@ export async function POST(req: Request) {
       )
     }
 
-    // ---- enforce per-expiry ("per-epoch") vault cap
-    //
-    // Each option expiry is its own capacity bucket: this deposit is gated only
-    // against how much has already been sold *for the same expiry*, read from
-    // the protocol's own record of deposits (vault-state.ts / computeExpirySold)
-    // — not the distributor's raw Horizon balance. A full expiry blocks only
-    // that expiry; the others stay open. Sides are independent: call in XLM, put
-    // in USD notional.
-    //
-    // This deposit's own collateral is not in the DB yet (it's logged after
-    // payout), so we add it explicitly to the projected bucket. For puts the
-    // collateral is LUSD ≈ $1, so paidAmount is already the USD notional.
-    //
-    // Fail-closed: if the DB is unreachable we cannot prove we're under the
-    // cap, so we refuse the deposit (503) instead of waving it through.
+    // Per-expiry cap: gate only against what's already sold for this expiry.
+    // This deposit isn't in the DB yet, so add paidAmount to the projection.
+    // Fail-closed (503) if the DB is unreachable.
     {
       const dateKey = expiryDateKey(canonicalExpiryIso)
       let sold

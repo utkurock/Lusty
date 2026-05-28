@@ -16,14 +16,11 @@ import { HORIZON_URL, NETWORK_PASSPHRASE } from './stellar'
 
 const horizon = new Horizon.Server(HORIZON_URL)
 
-// Lusty's testnet USD (LUSD) — see scripts/mint-lusd.mjs.
-export const LUSD_CODE = process.env.NEXT_PUBLIC_LUSD_CODE ?? 'LUSD'
-export const LUSD_ISSUER =
-  process.env.NEXT_PUBLIC_LUSD_ISSUER ??
-  'GBCMRD6NDL2RAJUOFQ25EHZVO3IRIGNESWE4QDRFB4AVFIP7IT5BRCJ6'
-export const LUSD_DISTRIBUTOR =
-  process.env.NEXT_PUBLIC_LUSD_DISTRIBUTOR ??
-  'GBAIN6CHZJGBL365JNXSRQEKALXYTWKXANQZ3RBM7AGUEYYKLJJ6SNR6'
+// LUSD asset identity — single source of truth shared with every server route
+// (see lib/lusd.ts). Imported for local use and re-exported so existing
+// imports of these from './swap' keep working.
+import { LUSD_CODE, LUSD_ISSUER, LUSD_DISTRIBUTOR } from './lusd'
+export { LUSD_CODE, LUSD_ISSUER, LUSD_DISTRIBUTOR }
 
 export type AssetCode = 'XLM' | 'LUSD'
 
