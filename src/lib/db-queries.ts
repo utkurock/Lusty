@@ -140,6 +140,98 @@ export async function getDepositRecord(
   }
 }
 
+// ── User positions (server-side, cross-device) ─────────────────────
+//
+// The dashboard reads positions from here (the shared DB) rather than from
+// browser localStorage, so a user sees and can claim their positions from ANY
+// device. Every deposit is logged at deposit time; settled status comes from
+// the processed_actions claim ledger.
+
+const POS_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+function expiryLabelFromIso(iso: string | null): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (!isFinite(d.getTime())) return '—'
+  return `${POS_MONTHS[d.getUTCMonth()]}_${String(d.getUTCDate()).padStart(2, '0')}`
+}
+
+export interface DbPosition {
+  id: string
+  address: string
+  type: 'call' | 'put'
+  asset: string
+  collateralAmount: number
+  strikePrice: number | null
+  apr: number | null
+  premium: number
+  depositHash: string
+  premiumHash: string | null
+  expiryIso: string | null
+  expiryLabel: string
+  daysToExpirySnapshot: number | null
+  createdAt: number
+  settled: boolean
+  payoutHash: string | null
+}
+
+export async function getPositionsForAddress(address: string): Promise<DbPosition[]> {
+  if (!address) return []
+  await ensureSchema()
+  const pool = getPool()
+  const res = await pool.query(
+    `select t.tx_hash, t.subtype, t.amount, t.asset, t.premium_hash,
+            t.premium_amount, t.metadata, t.created_at,
+            (pa.confirmed_at is not null) as settled, pa.payout_hash
+     from transactions t
+     left join processed_actions pa
+       on pa.action_type = 'claim' and pa.source_hash = t.tx_hash
+     where t.address = $1
+       and t.type = 'deposit'
+       and (t.subtype = 'call' or t.subtype = 'put')
+     order by t.created_at desc`,
+    [address]
+  )
+
+  return res.rows.map((r) => {
+    const meta = (r.metadata ?? {}) as Record<string, unknown>
+    const numOrNull = (v: unknown) =>
+      typeof v === 'number' && isFinite(v) ? v : null
+
+    const strikePrice = numOrNull(meta.strikePrice)
+    const apr = numOrNull(meta.apr)
+    const daysToExpiry = numOrNull(meta.daysToExpiry)
+    const collateral = numOrNull(meta.collateralAmount)
+
+    let expiryIso =
+      typeof meta.expiryIso === 'string' && meta.expiryIso ? meta.expiryIso : null
+    if (!expiryIso && daysToExpiry !== null) {
+      const createdMs = new Date(r.created_at).getTime()
+      if (isFinite(createdMs)) {
+        expiryIso = new Date(createdMs + daysToExpiry * 86400_000).toISOString()
+      }
+    }
+
+    return {
+      id: r.tx_hash,
+      address,
+      type: r.subtype as 'call' | 'put',
+      asset: r.asset ?? (r.subtype === 'call' ? 'XLM' : 'LUSD'),
+      collateralAmount: collateral !== null ? collateral : parseFloat(r.amount),
+      strikePrice,
+      apr,
+      premium: r.premium_amount !== null ? parseFloat(r.premium_amount) : 0,
+      depositHash: r.tx_hash,
+      premiumHash: r.premium_hash ?? null,
+      expiryIso,
+      expiryLabel: expiryLabelFromIso(expiryIso),
+      daysToExpirySnapshot: daysToExpiry,
+      createdAt: new Date(r.created_at).getTime(),
+      settled: r.settled === true,
+      payoutHash: r.payout_hash ?? null,
+    }
+  })
+}
+
 // ── Leaderboard ────────────────────────────────────────────────────
 
 export interface LeaderRow {

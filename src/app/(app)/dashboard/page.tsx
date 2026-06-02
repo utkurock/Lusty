@@ -2,30 +2,61 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useWalletContext } from '@/providers/WalletProvider'
-import {
-  getPositionsFor,
-  markSettled,
-  StoredPosition,
-} from '@/lib/positions'
 import { formatUsdc, formatXlm } from '@/lib/utils'
 import { ExternalLink, Loader2 } from 'lucide-react'
 
-function daysRemaining(expiryIso: string): number {
+// Mirrors DbPosition from the /api/vault/positions response. Positions live in
+// the shared DB, so they show — and can be claimed — from any device.
+interface Position {
+  id: string
+  address: string
+  type: 'call' | 'put'
+  asset: string
+  collateralAmount: number
+  strikePrice: number | null
+  apr: number | null
+  premium: number
+  depositHash: string
+  premiumHash: string | null
+  expiryIso: string | null
+  expiryLabel: string
+  settled: boolean
+}
+
+function daysRemaining(expiryIso: string | null): number {
+  if (!expiryIso) return 0
   const ms = new Date(expiryIso).getTime() - Date.now()
   return Math.max(0, Math.ceil(ms / (1000 * 60 * 60 * 24)))
 }
 
-function isExpired(expiryIso: string): boolean {
+function isExpired(expiryIso: string | null): boolean {
+  if (!expiryIso) return false
   return new Date(expiryIso).getTime() <= Date.now()
 }
 
 export default function DashboardPage() {
   const { connected, connect, address } = useWalletContext()
-  const [positions, setPositions] = useState<StoredPosition[]>([])
+  const [positions, setPositions] = useState<Position[]>([])
+  const [loading, setLoading] = useState(false)
   const [claimingId, setClaimingId] = useState<string | null>(null)
   const [toast, setToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
 
-  const refresh = () => setPositions(getPositionsFor(address))
+  const refresh = async () => {
+    if (!address) {
+      setPositions([])
+      return
+    }
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/vault/positions?address=${encodeURIComponent(address)}`)
+      const data = await res.json()
+      if (res.ok && data.ok) setPositions(data.positions as Position[])
+    } catch {
+      /* keep last good list */
+    } finally {
+      setLoading(false)
+    }
+  }
 
   useEffect(() => {
     refresh()
@@ -35,11 +66,14 @@ export default function DashboardPage() {
   const totalPremium = positions.reduce((s, p) => s + p.premium, 0)
   const totalNotional = positions.reduce(
     (s, p) =>
-      s + (p.type === 'call' ? p.collateralAmount * p.strikePrice : p.collateralAmount),
+      s +
+      (p.type === 'call'
+        ? p.collateralAmount * (p.strikePrice ?? 0)
+        : p.collateralAmount),
     0
   )
 
-  const handleClaim = async (p: StoredPosition) => {
+  const handleClaim = async (p: Position) => {
     setClaimingId(p.id)
     setToast(null)
     try {
@@ -56,8 +90,7 @@ export default function DashboardPage() {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Claim failed')
-      markSettled(p.depositHash)
-      refresh()
+      await refresh()
       setToast({
         kind: 'ok',
         text: `✓ ${data.outcome === 'kept' ? 'Kept' : 'Assigned'} · received ${data.payoutAmount} ${data.payoutAsset}`,
@@ -134,7 +167,15 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {connected && positions.length === 0 && (
+      {connected && loading && positions.length === 0 && (
+        <div className="light-card p-12 rounded-sm text-center">
+          <div className="font-mono text-sm text-ink-2 inline-flex items-center gap-2">
+            <Loader2 size={14} className="animate-spin" /> Loading positions…
+          </div>
+        </div>
+      )}
+
+      {connected && !loading && positions.length === 0 && (
         <div className="light-card p-12 rounded-sm text-center">
           <div className="font-mono text-sm text-ink-2 mb-4">
             No active positions. Start earning.
@@ -172,7 +213,7 @@ export default function DashboardPage() {
                       {p.asset} {isCall ? 'Covered Call' : 'Cash-Secured Put'}
                     </div>
                     <div className="font-mono text-[11px] text-ink-2">
-                      strike ${p.strikePrice.toFixed(4)} · {p.expiryLabel}
+                      strike ${(p.strikePrice ?? 0).toFixed(4)} · {p.expiryLabel}
                     </div>
                   </div>
                 </div>
@@ -195,7 +236,7 @@ export default function DashboardPage() {
                   <div className="num text-sm text-[#22c55e] font-semibold mt-0.5">
                     ${p.premium.toFixed(4)}{' '}
                     <span className="text-ink-2 font-normal">
-                      ({p.apr.toFixed(2)}% APR)
+                      ({(p.apr ?? 0).toFixed(2)}% APR)
                     </span>
                   </div>
                 </div>
