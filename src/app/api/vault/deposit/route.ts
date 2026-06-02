@@ -26,10 +26,9 @@ import { LUSD_CODE, LUSD_ISSUER, LUSD_DISTRIBUTOR } from '@/lib/lusd'
 const HORIZON =
   process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
 const DISTRIBUTOR_SECRET = process.env.LUSD_DISTRIBUTOR_SECRET ?? ''
-const FEE_WALLET = process.env.FEE_WALLET ?? ''
-// The protocol edge per option is the haircut between fair and user premium,
-// computed by the single quote engine (pricing-server.ts) — not a flat rate
-// applied here. See `quote.protocolEdge` below.
+// No fee wallet payout at deposit time: the protocol edge is implicit (the
+// quote engine pays below fair value; the difference is realized at settlement).
+// `quote.protocolEdge` is logged for analytics only.
 
 // Per-wallet position cap (USD notional) — stops one user monopolizing the vault.
 const MAX_USER_NOTIONAL_USD = Number(process.env.MAX_USER_NOTIONAL_USD ?? 50_000)
@@ -411,11 +410,14 @@ export async function POST(req: Request) {
     const units =
       body.type === 'call' ? paidAmount : paidAmount / body.strikePrice
 
-    // Premium and fee are the per-unit engine outputs scaled by units. No
-    // second adjustment layer — userPremium is exactly what the UI showed.
+    // Premium paid to the user — the single engine output × units. This is the
+    // ONLY on-chain payout the distributor makes. The protocol's edge is
+    // implicit: we pay below fair value and realize it at settlement, so there
+    // is no separate fee transfer at deposit time (that would just drain the
+    // distributor for no economic gain). `protocolEdgeNotional` is recorded for
+    // analytics only — it is never moved on-chain here.
     const premium = quote.userPremium * units
-    const fee = quote.protocolEdge * units
-    const grossPremium = quote.fairPremium * units
+    const protocolEdgeNotional = quote.protocolEdge * units
     const effectiveApr = quote.apr
 
     // Observability only: log when a legacy client APR field diverges from the
@@ -436,9 +438,9 @@ export async function POST(req: Request) {
     if (!isFinite(premium) || premium <= 0) {
       return NextResponse.json({ error: 'upfront computed as zero' }, { status: 400 })
     }
-    if (grossPremium > MAX_PREMIUM_LUSD) {
+    if (premium > MAX_PREMIUM_LUSD) {
       return NextResponse.json(
-        { error: `upfront ${grossPremium.toFixed(2)} exceeds cap ${MAX_PREMIUM_LUSD}` },
+        { error: `upfront ${premium.toFixed(2)} exceeds cap ${MAX_PREMIUM_LUSD}` },
         { status: 400 }
       )
     }
@@ -464,7 +466,9 @@ export async function POST(req: Request) {
       fee: BASE_FEE,
       networkPassphrase: Networks.TESTNET,
     })
-      // Send net upfront to user
+      // Single payout: the upfront premium to the user. The protocol edge is
+      // implicit (below-fair pricing realized at settlement), so nothing is
+      // sent to a fee wallet here.
       .addOperation(
         Operation.payment({
           destination: body.address,
@@ -472,56 +476,6 @@ export async function POST(req: Request) {
           amount: premium.toFixed(7),
         })
       )
-
-    // Send protocol fee to fee wallet.
-    //   1) Preferred: pay LUSD if the fee wallet has a LUSD trustline.
-    //   2) Fallback for `call` deposits: pay the equivalent in XLM (no trustline needed).
-    //   3) Otherwise: skip and log loudly so we don't silently lose revenue.
-    let feeSent = false
-    let feeNote: string | undefined
-    if (FEE_WALLET && fee > 0.0000001) {
-      try {
-        const feeAcc = await server.loadAccount(FEE_WALLET)
-        const feeHasTrust = feeAcc.balances.some(
-          (b: any) => b.asset_code === LUSD_CODE && b.asset_issuer === LUSD_ISSUER
-        )
-        if (feeHasTrust) {
-          txBuilder.addOperation(
-            Operation.payment({
-              destination: FEE_WALLET,
-              asset,
-              amount: fee.toFixed(7),
-            })
-          )
-          feeSent = true
-        } else if (body.type === 'call') {
-          // No LUSD trustline — pay the equivalent in native XLM. Reuse
-          // the spot we already fetched for the quote so we don't make a
-          // second round-trip to Binance on the same request.
-          if (spot > 0) {
-            const feeInXlm = fee / spot
-            if (feeInXlm > 0.0000001) {
-              txBuilder.addOperation(
-                Operation.payment({
-                  destination: FEE_WALLET,
-                  asset: Asset.native(),
-                  amount: feeInXlm.toFixed(7),
-                })
-              )
-              feeSent = true
-              feeNote = `paid ${feeInXlm.toFixed(4)} XLM (no LUSD trustline on fee wallet)`
-            }
-          }
-        }
-        if (!feeSent) {
-          feeNote = `FEE_WALLET ${FEE_WALLET} has no LUSD trustline — protocol fee of ${fee.toFixed(4)} LUSD NOT sent. Open a LUSD trustline on the fee wallet to receive fees.`
-          console.error('vault/deposit:', feeNote)
-        }
-      } catch (feeErr: any) {
-        feeNote = `FEE_WALLET load failed: ${feeErr?.message ?? 'unknown'} — fee of ${fee.toFixed(4)} LUSD NOT sent.`
-        console.error('vault/deposit:', feeNote)
-      }
-    }
 
     const premiumTx = txBuilder.setTimeout(60).build()
     premiumTx.sign(distributor)
@@ -553,6 +507,7 @@ export async function POST(req: Request) {
           haircut: quote.haircut,
           utilization: quote.utilization,
           fairPremium: quote.fairPremium,
+          protocolEdgeNotional,
           units,
           forwardSource: context.forwardSource,
           volMethod: context.volMethod,
@@ -568,8 +523,6 @@ export async function POST(req: Request) {
       depositHash: body.txHash,
       premiumHash: (payRes as any).hash,
       premium: premium.toFixed(4),
-      feeSent,
-      ...(feeNote ? { feeNote } : {}),
       ...(dbWarning ? { warning: `Leaderboard not updated: ${dbWarning}` } : {}),
     })
   } catch (e: any) {
