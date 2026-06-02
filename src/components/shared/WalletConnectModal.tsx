@@ -60,10 +60,13 @@ export function WalletConnectModal() {
             return (
               <button
                 key={w.id}
-                disabled={!available || loading}
+                // Only disable while a connection is in flight. Not-installed
+                // wallets MUST stay clickable so the install link can open —
+                // a disabled button never fires onClick.
+                disabled={loading}
                 onClick={() => {
                   if (available) selectWallet(w.id)
-                  else window.open(w.url, '_blank', 'noopener,noreferrer')
+                  else if (w.url) window.open(w.url, '_blank', 'noopener,noreferrer')
                 }}
                 className={
                   'w-full flex items-center gap-3 px-5 py-4 transition text-left group ' +
