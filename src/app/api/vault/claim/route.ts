@@ -167,8 +167,15 @@ export async function POST(req: Request) {
       )
     }
 
-    // ---- settle: compare spot at settlement to the server-canonical strike
-    const spot = await fetchXlmUsd()
+    // ---- settle against the price AT EXPIRY, not the price right now.
+    //
+    // SECURITY/economics: the user chooses when to claim (any time after
+    // expiry). If we settled at the live price, a covered-call writer could
+    // wait until spot dips below the strike and always claim "kept" (get their
+    // XLM back), dodging assignment and the upside the protocol is owed — which
+    // would make the vault structurally unprofitable. Pinning settlement to the
+    // expiry-minute price removes all timing discretion.
+    const spot = await fetchXlmUsdAt(expiryMs)
 
     const distributor = Keypair.fromSecret(DISTRIBUTOR_SECRET)
     const lusd = new Asset(LUSD_CODE, LUSD_ISSUER)
@@ -312,4 +319,26 @@ async function fetchXlmUsd(): Promise<number> {
   const n = parseFloat(j.price)
   if (!isFinite(n) || n <= 0) throw new Error('invalid price from feed')
   return n
+}
+
+// Settlement price = XLM close at the expiry minute, independent of when the
+// user actually claims. Falls back to the live price only if the historical
+// candle is unavailable (e.g. claim within the same minute as expiry).
+async function fetchXlmUsdAt(atMs: number): Promise<number> {
+  try {
+    const url =
+      `https://api.binance.com/api/v3/klines?symbol=XLMUSDT&interval=1m` +
+      `&startTime=${atMs}&limit=1`
+    const r = await fetch(url, { cache: 'no-store' })
+    if (r.ok) {
+      const rows = await r.json()
+      if (Array.isArray(rows) && rows[0]) {
+        const close = parseFloat(rows[0][4])
+        if (isFinite(close) && close > 0) return close
+      }
+    }
+  } catch {
+    /* fall through to live price */
+  }
+  return fetchXlmUsd()
 }

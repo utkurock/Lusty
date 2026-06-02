@@ -397,13 +397,23 @@ export async function POST(req: Request) {
       utilization = 0.98
     }
 
+    // SECURITY: price the option on the time until the CANONICAL expiry we will
+    // settle against — never the client-supplied daysToExpiry. Otherwise a
+    // caller could send a long daysToExpiry (high premium) with a near-term
+    // expiryIso (settles almost immediately) and harvest a long-dated premium
+    // for a one-minute lock. Pricing time == settlement time, always.
+    const pricingDays = Math.max(
+      MIN_DAYS,
+      Math.ceil((new Date(canonicalExpiryIso).getTime() - Date.now()) / 86400_000)
+    )
+
     // THE quote. σ from XLM realized vol, forward from perp funding, haircut
     // from base + utilization. Fails closed if the σ feed is unavailable.
     const { quote, context } = await quoteOptionLive({
       side: body.type,
       spot,
       strike: body.strikePrice,
-      daysToExpiry: body.daysToExpiry,
+      daysToExpiry: pricingDays,
       utilization,
     })
 
@@ -528,7 +538,7 @@ export async function POST(req: Request) {
           collateralAmount: paidAmount,
           strikePrice: body.strikePrice,
           apr: effectiveApr,
-          daysToExpiry: body.daysToExpiry,
+          daysToExpiry: pricingDays,
           expiryIso: canonicalExpiryIso,
           spot,
           forward: quote.forward,

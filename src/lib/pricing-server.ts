@@ -236,10 +236,14 @@ export function quoteOption(input: QuoteInput): Quote {
     input.timeRefDays && input.timeRefDays > 0 ? input.timeRefDays : resolveTimeRefDays()
   const targetTop = MAX_APR * Math.min(1, daysToExpiry / timeRefDays)
   const scaleFactor = ref.apr > 0 ? Math.min(1, targetTop / ref.apr) : 1
-  const aprCapped = scaleFactor < 1
 
-  // Gross offered APR after ladder normalization (pre-commission).
-  const grossApr = self.apr * scaleFactor
+  // Gross offered APR after ladder normalization, hard-clamped to the ceiling.
+  // The clamp matters for SECURITY: a client could submit an off-ladder strike
+  // (near-ATM or ITM) whose raw APR scales above the nearest rung; without this
+  // bound it would price — and pay — well above the displayed cap. The nearest
+  // ladder rung already sits exactly at targetTop, so this is a no-op for it.
+  const grossApr = Math.min(self.apr * scaleFactor, targetTop)
+  const aprCapped = scaleFactor < 1 || self.apr * scaleFactor > targetTop
   const capital = self.capital
   const fairPremium = self.fair
   const grossUpfront = capital * (grossApr / 100) * (daysToExpiry / 365)
