@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Copy, ChevronRight, ChevronLeft } from 'lucide-react'
 
 interface Section {
@@ -105,8 +105,8 @@ const GROUPS: Group[] = [
               margin, or run delta-hedging bots — you only pick a{' '}
               <strong>strike you&apos;d be happy to sell at</strong> (for calls) or{' '}
               <strong>buy at</strong> (for puts). The protocol quotes a fair
-              upfront yield, locks your collateral for one weekly epoch and pays
-              the upfront in LUSD the moment you deposit.
+              upfront yield, locks your collateral until your chosen weekly
+              expiry and pays the upfront in LUSD the moment you deposit.
             </P>
             <H>Why Lusty exists</H>
             <P>
@@ -227,7 +227,7 @@ const GROUPS: Group[] = [
         icon: '🦺',
         title: 'Solution: Lusty V1',
         eyebrow: 'GETTING STARTED',
-        tagline: 'Two vaults, four strikes, weekly epochs, upfront USDC.',
+        tagline: 'Two vaults, four strikes, rolling weekly expiries, upfront LUSD.',
         body: (
           <>
             <P>
@@ -241,13 +241,13 @@ const GROUPS: Group[] = [
             <H>The two vaults</H>
             <List>
               <li>
-                <strong>Covered call vault (XLM → USDC premium):</strong>{' '}
-                deposit XLM, choose an upside strike, receive USDC premium
+                <strong>Covered call vault (XLM → LUSD premium):</strong>{' '}
+                deposit XLM, choose an upside strike, receive LUSD premium
                 instantly.
               </li>
               <li>
-                <strong>Cash-secured put vault (USDC → USDC premium):</strong>{' '}
-                deposit USDC, choose a downside strike, receive USDC premium
+                <strong>Cash-secured put vault (LUSD → LUSD premium):</strong>{' '}
+                deposit LUSD, choose a downside strike, receive LUSD premium
                 instantly.
               </li>
             </List>
@@ -259,17 +259,21 @@ const GROUPS: Group[] = [
               strikes. The strike grids are:
             </P>
             <Pre>
-{`covered call  :  1.15x · 1.30x · 1.45x · 1.60x   (above spot)
-cash-secured put:  0.85x · 0.70x · 0.55x · 0.40x   (below spot)`}
+{`covered call     :  1.02x · 1.06x · 1.12x · 1.20x   (above spot)
+cash-secured put :  0.98x · 0.94x · 0.88x · 0.80x   (below spot)`}
             </Pre>
-            <H>Weekly epochs</H>
+            <H>Rolling weekly expiries</H>
             <P>
-              Every position is written into the current epoch, and every epoch
-              expires at <strong>Friday 08:00 UTC</strong>. At expiry the
-              settlement spot price is snapshotted, every position is compared
-              to its strike, and collateral is either returned or converted to
-              the other side. Once an epoch is settled, users can immediately
-              roll into the next one.
+              Lusty keeps several weekly expiries open at once — the next few{' '}
+              <strong>Friday 08:00 UTC</strong> dates. When you deposit you pick
+              the expiry that matches your view (roughly one, two or three weeks
+              out). Each expiry is its own independent capacity bucket and
+              settles on its own Friday: the settlement spot is snapshotted,
+              every position in that expiry is compared to its strike, and
+              collateral is either returned or converted to the other side. A
+              full expiry blocks only itself, so there is almost always another
+              with open room, and you can roll a settled position straight into
+              a later one.
             </P>
             <Today>
               Settlement is performed <strong>server-side</strong> by the
@@ -280,16 +284,16 @@ cash-secured put:  0.85x · 0.70x · 0.55x · 0.40x   (below spot)`}
             <H>Pricing you can verify</H>
             <P>
               Premiums are quoted by a Black-Scholes engine with a volatility
-              smile, then adjusted by a transparent dynamic-APR layer that
-              accounts for vault utilization, inventory skew, strike
-              concentration and short-term flow momentum. The engine runs
+              smile, then scaled by a transparent dynamic-APR layer that
+              accounts for vault utilization and time-to-expiry. The engine runs
               server-side today (moving on-chain with the Soroban migration),
-              and every component of the final APR is visible on the research
-              page.
+              and — crucially — the upfront you are actually paid is computed
+              against the <em>same</em> adjusted APR you see quoted, so the
+              number on the earn page is the number that lands in your wallet.
             </P>
             <H>Quickstart</H>
             <List>
-              <li>Connect a Stellar wallet (Freighter, xBull, Albedo, Lobstr, or any WalletConnect-compatible wallet).</li>
+              <li>Connect a Stellar wallet — Freighter, xBull, Albedo or Lobstr.</li>
               <li>
                 Go to <Code>/earn</Code>, pick a vault, pick a strike.
               </li>
@@ -297,10 +301,10 @@ cash-secured put:  0.85x · 0.70x · 0.55x · 0.40x   (below spot)`}
                 Deposit between <Code>100 XLM</Code> and <Code>10,000 XLM</Code>{' '}
                 worth of collateral.
               </li>
-              <li>Receive the USDC premium in the same transaction.</li>
+              <li>Receive the LUSD upfront in your wallet once the deposit confirms.</li>
               <li>
-                Wait for Friday 08:00 UTC or check <Code>/dashboard</Code> for
-                live PnL and settlement countdown.
+                Wait for your expiry&apos;s Friday 08:00 UTC or check{' '}
+                <Code>/dashboard</Code> for live PnL and settlement countdown.
               </li>
             </List>
           </>
@@ -321,7 +325,7 @@ cash-secured put:  0.85x · 0.70x · 0.55x · 0.40x   (below spot)`}
         body: (
           <>
             <P>
-              The covered call vault lets XLM holders generate USDC yield by
+              The covered call vault lets XLM holders generate LUSD yield by
               selling the right to buy their XLM at a strike price higher than
               the current spot. In exchange they receive an upfront LUSD payment,
               locked in at the moment of deposit.
@@ -330,9 +334,9 @@ cash-secured put:  0.85x · 0.70x · 0.55x · 0.40x   (below spot)`}
             <P>
               You deposit a whole amount of XLM into the vault and select one
               strike multiplier. The protocol computes the gross premium from
-              the Black-Scholes engine, subtracts the 15% revenue share, and
+              the Black-Scholes engine, subtracts the 25% revenue share, and
               transfers the net upfront LUSD to your wallet once your deposit
-              settles. Your XLM is then locked into the current epoch until
+              settles. Your XLM is then locked into your chosen expiry until its
               Friday 08:00 UTC.
             </P>
             <H>Settlement outcomes</H>
@@ -348,27 +352,27 @@ cash-secured put:  0.85x · 0.70x · 0.55x · 0.40x   (below spot)`}
                 <strong>
                   Spot at expiry &gt; strike (call is assigned):
                 </strong>{' '}
-                your XLM is converted to USDC at the strike price. You still
-                keep the upfront, and you still keep the LUSD — you have simply
-                sold your XLM at a price you already agreed was acceptable. If
-                spot keeps running, you&apos;ve given up that extra upside; if spot
-                reverses, you&apos;ve effectively sold the top.
+                your XLM is converted to LUSD at the strike price. You still
+                keep the upfront — you have simply sold your XLM at a price you
+                already agreed was acceptable. If spot keeps running, you&apos;ve
+                given up that extra upside; if spot reverses, you&apos;ve
+                effectively sold the top.
               </li>
             </List>
             <H>Strike grid</H>
             <Pre>
 {`strike   distance   intuition
-1.15x    +15%       highest APR, highest assignment probability
-1.30x    +30%       balanced
-1.45x    +45%       low assignment risk
-1.60x    +60%       tail income, smallest APR`}
+1.02x    +2%        highest APR, highest assignment probability
+1.06x    +6%        balanced
+1.12x    +12%       low assignment risk
+1.20x    +20%       tail income, smallest APR`}
             </Pre>
             <H>Who should use it</H>
             <P>
               Covered calls are for XLM holders who are either long-term bullish
               but comfortable trimming at a specific higher price, or who simply
               want to harvest the volatility upfront on an existing XLM bag. If
-              you would be upset about selling XLM at <Code>1.15x</Code> spot,
+              you would be upset about selling XLM at <Code>1.02x</Code> spot,
               pick a further strike or use the put vault instead.
             </P>
           </>
@@ -393,7 +397,7 @@ cash-secured put:  0.85x · 0.70x · 0.55x · 0.40x   (below spot)`}
               You deposit LUSD into the vault and select one strike multiplier
               under spot. The protocol reserves enough LUSD to buy XLM at your
               chosen strike, pays you the net upfront, and locks your
-              collateral into the epoch until Friday 08:00 UTC.
+              collateral into your chosen expiry until its Friday 08:00 UTC.
             </P>
             <H>Settlement outcomes</H>
             <List>
@@ -416,10 +420,10 @@ cash-secured put:  0.85x · 0.70x · 0.55x · 0.40x   (below spot)`}
             <H>Strike grid</H>
             <Pre>
 {`strike   distance   intuition
-0.85x    −15%       highest APR, most likely assignment
-0.70x    −30%       balanced
-0.55x    −45%       strong discount bid
-0.40x    −60%       tail income on deep crashes`}
+0.98x    −2%        highest APR, most likely assignment
+0.94x    −6%        balanced
+0.88x    −12%       strong discount bid
+0.80x    −20%       tail income on deep crashes`}
             </Pre>
             <H>Who should use it</H>
             <P>
@@ -451,7 +455,7 @@ cash-secured put:  0.85x · 0.70x · 0.55x · 0.40x   (below spot)`}
             <Pre>
 {`iv_eff(K)    = iv_base × (1 + 6 × ln(K / S)^2)      // volatility smile
 gross_prem   = BlackScholes(side, S, K, T, iv_eff)  // per 1 unit collateral
-fair_prem    = gross_prem × (1 − 0.15)               // 15% revenue share
+fair_prem    = gross_prem × (1 − 0.25)               // 25% revenue share
 APR_fair     = fair_prem / S × (365 / days) × 100`}
             </Pre>
             <P>
@@ -460,33 +464,43 @@ APR_fair     = fair_prem / S × (365 / days) × 100`}
               are never systematically under-priced. The multiplier{' '}
               <Code>6</Code> is the curvature and is fixed in V1.
             </P>
-            <H>Stage 2 — Dynamic APR margin</H>
+            <H>Stage 2 — Dynamic APR adjustment</H>
             <P>
-              On top of the fair APR, the protocol adds a margin whose
-              components are:
+              The fair APR is then scaled by a transparent adjustment that only
+              ever <em>discounts</em> it — it never pays above Black-Scholes
+              fair value. Two factors multiply together, both capped at 1.0:
             </P>
             <List>
               <li>
-                <strong>Utilization:</strong> as a strike fills toward its cap,
-                APR rises to attract offsetting flow.
+                <strong>Time decay:</strong> the quoted APR is anchored to a
+                14-day selling window. Shorter residual windows shrink it
+                linearly, so a near-expiry position never displays an
+                annualized spike nobody can actually harvest. Positions 14 days
+                out or longer see the full fair APR.
               </li>
               <li>
-                <strong>Inventory skew:</strong> if the vault is heavy on puts
-                vs. calls (or the opposite), the underweighted side pays more.
-              </li>
-              <li>
-                <strong>Strike concentration:</strong> crowded strikes get a
-                discount; empty strikes get a premium.
-              </li>
-              <li>
-                <strong>Flow momentum:</strong> sudden directional flow pushes
-                APR up on the side absorbing the move.
+                <strong>Utilization:</strong> a kinked Aave/Compound-style
+                curve. An empty expiry quotes the full fair APR; as it fills the
+                APR drifts down, then drops convexly past the 80% kink toward a
+                floor of 25% of fair value. Late depositors crowding into a
+                saturated expiry are quoted less, so they cannot dilute the
+                realized yield of earlier depositors.
               </li>
             </List>
+            <Pre>
+{`time_factor  = min(1, days_to_expiry / 14)
+util_factor  = kinked(utilization)          // 1.0 empty → 0.25 full
+APR_quoted   = APR_fair × time_factor × util_factor`}
+            </Pre>
             <P>
-              Every component is computed from public protocol state and is
-              visible on the <Code>/research</Code> page, so depositors can
-              always reconstruct why a strike is quoted at the APR they see.
+              Crucially, the protocol pays the upfront against this{' '}
+              <em>same</em> adjusted APR — recomputed server-side from its own
+              on-chain utilization, never from a client-supplied number — so the
+              premium that lands in your wallet equals the quote you saw on the
+              earn page. The inputs (days-to-expiry and live epoch utilization)
+              are public protocol state, surfaced on the <Code>/earn</Code> and{' '}
+              <Code>/research</Code> pages, so you can always reconstruct why a
+              strike is quoted at the APR you see.
             </P>
           </>
         ),
@@ -500,18 +514,20 @@ APR_fair     = fair_prem / S × (365 / days) × 100`}
         body: (
           <>
             <P>
-              Lusty operates on a fixed <strong>weekly epoch</strong> schedule.
-              Every vault opens, accepts deposits, and settles on the same
-              cadence. This keeps the protocol simple, makes APR comparisons
-              apples-to-apples across strikes, and lets users always know
-              exactly when their capital will be liquid again.
+              Lusty operates on <strong>rolling weekly expiries</strong>.
+              Several Friday 08:00 UTC expiries are open at once, and you choose
+              which one to write your position into. This keeps the protocol
+              simple, makes APR comparisons apples-to-apples across strikes, and
+              lets you pick exactly when your capital will be liquid again.
             </P>
             <H>Epoch lifecycle</H>
             <List>
               <li>
-                <strong>Open:</strong> a new epoch begins the moment the
-                previous one settles. Deposits are accepted at every strike up
-                to that strike&apos;s cap.
+                <strong>Open:</strong> the next few Friday expiries are open
+                simultaneously, each accepting deposits up to its own per-expiry
+                capacity cap. Deposits close <strong>2 days before</strong> an
+                expiry, so the vault never sells high-decay options in the final
+                hours before settlement.
               </li>
               <li>
                 <strong>Active:</strong> existing positions accrue no additional
@@ -552,15 +568,17 @@ APR_fair     = fair_prem / S × (365 / days) × 100`}
         icon: '💸',
         title: 'Fees',
         eyebrow: 'PROTOCOL AND PRODUCT',
-        tagline: '15% revenue share on upfront income. Visible on every quote.',
+        tagline: '25% revenue share on upfront income. Visible on every quote.',
         body: (
           <>
             <P>
-              Lusty takes a <strong>15% revenue share</strong> on the upfront
-              of every position. The share is applied before any
-              dynamic margin and before the user sees a quoted APR — in other
-              words, the number you see on the earn page is the number you
-              actually earn.
+              Lusty takes a <strong>25% revenue share</strong> on the upfront
+              of every position. The share is applied to the Black-Scholes fair
+              value before the dynamic adjustment and before the user sees a
+              quoted APR — in other words, the number you see on the earn page
+              is the number you actually earn. (The fee is 25%, not 15%, to
+              leave headroom for realized-vol spikes on the un-hedged short-call
+              inventory.)
             </P>
             <H>What you do NOT pay</H>
             <List>
@@ -571,7 +589,7 @@ APR_fair     = fair_prem / S × (365 / days) × 100`}
               <li>No oracle fee.</li>
               <li>No hidden spread between the quoted APR and the settled APR.</li>
             </List>
-            <H>Where the 15% goes</H>
+            <H>Where the 25% goes</H>
             <P>
               In the current testnet phase, 100% of protocol revenue accrues to
               a treasury earmarked for audit, bounty and liquidity
@@ -591,11 +609,29 @@ APR_fair     = fair_prem / S × (365 / days) × 100`}
         body: (
           <>
             <P>
-              During the testnet and early-mainnet phases, all deposits are
-              bounded between <Code>100 XLM</Code> and <Code>10,000 XLM</Code>{' '}
-              worth of collateral. For the put vault, those bounds are
-              converted to USDC at the live spot price at the moment of deposit.
+              During the testnet and early-mainnet phases, every single deposit
+              is bounded between <Code>100 XLM</Code> and{' '}
+              <Code>10,000 XLM</Code> worth of collateral. For the put vault,
+              those bounds are converted to their LUSD-equivalent at the live
+              spot price at the moment of deposit.
             </P>
+            <P>
+              Two further notional caps run alongside the per-deposit bounds and
+              the per-expiry capacity buckets:
+            </P>
+            <List>
+              <li>
+                <strong>Per-wallet limit:</strong> a single wallet can deposit
+                up to a rolling <Code>$50,000</Code> of notional across any
+                30-day window — no one address can monopolize the vault.
+              </li>
+              <li>
+                <strong>Per-strike inventory limit:</strong> up to{' '}
+                <Code>$30,000</Code> of notional may be sold against any one
+                strike over a 14-day window, so the vault&apos;s short-option
+                risk can&apos;t concentrate on a single price point.
+              </li>
+            </List>
             <H>Why the cap exists</H>
             <List>
               <li>
@@ -802,20 +838,20 @@ APR_fair     = fair_prem / S × (365 / days) × 100`}
               Lusty is not a magic yield box. When you sell a covered call or a
               cash-secured put, you are making a specific, enforceable promise:
               you will sell XLM at a given strike, or you will buy XLM at a
-              given strike, if the oracle says so at expiry. The upfront
-              upfront is the compensation for that promise.
+              given strike, if the oracle says so at expiry. The upfront is the
+              compensation for that promise.
             </P>
             <H>What assignment feels like</H>
             <List>
               <li>
                 <strong>Covered call assigned:</strong> you wake up on Friday
-                and your XLM has been swapped to USDC at the strike. If spot is
+                and your XLM has been swapped to LUSD at the strike. If spot is
                 well above the strike, you&apos;ve given up the extra upside. Your
                 downside in that scenario is opportunity cost, not capital loss.
               </li>
               <li>
                 <strong>Cash-secured put assigned:</strong> you wake up on
-                Friday and your USDC has been swapped into XLM at the strike.
+                Friday and your LUSD has been swapped into XLM at the strike.
                 If spot is well below the strike, you now hold XLM that is
                 worth less than what you paid. This is a real mark-to-market
                 loss, partly offset by the upfront you were paid.
@@ -854,7 +890,7 @@ APR_fair     = fair_prem / S × (365 / days) × 100`}
               a protocol-operated distributor account, and pricing, settlement
               and payouts are executed <strong>server-side</strong>. You are
               trusting the Lusty operator to settle and return collateral
-              correctly. This is testnet only, with test XLM and test USDC that
+              correctly. This is testnet only, with test XLM and test LUSD that
               have no real value.
             </Today>
             <P>
@@ -863,8 +899,9 @@ APR_fair     = fair_prem / S × (365 / days) × 100`}
               settlement server) and ordinary web-application risk, rather than
               smart-contract bugs. We have hardened the API surface (server-side
               repricing, server-canonical strike binding, replay protection,
-              fail-closed caps), but a custodial server is a trust assumption
-              you should weigh.
+              fail-closed caps, and an auto-halt circuit breaker that pauses new
+              deposits the moment a risk trigger — or an admin — trips it), but
+              a custodial server is a trust assumption you should weigh.
             </P>
             <Roadmap>
               The Soroban vault, pricing and settlement contracts are{' '}
@@ -878,7 +915,7 @@ APR_fair     = fair_prem / S × (365 / days) × 100`}
             <List>
               <li>
                 The current deployment runs on <strong>Stellar testnet</strong>.
-                Deposits use test XLM and test USDC from the testnet faucet,
+                Deposits use test XLM and test LUSD from the testnet faucet,
                 which have no real value.
               </li>
               <li>
@@ -953,8 +990,7 @@ APR_fair     = fair_prem / S × (365 / days) × 100`}
               </li>
               <li>
                 <strong>@creit.tech/stellar-wallets-kit</strong> — unified
-                wallet connector for Freighter, xBull, Albedo, Lobstr and
-                WalletConnect.
+                wallet connector for Freighter, xBull, Albedo and Lobstr.
               </li>
             </List>
             <H>Frontend</H>
@@ -972,7 +1008,7 @@ APR_fair     = fair_prem / S × (365 / days) × 100`}
               </li>
               <li>
                 <strong>Tailwind CSS</strong> — styling, design tokens and the
-                cream/black theme.
+                light (cream) + dark themes.
               </li>
               <li>
                 <strong>lightweight-charts</strong> (TradingView) — powers the
@@ -1316,6 +1352,12 @@ accent (gold)       : #eab308
 muted text          : #6b6560
 border              : #c4bfb2`}
             </Pre>
+            <P>
+              The app ships both a light (cream) and a dark theme, toggleable
+              from the navbar. The gold accent <Code>#eab308</Code> is shared
+              across both; everything else is a design token that flips with the
+              theme.
+            </P>
             <H>Typography</H>
             <List>
               <li>
@@ -1339,6 +1381,21 @@ border              : #c4bfb2`}
 export default function DocsPage() {
   const allItems = GROUPS.flatMap((g) => g.items)
   const [activeId, setActiveId] = useState(allItems[0].id)
+
+  // Deep-link support: a hash like /docs#points opens that section directly
+  // (e.g. the leaderboard "How points work" button). Also reacts to in-page
+  // hash changes so back/forward and shared links land on the right section.
+  useEffect(() => {
+    const applyHash = () => {
+      const id = window.location.hash.replace('#', '')
+      if (id && GROUPS.some((g) => g.items.some((s) => s.id === id))) {
+        setActiveId(id)
+      }
+    }
+    applyHash()
+    window.addEventListener('hashchange', applyHash)
+    return () => window.removeEventListener('hashchange', applyHash)
+  }, [])
   const activeIdx = Math.max(0, allItems.findIndex((s) => s.id === activeId))
   const active = allItems[activeIdx]
   const prev = activeIdx > 0 ? allItems[activeIdx - 1] : null

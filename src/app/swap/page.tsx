@@ -157,7 +157,7 @@ export default function SwapPage() {
         <div className="mb-4 flex items-center justify-between">
           <div>
             <div className="font-mono text-xs text-[#eab308]">~/swap</div>
-            <h1 className="text-3xl font-bold text-ink mt-1">Classic DEX swap</h1>
+            <h1 className="text-3xl font-bold text-ink mt-1">Swap</h1>
             <p className="font-mono text-xs text-ink-2 mt-1">
               Routed through the native Stellar DEX via path payments.
             </p>

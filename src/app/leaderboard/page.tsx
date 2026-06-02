@@ -191,11 +191,11 @@ export default function LeaderboardPage() {
               Season 0 <span className="text-[#eab308]">points</span>
             </h1>
             <p className="mt-3 font-mono text-sm text-cream/70 max-w-md">
-              Every deposit and every USDC upfront you earn feeds a single
+              Every deposit and every LUSD upfront you earn feeds a single
               leaderboard.
             </p>
             <a
-              href="/docs"
+              href="/docs#points"
               className="mt-4 inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-wider px-3 py-1.5 rounded-sm border border-[#eab308]/40 bg-[#eab308]/10 text-[#eab308] hover:bg-[#eab308]/20 transition"
             >
               How points work
