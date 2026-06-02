@@ -110,7 +110,7 @@ export function FaucetButton() {
       <button
         onClick={() => setOpen((v) => !v)}
         disabled={busy !== null}
-        className="h-10 px-3 rounded-sm border border-[#c4bfb2] bg-[#f0ece3] hover:bg-[#e8e4d9] text-[#1a1a1a] font-mono text-sm flex items-center gap-2 disabled:opacity-50 transition"
+        className="h-10 px-3 rounded-sm border border-line bg-card hover:bg-surface text-ink font-mono text-sm flex items-center gap-2 disabled:opacity-50 transition"
       >
         {busy ? <Loader2 size={14} className="animate-spin" /> : <Droplet size={14} />}
         faucet
@@ -118,20 +118,20 @@ export function FaucetButton() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-30 min-w-[200px] rounded-sm border border-[#c4bfb2] bg-[#f0ece3] shadow-md py-1">
+        <div className="absolute right-0 top-full mt-1 z-30 min-w-[200px] rounded-sm border border-line bg-card shadow-md py-1">
           <button
             onClick={handleXlm}
-            className="w-full text-left px-3 py-2 font-mono text-xs text-[#1a1a1a] hover:bg-[#e8e4d9] flex items-center justify-between"
+            className="w-full text-left px-3 py-2 font-mono text-xs text-ink hover:bg-surface flex items-center justify-between"
           >
             <span>Get test XLM</span>
-            <span className="text-[#6b6560]">10,000</span>
+            <span className="text-ink-2">10,000</span>
           </button>
           <button
             onClick={handleLusd}
-            className="w-full text-left px-3 py-2 font-mono text-xs text-[#1a1a1a] hover:bg-[#e8e4d9] flex items-center justify-between"
+            className="w-full text-left px-3 py-2 font-mono text-xs text-ink hover:bg-surface flex items-center justify-between"
           >
             <span>Get test LUSD</span>
-            <span className="text-[#6b6560]">1,000</span>
+            <span className="text-ink-2">1,000</span>
           </button>
         </div>
       )}

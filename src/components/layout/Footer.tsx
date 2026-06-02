@@ -5,18 +5,18 @@ export function Footer() {
   const pathname = usePathname()
   if (pathname?.startsWith('/docs')) return null
   return (
-    <footer className="w-full border-t border-[#c4bfb2] bg-[#e8e4d9] mt-8">
+    <footer className="w-full border-t border-line bg-surface mt-8">
       <div className="max-w-7xl mx-auto px-6 py-8 flex flex-col md:flex-row justify-between items-center gap-4">
-        <div className="font-mono text-xs text-[#6b6560]">
+        <div className="font-mono text-xs text-ink-2">
           lusty_ // earn yield upfront on stellar
         </div>
-        <div className="font-mono text-xs text-[#6b6560] flex gap-6">
-          <a href="/docs" className="hover:text-[#1a1a1a]">docs</a>
+        <div className="font-mono text-xs text-ink-2 flex gap-6">
+          <a href="/docs" className="hover:text-ink">docs</a>
           <a
             href="https://github.com/utkurock/Lusty"
             target="_blank"
             rel="noopener noreferrer"
-            className="hover:text-[#1a1a1a]"
+            className="hover:text-ink"
           >
             github
           </a>
@@ -24,12 +24,12 @@ export function Footer() {
             href="https://x.com/Lustyfinance"
             target="_blank"
             rel="noopener noreferrer"
-            className="hover:text-[#1a1a1a]"
+            className="hover:text-ink"
           >
             twitter
           </a>
         </div>
-        <div className="font-mono text-xs text-[#6b6560]">testnet</div>
+        <div className="font-mono text-xs text-ink-2">testnet</div>
       </div>
     </footer>
   )

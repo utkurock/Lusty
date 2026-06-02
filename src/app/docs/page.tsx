@@ -24,17 +24,17 @@ const P = ({ children }: { children: React.ReactNode }) => (
 )
 
 const H = ({ children }: { children: React.ReactNode }) => (
-  <h3 className="text-lg font-bold text-[#1a1a1a] mt-6 mb-2">{children}</h3>
+  <h3 className="text-lg font-bold text-ink mt-6 mb-2">{children}</h3>
 )
 
 const Code = ({ children }: { children: React.ReactNode }) => (
-  <code className="px-1.5 py-0.5 bg-[#f0ece3] border border-[#c4bfb2] rounded text-[13px] font-mono">
+  <code className="px-1.5 py-0.5 bg-card border border-line rounded text-[13px] font-mono">
     {children}
   </code>
 )
 
 const Pre = ({ children }: { children: React.ReactNode }) => (
-  <pre className="bg-[#1a1a1a] text-[#e8e4d9] p-4 rounded text-xs overflow-x-auto my-4 font-mono">
+  <pre className="bg-inverse text-cream p-4 rounded text-xs overflow-x-auto my-4 font-mono">
     {children}
   </pre>
 )
@@ -46,8 +46,8 @@ const List = ({ children }: { children: React.ReactNode }) => (
 // Honest-framing callouts: clearly separate what runs today from the
 // trustless Soroban + Reflector architecture, which is T2/T3 roadmap work.
 const Today = ({ children }: { children: React.ReactNode }) => (
-  <div className="my-4 rounded-lg border-l-4 border-[#1a1a1a] bg-[#f0ece3] p-4 text-[14px] leading-relaxed">
-    <div className="font-mono text-[11px] uppercase tracking-wider text-[#1a1a1a] font-bold mb-1.5">
+  <div className="my-4 rounded-lg border-l-4 border-ink bg-card p-4 text-[14px] leading-relaxed">
+    <div className="font-mono text-[11px] uppercase tracking-wider text-ink font-bold mb-1.5">
       Where Lusty is today
     </div>
     {children}
@@ -55,7 +55,7 @@ const Today = ({ children }: { children: React.ReactNode }) => (
 )
 
 const Roadmap = ({ children }: { children: React.ReactNode }) => (
-  <div className="my-4 rounded-lg border-l-4 border-[#eab308] bg-[#f0ece3] p-4 text-[14px] leading-relaxed">
+  <div className="my-4 rounded-lg border-l-4 border-[#eab308] bg-card p-4 text-[14px] leading-relaxed">
     <div className="font-mono text-[11px] uppercase tracking-wider text-[#eab308] font-bold mb-1.5">
       Roadmap — T2 / T3
     </div>
@@ -77,7 +77,7 @@ const GROUPS: Group[] = [
         tagline: 'Lusty is the options yield layer of Stellar.',
         body: (
           <>
-            <div className="my-6 rounded-lg overflow-hidden border border-[#c4bfb2] bg-[#1a1a1a] text-[#e8e4d9] aspect-[16/7] flex flex-col items-center justify-center font-mono">
+            <div className="my-6 rounded-lg overflow-hidden border border-line bg-inverse text-cream aspect-[16/7] flex flex-col items-center justify-center font-mono">
               <div className="text-5xl tracking-[0.3em] font-bold">lusty</div>
               <div className="mt-4 text-xs tracking-[0.25em] text-[#eab308]">
                 THE STELLAR OPTIONS YIELD LAYER
@@ -1345,13 +1345,13 @@ export default function DocsPage() {
   const next = activeIdx < allItems.length - 1 ? allItems[activeIdx + 1] : null
 
   return (
-    <div className="bg-[#e8e4d9] min-h-screen text-[#1a1a1a]">
+    <div className="bg-surface min-h-screen text-ink">
       <div className="max-w-7xl mx-auto px-6 py-10 grid lg:grid-cols-[260px_1fr] gap-10">
         {/* Sidebar */}
         <aside className="font-mono text-xs space-y-6 lg:sticky lg:top-20 lg:self-start lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto pr-2">
           {GROUPS.map((g) => (
             <div key={g.id}>
-              <div className="uppercase text-[#6b6560] mb-2 tracking-wider">
+              <div className="uppercase text-ink-2 mb-2 tracking-wider">
                 {g.label}
               </div>
               <ul className="space-y-0.5">
@@ -1364,8 +1364,8 @@ export default function DocsPage() {
                         className={
                           'w-full text-left py-1.5 px-2 rounded-md transition ' +
                           (isActive
-                            ? 'bg-[#1a1a1a] text-[#eab308]'
-                            : 'text-[#3a3a3a] hover:bg-[#f0ece3]')
+                            ? 'bg-inverse text-[#eab308]'
+                            : 'text-ink-3 hover:bg-card')
                         }
                       >
                         {s.title}
@@ -1385,7 +1385,7 @@ export default function DocsPage() {
             <div className="text-[#eab308] font-mono text-xs font-bold tracking-wider">
               {active.eyebrow}
             </div>
-            <button className="flex items-center gap-1.5 text-xs border border-[#c4bfb2] bg-[#f0ece3] hover:bg-[#e8e4d9] rounded-md px-3 py-1.5 font-mono text-[#3a3a3a]">
+            <button className="flex items-center gap-1.5 text-xs border border-line bg-card hover:bg-surface rounded-md px-3 py-1.5 font-mono text-ink-3">
               <Copy size={12} />
               Copy
               <ChevronRight size={12} className="rotate-90" />
@@ -1394,10 +1394,10 @@ export default function DocsPage() {
 
           <h1 className="text-4xl font-bold mb-3">{active.title}</h1>
           {active.tagline && (
-            <p className="text-[#6b6560] text-lg mb-2">{active.tagline}</p>
+            <p className="text-ink-2 text-lg mb-2">{active.tagline}</p>
           )}
 
-          <div className="mt-6 space-y-4 text-[15px] leading-relaxed text-[#3a3a3a]">
+          <div className="mt-6 space-y-4 text-[15px] leading-relaxed text-ink-3">
             {active.body}
           </div>
 
@@ -1405,17 +1405,17 @@ export default function DocsPage() {
             {prev ? (
               <button
                 onClick={() => setActiveId(prev.id)}
-                className="group flex items-center gap-3 text-left border border-[#c4bfb2] bg-[#f0ece3] hover:bg-[#e8e4d9] rounded-lg p-4 transition"
+                className="group flex items-center gap-3 text-left border border-line bg-card hover:bg-surface rounded-lg p-4 transition"
               >
                 <ChevronLeft
                   size={20}
-                  className="text-[#6b6560] group-hover:text-[#1a1a1a] transition shrink-0"
+                  className="text-ink-2 group-hover:text-ink transition shrink-0"
                 />
                 <div className="min-w-0 flex-1">
-                  <div className="font-mono text-[11px] uppercase tracking-wider text-[#6b6560]">
+                  <div className="font-mono text-[11px] uppercase tracking-wider text-ink-2">
                     Previous
                   </div>
-                  <div className="font-semibold text-[#1a1a1a] truncate">
+                  <div className="font-semibold text-ink truncate">
                     {prev.title}
                   </div>
                 </div>
@@ -1426,19 +1426,19 @@ export default function DocsPage() {
             {next ? (
               <button
                 onClick={() => setActiveId(next.id)}
-                className="group flex items-center gap-3 text-right border border-[#c4bfb2] bg-[#f0ece3] hover:bg-[#e8e4d9] rounded-lg p-4 transition sm:col-start-2"
+                className="group flex items-center gap-3 text-right border border-line bg-card hover:bg-surface rounded-lg p-4 transition sm:col-start-2"
               >
                 <div className="min-w-0 flex-1">
-                  <div className="font-mono text-[11px] uppercase tracking-wider text-[#6b6560]">
+                  <div className="font-mono text-[11px] uppercase tracking-wider text-ink-2">
                     Next
                   </div>
-                  <div className="font-semibold text-[#1a1a1a] truncate">
+                  <div className="font-semibold text-ink truncate">
                     {next.title}
                   </div>
                 </div>
                 <ChevronRight
                   size={20}
-                  className="text-[#6b6560] group-hover:text-[#1a1a1a] transition shrink-0"
+                  className="text-ink-2 group-hover:text-ink transition shrink-0"
                 />
               </button>
             ) : (

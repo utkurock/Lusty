@@ -24,14 +24,14 @@ export function AssetList({ tab, onTabChange }: AssetListProps) {
 
   return (
     <div className="terminal-card rounded-sm overflow-hidden">
-      <div className="px-6 py-3 border-b border-[#2a2a2a] flex items-center justify-between">
-        <div className="font-mono text-sm text-[#e8e4d9]">~/assets</div>
+      <div className="px-6 py-3 border-b border-line-2 flex items-center justify-between">
+        <div className="font-mono text-sm text-cream">~/assets</div>
         <div className="flex gap-1">
           <button
             onClick={() => onTabChange('calls')}
             className={cn(
               'font-mono text-xs px-3 py-1 rounded-sm transition',
-              tab === 'calls' ? 'bg-[#eab308] text-[#1a1a1a]' : 'text-[#e8e4d9] hover:bg-[#2a2a2a]'
+              tab === 'calls' ? 'bg-[#eab308] text-ink' : 'text-cream hover:bg-line-2'
             )}
           >
             covered calls
@@ -40,7 +40,7 @@ export function AssetList({ tab, onTabChange }: AssetListProps) {
             onClick={() => onTabChange('puts')}
             className={cn(
               'font-mono text-xs px-3 py-1 rounded-sm transition',
-              tab === 'puts' ? 'bg-[#eab308] text-[#1a1a1a]' : 'text-[#e8e4d9] hover:bg-[#2a2a2a]'
+              tab === 'puts' ? 'bg-[#eab308] text-ink' : 'text-cream hover:bg-line-2'
             )}
           >
             cash secured puts
@@ -48,8 +48,8 @@ export function AssetList({ tab, onTabChange }: AssetListProps) {
         </div>
       </div>
 
-      <div className="bg-[#f0ece3]">
-        <div className="hidden md:grid grid-cols-12 px-6 py-3 font-mono text-[11px] uppercase text-[#6b6560] dashed-row">
+      <div className="bg-card">
+        <div className="hidden md:grid grid-cols-12 px-6 py-3 font-mono text-[11px] uppercase text-ink-2 dashed-row">
           <div className="col-span-4">Asset</div>
           <div className="col-span-3">Type</div>
           <div className="col-span-2">Max APR</div>

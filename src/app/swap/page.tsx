@@ -157,14 +157,14 @@ export default function SwapPage() {
         <div className="mb-4 flex items-center justify-between">
           <div>
             <div className="font-mono text-xs text-[#eab308]">~/swap</div>
-            <h1 className="text-3xl font-bold text-[#1a1a1a] mt-1">Classic DEX swap</h1>
-            <p className="font-mono text-xs text-[#6b6560] mt-1">
+            <h1 className="text-3xl font-bold text-ink mt-1">Classic DEX swap</h1>
+            <p className="font-mono text-xs text-ink-2 mt-1">
               Routed through the native Stellar DEX via path payments.
             </p>
           </div>
           <button
             onClick={() => setShowSlippage((v) => !v)}
-            className="p-2 rounded-sm border border-[#c4bfb2] bg-[#f0ece3] hover:bg-[#e8e4d9] transition"
+            className="p-2 rounded-sm border border-line bg-card hover:bg-surface transition"
             aria-label="Slippage settings"
           >
             <Settings2 size={14} />
@@ -173,7 +173,7 @@ export default function SwapPage() {
 
         {showSlippage && (
           <div className="mb-4 light-card rounded-sm p-4 font-mono text-xs">
-            <div className="text-[#6b6560] uppercase tracking-wider mb-2">
+            <div className="text-ink-2 uppercase tracking-wider mb-2">
               Max slippage
             </div>
             <div className="flex gap-2">
@@ -184,8 +184,8 @@ export default function SwapPage() {
                   className={
                     'px-3 py-1.5 rounded-sm border transition ' +
                     (slippageBps === v
-                      ? 'bg-[#1a1a1a] text-[#eab308] border-[#1a1a1a]'
-                      : 'bg-[#f0ece3] border-[#c4bfb2] text-[#1a1a1a] hover:bg-[#e8e4d9]')
+                      ? 'bg-inverse text-[#eab308] border-ink'
+                      : 'bg-card border-line text-ink hover:bg-surface')
                   }
                 >
                   {(v / 100).toFixed(2)}%
@@ -197,7 +197,7 @@ export default function SwapPage() {
 
         {/* From */}
         <div className="light-card rounded-sm p-5">
-          <div className="font-mono text-[11px] uppercase text-[#6b6560] tracking-wider mb-2">
+          <div className="font-mono text-[11px] uppercase text-ink-2 tracking-wider mb-2">
             You pay
           </div>
           <div className="flex items-center gap-3">
@@ -207,7 +207,7 @@ export default function SwapPage() {
               placeholder="0.00"
               value={amount}
               onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))}
-              className="flex-1 bg-transparent text-3xl font-bold text-[#1a1a1a] num outline-none min-w-0"
+              className="flex-1 bg-transparent text-3xl font-bold text-ink num outline-none min-w-0"
             />
             <AssetPicker value={fromAsset} onChange={setFromAsset} exclude={toAsset} />
           </div>
@@ -217,7 +217,7 @@ export default function SwapPage() {
         <div className="flex justify-center my-[-12px] relative z-10">
           <button
             onClick={flip}
-            className="w-9 h-9 rounded-full border border-[#c4bfb2] bg-[#e8e4d9] text-[#1a1a1a] flex items-center justify-center hover:bg-[#f0ece3] transition"
+            className="w-9 h-9 rounded-full border border-line bg-surface text-ink flex items-center justify-center hover:bg-card transition"
             aria-label="Flip direction"
           >
             <ArrowDown size={14} />
@@ -226,17 +226,17 @@ export default function SwapPage() {
 
         {/* To */}
         <div className="light-card rounded-sm p-5">
-          <div className="font-mono text-[11px] uppercase text-[#6b6560] tracking-wider mb-2">
+          <div className="font-mono text-[11px] uppercase text-ink-2 tracking-wider mb-2">
             You receive
           </div>
           <div className="flex items-center gap-3">
-            <div className="flex-1 text-3xl font-bold text-[#1a1a1a] num min-w-0 truncate">
+            <div className="flex-1 text-3xl font-bold text-ink num min-w-0 truncate">
               {priceLoading && parsed > 0 ? (
-                <Loader2 size={20} className="animate-spin text-[#6b6560]" />
+                <Loader2 size={20} className="animate-spin text-ink-2" />
               ) : quote ? (
                 parseFloat(quote.destAmount).toFixed(toAsset === 'LUSD' ? 4 : 6)
               ) : (
-                <span className="text-[#c4bfb2]">0.00</span>
+                <span className="text-line">0.00</span>
               )}
             </div>
             <AssetPicker value={toAsset} onChange={setToAsset} exclude={fromAsset} />
@@ -278,7 +278,7 @@ export default function SwapPage() {
         <button
           onClick={handleSwap}
           disabled={submitting || (connected && (!quote || parsed <= 0))}
-          className="mt-6 w-full py-4 bg-[#1a1a1a] text-[#e8e4d9] font-mono text-sm rounded-sm hover:bg-[#2a2a2a] transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          className="mt-6 w-full py-4 bg-inverse text-cream font-mono text-sm rounded-sm hover:bg-line-2 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
         >
           {submitting && <Loader2 size={14} className="animate-spin" />}
           {!connected
@@ -297,8 +297,8 @@ export default function SwapPage() {
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between">
-      <span className="text-[#6b6560] uppercase tracking-wider">{label}</span>
-      <span className="text-[#1a1a1a] num">{children}</span>
+      <span className="text-ink-2 uppercase tracking-wider">{label}</span>
+      <span className="text-ink num">{children}</span>
     </div>
   )
 }
@@ -317,7 +317,7 @@ function AssetPicker({
     <div className="relative shrink-0">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 h-10 px-3 rounded-sm border border-[#c4bfb2] bg-[#f0ece3] hover:bg-[#e8e4d9] transition font-mono text-sm text-[#1a1a1a]"
+        className="flex items-center gap-2 h-10 px-3 rounded-sm border border-line bg-card hover:bg-surface transition font-mono text-sm text-ink"
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
@@ -328,7 +328,7 @@ function AssetPicker({
         {value}
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-20 min-w-[120px] rounded-sm border border-[#c4bfb2] bg-[#f0ece3] shadow-md py-1">
+        <div className="absolute right-0 top-full mt-1 z-20 min-w-[120px] rounded-sm border border-line bg-card shadow-md py-1">
           {ASSETS.filter((a) => a !== exclude).map((a) => (
             <button
               key={a}
@@ -339,8 +339,8 @@ function AssetPicker({
               className={
                 'w-full text-left px-3 py-1.5 font-mono text-xs transition ' +
                 (a === value
-                  ? 'bg-[#1a1a1a] text-[#eab308]'
-                  : 'text-[#1a1a1a] hover:bg-[#e8e4d9]')
+                  ? 'bg-inverse text-[#eab308]'
+                  : 'text-ink hover:bg-surface')
               }
             >
               {a}

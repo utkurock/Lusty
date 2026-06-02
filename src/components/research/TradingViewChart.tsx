@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useRef } from 'react'
+import { useTheme } from '@/providers/ThemeProvider'
 
 // Lightweight TradingView embed. We inject the official tv.js script once
 // per page and spawn an advanced chart widget pointing at XLM/USDT on
@@ -14,6 +15,7 @@ export function TradingViewChart({
   height?: number
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const { theme } = useTheme()
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -32,7 +34,7 @@ export function TradingViewChart({
         symbol,
         interval,
         timezone: 'Etc/UTC',
-        theme: 'light',
+        theme: theme === 'dark' ? 'dark' : 'light',
         style: '1',
         locale: 'en',
         enable_publishing: false,
@@ -41,8 +43,8 @@ export function TradingViewChart({
         save_image: false,
         allow_symbol_change: true,
         calendar: false,
-        backgroundColor: '#f0ece3',
-        gridColor: 'rgba(196, 191, 178, 0.5)',
+        backgroundColor: theme === 'dark' ? '#181613' : '#f0ece3',
+        gridColor: theme === 'dark' ? 'rgba(52, 48, 42, 0.6)' : 'rgba(196, 191, 178, 0.5)',
         container_id: containerRef.current!.id,
         studies: ['MASimple@tv-basicstudies'],
       })
@@ -52,7 +54,7 @@ export function TradingViewChart({
     return () => {
       if (containerRef.current) containerRef.current.innerHTML = ''
     }
-  }, [symbol, interval])
+  }, [symbol, interval, theme])
 
   return (
     <div

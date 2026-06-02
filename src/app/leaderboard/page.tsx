@@ -17,12 +17,12 @@ interface LeaderRow {
 function Rank({ rank }: { rank: number }) {
   const medalColor =
     rank === 1
-      ? 'bg-[#eab308] text-[#1a1a1a]'
+      ? 'bg-[#eab308] text-ink'
       : rank === 2
-      ? 'bg-[#c4bfb2] text-[#1a1a1a]'
+      ? 'bg-line text-ink'
       : rank === 3
-      ? 'bg-[#b4844b] text-[#1a1a1a]'
-      : 'bg-transparent text-[#6b6560]'
+      ? 'bg-[#b4844b] text-ink'
+      : 'bg-transparent text-ink-2'
   return (
     <div
       className={`font-mono text-sm w-8 h-8 flex items-center justify-center rounded-sm ${medalColor}`}
@@ -161,7 +161,7 @@ export default function LeaderboardPage() {
       onClick={() => setSortKey(k)}
       className={
         'font-mono text-[11px] uppercase tracking-wider transition ' +
-        (sortKey === k ? 'text-[#1a1a1a]' : 'text-[#6b6560] hover:text-[#1a1a1a]')
+        (sortKey === k ? 'text-ink' : 'text-ink-2 hover:text-ink')
       }
     >
       {children}
@@ -183,14 +183,14 @@ export default function LeaderboardPage() {
             mixBlendMode: 'screen',
           }}
         />
-        <div className="absolute inset-0 pointer-events-none bg-gradient-to-r from-[#1a1a1a] via-[#1a1a1a]/80 to-transparent" />
+        <div className="absolute inset-0 pointer-events-none bg-gradient-to-r from-inverse via-inverse/80 to-transparent" />
         <div className="relative flex flex-col md:flex-row md:items-end md:justify-between gap-6">
           <div>
             <div className="font-mono text-xs text-[#eab308] mb-3">~/leaderboard</div>
-            <h1 className="text-4xl md:text-5xl font-bold text-[#e8e4d9] leading-tight">
+            <h1 className="text-4xl md:text-5xl font-bold text-cream leading-tight">
               Season 0 <span className="text-[#eab308]">points</span>
             </h1>
-            <p className="mt-3 font-mono text-sm text-[#e8e4d9]/70 max-w-md">
+            <p className="mt-3 font-mono text-sm text-cream/70 max-w-md">
               Every deposit and every USDC upfront you earn feeds a single
               leaderboard.
             </p>
@@ -204,19 +204,19 @@ export default function LeaderboardPage() {
           </div>
           <div className="grid grid-cols-3 gap-4 text-right font-mono">
             <div>
-              <div className="text-[11px] uppercase text-[#e8e4d9]/50">Wallets</div>
-              <div className="num text-xl font-bold text-[#e8e4d9]">
+              <div className="text-[11px] uppercase text-cream/50">Wallets</div>
+              <div className="num text-xl font-bold text-cream">
                 {total.toLocaleString()}
               </div>
             </div>
             <div>
-              <div className="text-[11px] uppercase text-[#e8e4d9]/50">Points</div>
+              <div className="text-[11px] uppercase text-cream/50">Points</div>
               <div className="num text-xl font-bold text-[#eab308]">
                 {totalPoints >= 1000 ? `${(totalPoints / 1000).toFixed(1)}k` : totalPoints.toLocaleString()}
               </div>
             </div>
             <div>
-              <div className="text-[11px] uppercase text-[#e8e4d9]/50">Upfront</div>
+              <div className="text-[11px] uppercase text-cream/50">Upfront</div>
               <div className="num text-xl font-bold text-[#22c55e]">
                 ${totalPremium >= 1000 ? `${(totalPremium / 1000).toFixed(1)}k` : totalPremium.toFixed(2)}
               </div>
@@ -228,10 +228,10 @@ export default function LeaderboardPage() {
       {/* Leaderboard table */}
       <section>
         <div className="flex items-center justify-between mb-3">
-          <h2 className="font-mono text-xs uppercase text-[#6b6560] tracking-wider">
+          <h2 className="font-mono text-xs uppercase text-ink-2 tracking-wider">
             ~/rankings
           </h2>
-          <div className="font-mono text-[11px] text-[#6b6560]">
+          <div className="font-mono text-[11px] text-ink-2">
             sort by: <SortButton k="rank">rank</SortButton>{' '}
             · <SortButton k="points">points</SortButton>{' '}
             · <SortButton k="totalDeposited">volume</SortButton>{' '}
@@ -241,7 +241,7 @@ export default function LeaderboardPage() {
 
         <div className="light-card rounded-sm overflow-x-auto">
           <div className="min-w-[600px]">
-          <div className="grid grid-cols-[56px_1fr_120px_140px_140px] px-5 py-3 border-b border-[#c4bfb2] font-mono text-[11px] uppercase tracking-wider text-[#6b6560]">
+          <div className="grid grid-cols-[56px_1fr_120px_140px_140px] px-5 py-3 border-b border-line font-mono text-[11px] uppercase tracking-wider text-ink-2">
             <div>#</div>
             <div>wallet</div>
             <div className="text-right">points</div>
@@ -253,14 +253,14 @@ export default function LeaderboardPage() {
           {yourRow && (
             <div className="grid grid-cols-[56px_1fr_120px_140px_140px] items-center px-5 py-3 bg-[#eab308]/15 border-b-2 border-[#eab308] border-dashed">
               <div className="font-mono text-xs text-[#eab308] font-bold">YOU</div>
-              <div className="font-mono text-xs text-[#1a1a1a] truncate flex items-center gap-2">
-                <span className="num text-[#6b6560]">#{yourRow.rank}</span>
+              <div className="font-mono text-xs text-ink truncate flex items-center gap-2">
+                <span className="num text-ink-2">#{yourRow.rank}</span>
                 <span className="font-semibold">{formatAddress(yourRow.address)}</span>
               </div>
-              <div className="text-right num text-sm text-[#1a1a1a] font-bold">
+              <div className="text-right num text-sm text-ink font-bold">
                 {yourRow.points.toLocaleString()}
               </div>
-              <div className="text-right num text-xs text-[#6b6560]">
+              <div className="text-right num text-xs text-ink-2">
                 ${yourRow.totalDeposited.toLocaleString()}
               </div>
               <div className="text-right num text-xs text-[#22c55e]">
@@ -271,13 +271,13 @@ export default function LeaderboardPage() {
 
           {loading && (
             <div className="px-5 py-16 flex items-center justify-center">
-              <Loader2 size={20} className="animate-spin text-[#6b6560]" />
+              <Loader2 size={20} className="animate-spin text-ink-2" />
             </div>
           )}
 
           {!loading && sorted.length === 0 && (
-            <div className="px-5 py-16 text-center font-mono text-xs text-[#6b6560]">
-              <div className="text-[#1a1a1a] font-semibold mb-1">
+            <div className="px-5 py-16 text-center font-mono text-xs text-ink-2">
+              <div className="text-ink font-semibold mb-1">
                 No participants yet
               </div>
               Be the first to deposit. Every covered call and every cash
@@ -287,16 +287,16 @@ export default function LeaderboardPage() {
           {!loading && sorted.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE).map((row) => (
             <div
               key={row.address}
-              className="grid grid-cols-[56px_1fr_120px_140px_140px] items-center px-5 py-3 dashed-row hover:bg-[#e8e4d9] transition"
+              className="grid grid-cols-[56px_1fr_120px_140px_140px] items-center px-5 py-3 dashed-row hover:bg-surface transition"
             >
               <Rank rank={row.rank} />
-              <div className="font-mono text-xs text-[#1a1a1a] truncate">
+              <div className="font-mono text-xs text-ink truncate">
                 {formatAddress(row.address)}
               </div>
-              <div className="text-right num text-sm text-[#1a1a1a] font-semibold">
+              <div className="text-right num text-sm text-ink font-semibold">
                 {row.points.toLocaleString()}
               </div>
-              <div className="text-right num text-xs text-[#6b6560]">
+              <div className="text-right num text-xs text-ink-2">
                 ${row.totalDeposited.toLocaleString()}
               </div>
               <div className="text-right num text-xs text-[#22c55e]">
@@ -310,7 +310,7 @@ export default function LeaderboardPage() {
 
         {/* Horizontal pagination */}
         {sorted.length > 0 && (
-        <div className="mt-3 flex items-center justify-between font-mono text-[11px] text-[#6b6560]">
+        <div className="mt-3 flex items-center justify-between font-mono text-[11px] text-ink-2">
           <div>
             total deposits ${(totalDeposits / 1_000_000).toFixed(2)}M
           </div>
@@ -318,7 +318,7 @@ export default function LeaderboardPage() {
             <button
               onClick={() => setPage((p) => Math.max(0, p - 1))}
               disabled={page === 0}
-              className="w-8 h-8 flex items-center justify-center rounded-sm border border-[#c4bfb2] bg-[#f0ece3] text-[#1a1a1a] hover:bg-[#e8e4d9] disabled:opacity-30 disabled:cursor-not-allowed transition"
+              className="w-8 h-8 flex items-center justify-center rounded-sm border border-line bg-card text-ink hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed transition"
               aria-label="Previous page"
             >
               <ChevronLeft size={14} />
@@ -333,7 +333,7 @@ export default function LeaderboardPage() {
                 )
               }
               disabled={(page + 1) * PAGE_SIZE >= sorted.length}
-              className="w-8 h-8 flex items-center justify-center rounded-sm border border-[#c4bfb2] bg-[#f0ece3] text-[#1a1a1a] hover:bg-[#e8e4d9] disabled:opacity-30 disabled:cursor-not-allowed transition"
+              className="w-8 h-8 flex items-center justify-center rounded-sm border border-line bg-card text-ink hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed transition"
               aria-label="Next page"
             >
               <ChevronRight size={14} />

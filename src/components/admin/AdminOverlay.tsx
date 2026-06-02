@@ -218,7 +218,7 @@ export function AdminOverlay() {
       {!open && (
         <button
           onClick={() => setOpen(true)}
-          className="fixed bottom-6 right-6 z-50 w-10 h-10 rounded-full bg-[#1a1a1a] text-[#eab308] flex items-center justify-center shadow-lg hover:scale-110 transition opacity-60 hover:opacity-100"
+          className="fixed bottom-6 right-6 z-50 w-10 h-10 rounded-full bg-inverse text-[#eab308] flex items-center justify-center shadow-lg hover:scale-110 transition opacity-60 hover:opacity-100"
           title="Admin panel"
         >
           <Shield size={18} />
@@ -235,18 +235,18 @@ export function AdminOverlay() {
           />
 
           {/* Panel — slides from right */}
-          <div className="fixed top-0 right-0 z-50 h-full w-full max-w-3xl bg-[#f0ece3] shadow-2xl overflow-y-auto">
+          <div className="fixed top-0 right-0 z-50 h-full w-full max-w-3xl bg-card shadow-2xl overflow-y-auto">
             {/* Header */}
-            <div className="sticky top-0 bg-[#1a1a1a] px-6 py-4 flex items-center justify-between z-10">
+            <div className="sticky top-0 bg-inverse px-6 py-4 flex items-center justify-between z-10">
               <div className="flex items-center gap-3">
                 <Shield size={20} className="text-[#eab308]" />
-                <span className="font-mono text-sm text-[#e8e4d9] font-semibold">
+                <span className="font-mono text-sm text-cream font-semibold">
                   Admin Panel
                 </span>
               </div>
               <button
                 onClick={() => setOpen(false)}
-                className="text-[#e8e4d9]/60 hover:text-[#e8e4d9] transition"
+                className="text-cream/60 hover:text-cream transition"
               >
                 <X size={20} />
               </button>
@@ -265,8 +265,8 @@ export function AdminOverlay() {
                     onClick={() => setTab(key)}
                     className={`flex items-center gap-2 px-4 py-2 rounded-sm border transition ${
                       tab === key
-                        ? 'bg-[#1a1a1a] text-[#e8e4d9] border-[#1a1a1a]'
-                        : 'bg-[#f0ece3] text-[#6b6560] border-[#c4bfb2] hover:bg-[#e8e4d9]'
+                        ? 'bg-inverse text-cream border-ink'
+                        : 'bg-card text-ink-2 border-line hover:bg-surface'
                     }`}
                   >
                     <Icon size={14} />
@@ -279,15 +279,15 @@ export function AdminOverlay() {
               {tab === 'overview' && stats && (
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                   {[
-                    { label: 'Total Users', value: stats.totalUsers.toLocaleString(), color: 'text-[#1a1a1a]' },
-                    { label: 'Total Transactions', value: stats.totalTransactions.toLocaleString(), color: 'text-[#1a1a1a]' },
-                    { label: 'Total Deposited', value: `$${stats.totalDeposited.toLocaleString()}`, color: 'text-[#1a1a1a]' },
+                    { label: 'Total Users', value: stats.totalUsers.toLocaleString(), color: 'text-ink' },
+                    { label: 'Total Transactions', value: stats.totalTransactions.toLocaleString(), color: 'text-ink' },
+                    { label: 'Total Deposited', value: `$${stats.totalDeposited.toLocaleString()}`, color: 'text-ink' },
                     { label: 'Total Premium Paid', value: `$${stats.totalPremium.toLocaleString()}`, color: 'text-[#22c55e]' },
                     { label: 'Users (24h)', value: stats.last24hUsers.toLocaleString(), color: 'text-[#eab308]' },
                     { label: 'Transactions (24h)', value: stats.last24hTransactions.toLocaleString(), color: 'text-[#eab308]' },
                   ].map((s) => (
                     <div key={s.label} className="light-card rounded-sm p-5">
-                      <div className="font-mono text-[11px] uppercase tracking-wider text-[#6b6560] mb-1">
+                      <div className="font-mono text-[11px] uppercase tracking-wider text-ink-2 mb-1">
                         {s.label}
                       </div>
                       <div className={`font-mono text-2xl font-bold ${s.color}`}>{s.value}</div>
@@ -300,7 +300,7 @@ export function AdminOverlay() {
               {tab === 'users' && (
                 <div className="light-card rounded-sm overflow-x-auto">
                   <div className="min-w-[700px]">
-                    <div className="grid grid-cols-[1fr_90px_90px_60px_90px_90px_70px] px-5 py-3 border-b border-[#c4bfb2] font-mono text-[11px] uppercase tracking-wider text-[#6b6560]">
+                    <div className="grid grid-cols-[1fr_90px_90px_60px_90px_90px_70px] px-5 py-3 border-b border-line font-mono text-[11px] uppercase tracking-wider text-ink-2">
                       <div>wallet</div>
                       <div className="text-right">first seen</div>
                       <div className="text-right">last seen</div>
@@ -311,39 +311,39 @@ export function AdminOverlay() {
                     </div>
                     {loading && (
                       <div className="px-5 py-10 flex justify-center">
-                        <Loader2 size={20} className="animate-spin text-[#6b6560]" />
+                        <Loader2 size={20} className="animate-spin text-ink-2" />
                       </div>
                     )}
                     {!loading && users.map((u) => (
                       <div
                         key={u.address}
-                        className="grid grid-cols-[1fr_90px_90px_60px_90px_90px_70px] items-center px-5 py-3 dashed-row hover:bg-[#e8e4d9] transition"
+                        className="grid grid-cols-[1fr_90px_90px_60px_90px_90px_70px] items-center px-5 py-3 dashed-row hover:bg-surface transition"
                       >
-                        <div className="font-mono text-xs text-[#1a1a1a] truncate">
+                        <div className="font-mono text-xs text-ink truncate">
                           {formatAddress(u.address)}
                         </div>
-                        <div className="text-right font-mono text-[11px] text-[#6b6560]">
+                        <div className="text-right font-mono text-[11px] text-ink-2">
                           {new Date(u.firstSeen).toLocaleDateString()}
                         </div>
-                        <div className="text-right font-mono text-[11px] text-[#6b6560]">
+                        <div className="text-right font-mono text-[11px] text-ink-2">
                           {new Date(u.lastSeen).toLocaleDateString()}
                         </div>
-                        <div className="text-right num text-xs text-[#6b6560]">
+                        <div className="text-right num text-xs text-ink-2">
                           {u.connectCount}
                         </div>
-                        <div className="text-right num text-xs text-[#1a1a1a]">
+                        <div className="text-right num text-xs text-ink">
                           ${u.totalDeposited.toLocaleString()}
                         </div>
                         <div className="text-right num text-xs text-[#22c55e]">
                           ${u.totalPremium.toLocaleString()}
                         </div>
-                        <div className="text-right num text-xs font-semibold text-[#1a1a1a]">
+                        <div className="text-right num text-xs font-semibold text-ink">
                           {u.points.toLocaleString()}
                         </div>
                       </div>
                     ))}
                     {!loading && users.length === 0 && (
-                      <div className="px-5 py-10 text-center font-mono text-xs text-[#6b6560]">
+                      <div className="px-5 py-10 text-center font-mono text-xs text-ink-2">
                         No users yet
                       </div>
                     )}
@@ -362,7 +362,7 @@ export function AdminOverlay() {
                         setTxTypeFilter(e.target.value)
                         setTxsPage(0)
                       }}
-                      className="font-mono text-xs px-3 py-1.5 rounded-sm border border-[#c4bfb2] bg-[#f0ece3] text-[#1a1a1a]"
+                      className="font-mono text-xs px-3 py-1.5 rounded-sm border border-line bg-card text-ink"
                     >
                       <option value="">All types</option>
                       <option value="deposit">Deposits</option>
@@ -372,7 +372,7 @@ export function AdminOverlay() {
                   </div>
                   <div className="light-card rounded-sm overflow-x-auto">
                     <div className="min-w-[700px]">
-                      <div className="grid grid-cols-[90px_1fr_70px_50px_90px_60px_100px] px-5 py-3 border-b border-[#c4bfb2] font-mono text-[11px] uppercase tracking-wider text-[#6b6560]">
+                      <div className="grid grid-cols-[90px_1fr_70px_50px_90px_60px_100px] px-5 py-3 border-b border-line font-mono text-[11px] uppercase tracking-wider text-ink-2">
                         <div>time</div>
                         <div>wallet</div>
                         <div>type</div>
@@ -383,15 +383,15 @@ export function AdminOverlay() {
                       </div>
                       {loading && (
                         <div className="px-5 py-10 flex justify-center">
-                          <Loader2 size={20} className="animate-spin text-[#6b6560]" />
+                          <Loader2 size={20} className="animate-spin text-ink-2" />
                         </div>
                       )}
                       {!loading && txs.map((tx) => (
                         <div
                           key={tx.id}
-                          className="grid grid-cols-[90px_1fr_70px_50px_90px_60px_100px] items-center px-5 py-3 dashed-row hover:bg-[#e8e4d9] transition"
+                          className="grid grid-cols-[90px_1fr_70px_50px_90px_60px_100px] items-center px-5 py-3 dashed-row hover:bg-surface transition"
                         >
-                          <div className="font-mono text-[11px] text-[#6b6560]">
+                          <div className="font-mono text-[11px] text-ink-2">
                             {new Date(tx.createdAt).toLocaleString('tr-TR', {
                               month: '2-digit',
                               day: '2-digit',
@@ -399,7 +399,7 @@ export function AdminOverlay() {
                               minute: '2-digit',
                             })}
                           </div>
-                          <div className="font-mono text-xs text-[#1a1a1a] truncate">
+                          <div className="font-mono text-xs text-ink truncate">
                             {formatAddress(tx.address)}
                           </div>
                           <div className="font-mono text-xs">
@@ -409,26 +409,26 @@ export function AdminOverlay() {
                                   ? 'bg-[#22c55e]/15 text-[#22c55e]'
                                   : tx.type === 'claim'
                                   ? 'bg-[#eab308]/15 text-[#eab308]'
-                                  : 'bg-[#6b6560]/15 text-[#6b6560]'
+                                  : 'bg-ink-2/15 text-ink-2'
                               }`}
                             >
                               {tx.type}
                             </span>
                           </div>
-                          <div className="font-mono text-[11px] text-[#6b6560]">
+                          <div className="font-mono text-[11px] text-ink-2">
                             {tx.subtype ?? '—'}
                           </div>
-                          <div className="text-right num text-xs text-[#1a1a1a]">
+                          <div className="text-right num text-xs text-ink">
                             {tx.amount.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                           </div>
-                          <div className="font-mono text-[11px] text-[#6b6560]">{tx.asset}</div>
-                          <div className="font-mono text-[11px] text-[#6b6560] truncate">
+                          <div className="font-mono text-[11px] text-ink-2">{tx.asset}</div>
+                          <div className="font-mono text-[11px] text-ink-2 truncate">
                             {tx.txHash ? (
                               <a
                                 href={`https://stellar.expert/explorer/testnet/tx/${tx.txHash}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="hover:text-[#1a1a1a] underline"
+                                className="hover:text-ink underline"
                               >
                                 {tx.txHash.slice(0, 8)}...
                               </a>
@@ -439,7 +439,7 @@ export function AdminOverlay() {
                         </div>
                       ))}
                       {!loading && txs.length === 0 && (
-                        <div className="px-5 py-10 text-center font-mono text-xs text-[#6b6560]">
+                        <div className="px-5 py-10 text-center font-mono text-xs text-ink-2">
                           No transactions yet
                         </div>
                       )}
@@ -469,11 +469,11 @@ function Pagination({
 }) {
   if (total <= pageSize) return null
   return (
-    <div className="px-5 py-3 flex items-center justify-end gap-3 font-mono text-[11px] text-[#6b6560]">
+    <div className="px-5 py-3 flex items-center justify-end gap-3 font-mono text-[11px] text-ink-2">
       <button
         onClick={() => setPage(Math.max(0, page - 1))}
         disabled={page === 0}
-        className="w-8 h-8 flex items-center justify-center rounded-sm border border-[#c4bfb2] bg-[#f0ece3] text-[#1a1a1a] hover:bg-[#e8e4d9] disabled:opacity-30 disabled:cursor-not-allowed transition"
+        className="w-8 h-8 flex items-center justify-center rounded-sm border border-line bg-card text-ink hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed transition"
       >
         <ChevronLeft size={14} />
       </button>
@@ -483,7 +483,7 @@ function Pagination({
       <button
         onClick={() => setPage(Math.min(Math.ceil(total / pageSize) - 1, page + 1))}
         disabled={(page + 1) * pageSize >= total}
-        className="w-8 h-8 flex items-center justify-center rounded-sm border border-[#c4bfb2] bg-[#f0ece3] text-[#1a1a1a] hover:bg-[#e8e4d9] disabled:opacity-30 disabled:cursor-not-allowed transition"
+        className="w-8 h-8 flex items-center justify-center rounded-sm border border-line bg-card text-ink hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed transition"
       >
         <ChevronRight size={14} />
       </button>

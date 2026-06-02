@@ -33,7 +33,7 @@ export function StablePicker({ value, onChange }: StablePickerProps) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 font-mono text-sm font-semibold text-[#1a1a1a] hover:text-[#eab308] transition"
+        className="flex items-center gap-1.5 font-mono text-sm font-semibold text-ink hover:text-[#eab308] transition"
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={active.icon} alt={active.code} className="w-5 h-5 rounded-full" />
@@ -41,7 +41,7 @@ export function StablePicker({ value, onChange }: StablePickerProps) {
         <ChevronDown size={12} />
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-20 min-w-[120px] rounded-sm border border-[#c4bfb2] bg-[#f0ece3] shadow-md py-1">
+        <div className="absolute right-0 top-full mt-1 z-20 min-w-[120px] rounded-sm border border-line bg-card shadow-md py-1">
           {STABLES.map((s) => (
             <button
               key={s.code}
@@ -52,8 +52,8 @@ export function StablePicker({ value, onChange }: StablePickerProps) {
               className={
                 'w-full flex items-center gap-2 text-left px-3 py-1.5 font-mono text-xs transition ' +
                 (s.code === value
-                  ? 'bg-[#1a1a1a] text-[#eab308]'
-                  : 'text-[#1a1a1a] hover:bg-[#e8e4d9]')
+                  ? 'bg-inverse text-[#eab308]'
+                  : 'text-ink hover:bg-surface')
               }
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}

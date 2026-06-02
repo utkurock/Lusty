@@ -272,31 +272,31 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
     <div className="space-y-7">
       {/* Compact tab bar */}
       <div className="light-card rounded-sm flex items-stretch font-mono text-xs relative">
-        <div className="flex items-center gap-2 px-4 border-r border-[#c4bfb2]">
+        <div className="flex items-center gap-2 px-4 border-r border-line">
           {assetSymbol === 'XLM' ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src="/xlm.png" alt="XLM" className="w-6 h-6 rounded-full" />
           ) : (
-            <div className="w-6 h-6 rounded-full bg-[#1a1a1a] text-[#eab308] font-bold flex items-center justify-center text-[10px]">
+            <div className="w-6 h-6 rounded-full bg-inverse text-[#eab308] font-bold flex items-center justify-center text-[10px]">
               {assetSymbol[0]}
             </div>
           )}
-          <span className="text-[#1a1a1a] font-semibold">{assetSymbol}</span>
+          <span className="text-ink font-semibold">{assetSymbol}</span>
         </div>
-        <div className="flex items-center px-4 border-r border-[#c4bfb2] text-[#1a1a1a]">
+        <div className="flex items-center px-4 border-r border-line text-ink">
           {type === 'call' ? 'Covered call' : 'Cash secured put'}
         </div>
-        <div className="relative border-r border-[#c4bfb2]" ref={dropdownRef}>
+        <div className="relative border-r border-line" ref={dropdownRef}>
           <button
             type="button"
             onClick={() => setExpiryOpen((v) => !v)}
-            className="h-full flex items-center gap-1 px-4 text-[#1a1a1a] font-semibold hover:bg-[#e8e4d9] transition"
+            className="h-full flex items-center gap-1 px-4 text-ink font-semibold hover:bg-surface transition"
           >
             {expiry?.label ?? '—'}
             <ChevronDown size={12} />
           </button>
           {expiryOpen && (
-            <div className="absolute left-0 top-full mt-1 z-20 min-w-[140px] rounded-sm border border-[#c4bfb2] bg-[#f0ece3] shadow-md py-1">
+            <div className="absolute left-0 top-full mt-1 z-20 min-w-[140px] rounded-sm border border-line bg-card shadow-md py-1">
               {expiries.map((e, i) => {
                 const eFull = fullByKey.get(e.date.toISOString().slice(0, 10)) ?? false
                 return (
@@ -306,8 +306,8 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
                     className={
                       'w-full text-left px-3 py-1.5 font-mono text-xs transition flex items-center justify-between gap-2 ' +
                       (i === selectedExpiryIdx
-                        ? 'bg-[#1a1a1a] text-[#eab308]'
-                        : 'text-[#1a1a1a] hover:bg-[#e8e4d9]')
+                        ? 'bg-inverse text-[#eab308]'
+                        : 'text-ink hover:bg-surface')
                     }
                   >
                     <span>{e.label} · {e.daysToExpiry}d</span>
@@ -321,8 +321,8 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
 
         <div className="flex-1" />
 
-        <div className="hidden sm:flex items-center gap-1.5 px-4 border-l border-[#c4bfb2]">
-          <span className="num text-[#1a1a1a] font-semibold">
+        <div className="hidden sm:flex items-center gap-1.5 px-4 border-l border-line">
+          <span className="num text-ink font-semibold">
             {xlmPrice ? formatUsdc(xlmPrice) : '—'}
           </span>
           <span className={`num text-[10px] flex items-center gap-0.5 ${pricePositive ? 'text-[#22c55e]' : 'text-[#ef4444]'}`}>
@@ -330,10 +330,10 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
             {change24h.toFixed(2)}%
           </span>
         </div>
-        <div className="hidden md:flex items-center gap-2 px-4 border-l border-[#c4bfb2]">
+        <div className="hidden md:flex items-center gap-2 px-4 border-l border-line">
           <div className="relative w-8 h-8">
             <svg viewBox="0 0 32 32" className="w-8 h-8 -rotate-90">
-              <circle cx="16" cy="16" r="13" fill="none" stroke="#c4bfb2" strokeWidth="3" />
+              <circle cx="16" cy="16" r="13" fill="none" className="stroke-line" strokeWidth="3" />
               <circle
                 cx="16" cy="16" r="13" fill="none"
                 stroke={vaultFull ? '#ef4444' : '#eab308'} strokeWidth="3"
@@ -343,19 +343,19 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
             </svg>
           </div>
           <div className="text-[10px] leading-tight">
-            <div className={`num font-semibold ${vaultFull ? 'text-[#ef4444]' : 'text-[#1a1a1a]'}`}>
+            <div className={`num font-semibold ${vaultFull ? 'text-[#ef4444]' : 'text-ink'}`}>
               {vaultFull ? 'FULL' : `${(epochUtil * 100).toFixed(0)}%`}
             </div>
-            <div className="text-[#6b6560]">{vaultFull ? 'this expiry' : 'used'}</div>
+            <div className="text-ink-2">{vaultFull ? 'this expiry' : 'used'}</div>
           </div>
         </div>
       </div>
 
-      <div className="text-center text-[15px] text-[#1a1a1a]">
+      <div className="text-center text-[15px] text-ink">
         Choose the price at which you are happy to{' '}
         <strong>{type === 'call' ? 'sell' : 'buy'} {assetSymbol}</strong> on{' '}
         <strong>{formatExpiry(expiry?.date ?? new Date())}</strong>
-        <span className="text-[#6b6560]"> (in {expiry?.daysToExpiry ?? 0} days)</span>
+        <span className="text-ink-2"> (in {expiry?.daysToExpiry ?? 0} days)</span>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -410,7 +410,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
               href={`https://stellarchain.io/tx/${successHash}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="underline hover:text-[#1a1a1a] truncate"
+              className="underline hover:text-ink truncate"
             >
               {successHash.slice(0, 10)}…
             </a>
@@ -419,7 +419,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
       )}
 
       {vaultFull && (
-        <div className="p-3 border border-[#ef4444]/40 bg-[#ef4444]/10 font-mono text-xs text-[#1a1a1a] rounded-sm">
+        <div className="p-3 border border-[#ef4444]/40 bg-[#ef4444]/10 font-mono text-xs text-ink rounded-sm">
           This expiry&apos;s {type === 'call' ? 'covered-call' : 'cash-secured-put'} epoch is
           full — pick a different expiry above with open capacity. Depositing here
           would be rejected, so the button is disabled.

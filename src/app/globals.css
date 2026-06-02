@@ -2,39 +2,62 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Lusty Design Tokens */
+/* Lusty Design Tokens — RGB channels so Tailwind `/opacity` works.
+   :root = cream (light, default). html.dark = warm-black (dark). */
 :root {
-  --bg-primary: #e8e4d9;
-  --bg-secondary: #d4cfc2;
-  --bg-card: #1a1a1a;
-  --bg-card-inner: #f0ece3;
-  --text-primary: #1a1a1a;
-  --text-secondary: #6b6560;
-  --text-on-dark: #e8e4d9;
+  --surface: 232 228 217;   /* #e8e4d9 page bg */
+  --surface-2: 212 207 194; /* #d4cfc2 */
+  --card: 240 236 227;      /* #f0ece3 light card */
+  --inverse: 26 26 26;      /* #1a1a1a dark panels */
+  --ink: 26 26 26;          /* #1a1a1a primary text */
+  --ink-2: 107 101 96;      /* #6b6560 secondary text */
+  --ink-3: 58 58 58;        /* #3a3a3a tertiary text */
+  --cream: 232 228 217;     /* #e8e4d9 text/ink on dark panels */
+  --line: 196 191 178;      /* #c4bfb2 soft border */
+  --line-2: 42 42 42;       /* #2a2a2a strong border */
+
+  /* Accents — identical across themes */
   --accent-green: #22c55e;
   --accent-red: #ef4444;
   --accent-yellow: #eab308;
-  --border: #c4bfb2;
-  --border-dark: #2a2a2a;
+
   --font-mono: 'JetBrains Mono', 'Courier New', monospace;
   --font-sans: 'Inter', system-ui, sans-serif;
 }
 
+html.dark {
+  --surface: 16 15 13;      /* #100f0d warm black */
+  --surface-2: 26 24 20;    /* #1a1814 */
+  --card: 24 22 19;         /* #181613 */
+  --inverse: 33 31 26;      /* #211f1a elevated panel */
+  --ink: 232 228 217;       /* cream text */
+  --ink-2: 154 148 140;     /* #9a948c */
+  --ink-3: 184 178 168;     /* #b8b2a8 */
+  --cream: 232 228 217;     /* stays cream on dark panels */
+  --line: 42 39 35;         /* #2a2723 */
+  --line-2: 52 48 42;       /* #34302a */
+}
+
 html, body {
-  background: var(--bg-primary);
-  color: var(--text-primary);
+  background: rgb(var(--surface));
+  color: rgb(var(--ink));
   font-family: var(--font-sans);
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
 }
 
+/* Smooth the cream <-> dark swap */
+html, body, .terminal-card, .light-card {
+  transition: background-color 200ms ease, color 200ms ease, border-color 200ms ease;
+}
+
 ::selection {
   background: var(--accent-yellow);
-  color: var(--text-primary);
+  color: rgb(var(--ink));
 }
 ::-moz-selection {
   background: var(--accent-yellow);
-  color: var(--text-primary);
+  color: rgb(var(--ink));
 }
 
 .font-mono, code, pre {
@@ -53,18 +76,18 @@ html, body {
 }
 
 .dashed-row {
-  border-bottom: 1px dashed var(--border);
+  border-bottom: 1px dashed rgb(var(--line));
 }
 
 .terminal-card {
-  background: var(--bg-card);
-  color: var(--text-on-dark);
-  border: 1px solid var(--border-dark);
+  background: rgb(var(--inverse));
+  color: rgb(var(--cream));
+  border: 1px solid rgb(var(--line-2));
 }
 
 .light-card {
-  background: var(--bg-card-inner);
-  border: 1px solid var(--border);
+  background: rgb(var(--card));
+  border: 1px solid rgb(var(--line));
 }
 
 button:focus-visible, a:focus-visible {

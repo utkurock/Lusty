@@ -14,7 +14,7 @@ export function ClaimButton({ onClick, loading, disabled }: ClaimButtonProps) {
       onClick={onClick}
       disabled={disabled || loading}
       className={cn(
-        'h-10 px-4 bg-[#eab308] text-[#1a1a1a] font-mono text-sm font-semibold rounded-sm',
+        'h-10 px-4 bg-[#eab308] text-ink font-mono text-sm font-semibold rounded-sm',
         'hover:bg-[#eab308]/90 transition flex items-center gap-2',
         (disabled || loading) && 'opacity-50 cursor-not-allowed'
       )}

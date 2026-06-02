@@ -74,21 +74,21 @@ export default function DashboardPage() {
     <div className="max-w-7xl mx-auto px-6 py-10">
       <div className="mb-8 flex items-end justify-between flex-wrap gap-4">
         <div>
-          <div className="font-mono text-xs text-[#6b6560]">~/dashboard</div>
-          <h1 className="text-3xl font-bold text-[#1a1a1a] mt-1">Your positions</h1>
+          <div className="font-mono text-xs text-ink-2">~/dashboard</div>
+          <h1 className="text-3xl font-bold text-ink mt-1">Your positions</h1>
         </div>
         {connected && positions.length > 0 && (
           <div className="flex gap-6 font-mono text-xs">
             <div>
-              <div className="text-[#6b6560] uppercase tracking-wider">
+              <div className="text-ink-2 uppercase tracking-wider">
                 Open positions
               </div>
-              <div className="num text-xl font-bold text-[#1a1a1a]">
+              <div className="num text-xl font-bold text-ink">
                 {positions.filter((p) => !p.settled).length}
               </div>
             </div>
             <div>
-              <div className="text-[#6b6560] uppercase tracking-wider">
+              <div className="text-ink-2 uppercase tracking-wider">
                 Upfront earned
               </div>
               <div className="num text-xl font-bold text-[#22c55e]">
@@ -96,10 +96,10 @@ export default function DashboardPage() {
               </div>
             </div>
             <div>
-              <div className="text-[#6b6560] uppercase tracking-wider">
+              <div className="text-ink-2 uppercase tracking-wider">
                 Notional
               </div>
-              <div className="num text-xl font-bold text-[#1a1a1a]">
+              <div className="num text-xl font-bold text-ink">
                 ${totalNotional.toFixed(2)}
               </div>
             </div>
@@ -122,12 +122,12 @@ export default function DashboardPage() {
 
       {!connected && (
         <div className="light-card p-8 rounded-sm text-center">
-          <div className="font-mono text-sm text-[#6b6560] mb-4">
+          <div className="font-mono text-sm text-ink-2 mb-4">
             Connect wallet to view positions
           </div>
           <button
             onClick={connect}
-            className="h-10 px-6 bg-[#1a1a1a] text-[#e8e4d9] font-mono text-sm rounded-sm hover:bg-[#2a2a2a]"
+            className="h-10 px-6 bg-inverse text-cream font-mono text-sm rounded-sm hover:bg-line-2"
           >
             connect
           </button>
@@ -136,12 +136,12 @@ export default function DashboardPage() {
 
       {connected && positions.length === 0 && (
         <div className="light-card p-12 rounded-sm text-center">
-          <div className="font-mono text-sm text-[#6b6560] mb-4">
+          <div className="font-mono text-sm text-ink-2 mb-4">
             No active positions. Start earning.
           </div>
           <Link
             href="/earn"
-            className="inline-flex h-10 px-6 items-center bg-[#1a1a1a] text-[#e8e4d9] font-mono text-sm rounded-sm hover:bg-[#2a2a2a]"
+            className="inline-flex h-10 px-6 items-center bg-inverse text-cream font-mono text-sm rounded-sm hover:bg-line-2"
           >
             go to earn
           </Link>
@@ -168,20 +168,20 @@ export default function DashboardPage() {
                     className="w-10 h-10 rounded-full shrink-0"
                   />
                   <div>
-                    <div className="font-mono font-semibold text-[#1a1a1a]">
+                    <div className="font-mono font-semibold text-ink">
                       {p.asset} {isCall ? 'Covered Call' : 'Cash-Secured Put'}
                     </div>
-                    <div className="font-mono text-[11px] text-[#6b6560]">
+                    <div className="font-mono text-[11px] text-ink-2">
                       strike ${p.strikePrice.toFixed(4)} · {p.expiryLabel}
                     </div>
                   </div>
                 </div>
 
                 <div>
-                  <div className="font-mono text-[11px] uppercase text-[#6b6560] tracking-wider">
+                  <div className="font-mono text-[11px] uppercase text-ink-2 tracking-wider">
                     Collateral
                   </div>
-                  <div className="num text-sm text-[#1a1a1a] font-semibold mt-0.5">
+                  <div className="num text-sm text-ink font-semibold mt-0.5">
                     {isCall
                       ? formatXlm(p.collateralAmount)
                       : formatUsdc(p.collateralAmount)}
@@ -189,22 +189,22 @@ export default function DashboardPage() {
                 </div>
 
                 <div>
-                  <div className="font-mono text-[11px] uppercase text-[#6b6560] tracking-wider">
+                  <div className="font-mono text-[11px] uppercase text-ink-2 tracking-wider">
                     Upfront
                   </div>
                   <div className="num text-sm text-[#22c55e] font-semibold mt-0.5">
                     ${p.premium.toFixed(4)}{' '}
-                    <span className="text-[#6b6560] font-normal">
+                    <span className="text-ink-2 font-normal">
                       ({p.apr.toFixed(2)}% APR)
                     </span>
                   </div>
                 </div>
 
                 <div>
-                  <div className="font-mono text-[11px] uppercase text-[#6b6560] tracking-wider">
+                  <div className="font-mono text-[11px] uppercase text-ink-2 tracking-wider">
                     {p.settled ? 'Settled' : expired ? 'Ready to claim' : 'Expires in'}
                   </div>
-                  <div className="num text-sm text-[#1a1a1a] font-semibold mt-0.5">
+                  <div className="num text-sm text-ink font-semibold mt-0.5">
                     {p.settled ? 'yes' : expired ? 'now' : `${days}d`}
                   </div>
                 </div>
@@ -214,7 +214,7 @@ export default function DashboardPage() {
                     <button
                       onClick={() => handleClaim(p)}
                       disabled={claimingId === p.id}
-                      className="h-9 px-4 bg-[#eab308] text-[#1a1a1a] font-mono text-xs font-bold rounded-sm hover:bg-[#f5b938] disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2 transition"
+                      className="h-9 px-4 bg-[#eab308] text-ink font-mono text-xs font-bold rounded-sm hover:bg-[#f5b938] disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2 transition"
                     >
                       {claimingId === p.id && <Loader2 size={12} className="animate-spin" />}
                       claim
@@ -224,7 +224,7 @@ export default function DashboardPage() {
                     href={`https://stellarchain.io/tx/${p.depositHash}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="font-mono text-xs flex items-center gap-1 text-[#6b6560] hover:text-[#1a1a1a]"
+                    className="font-mono text-xs flex items-center gap-1 text-ink-2 hover:text-ink"
                     title="View deposit on explorer"
                   >
                     {p.depositHash.slice(0, 8)}…

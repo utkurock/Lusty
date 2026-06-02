@@ -32,10 +32,10 @@ export function EpochCapProgress({
   return (
     <div className="w-full">
       <div className="flex items-center justify-between mb-2 flex-wrap gap-1">
-        <div className="font-mono text-xs uppercase text-[#6b6560]">
+        <div className="font-mono text-xs uppercase text-ink-2">
           Monthly capacity · {fmt(cap)} · {label}
         </div>
-        <div className="font-mono text-xs text-[#6b6560]">
+        <div className="font-mono text-xs text-ink-2">
           {segments.length} epochs open · each {fmt(cap / Math.max(1, segments.length))}
         </div>
       </div>
@@ -48,17 +48,17 @@ export function EpochCapProgress({
             return (
               <div
                 key={i}
-                className="relative flex-1 h-12 rounded-sm border border-[#c4bfb2] overflow-hidden bg-[#f0ece3]"
+                className="relative flex-1 h-12 rounded-sm border border-line overflow-hidden bg-card"
               >
                 <div
                   className={`absolute inset-y-0 left-0 transition-all duration-700 ${s.full ? 'bg-[#ef4444]' : 'bg-[#22c55e]'}`}
                   style={{ width: `${segBar}%` }}
                 />
                 <div className="absolute inset-0 flex flex-col items-center justify-center font-mono leading-tight">
-                  <span className="text-[10px] uppercase text-[#1a1a1a] font-semibold">
+                  <span className="text-[10px] uppercase text-ink font-semibold">
                     Epoch {i + 1} · {s.label}
                   </span>
-                  <span className="num text-[10px] text-[#1a1a1a]">
+                  <span className="num text-[10px] text-ink">
                     {s.full ? 'FULL' : `${segPct.toFixed(0)}%`}
                   </span>
                 </div>
@@ -68,17 +68,17 @@ export function EpochCapProgress({
         </div>
       )}
 
-      <div className="relative h-10 bg-[#f0ece3] border border-[#c4bfb2] rounded-sm overflow-hidden">
+      <div className="relative h-10 bg-card border border-line rounded-sm overflow-hidden">
         <div
           className={`absolute inset-y-0 left-0 animate-fill transition-all duration-700 ${full ? 'bg-[#ef4444]' : 'bg-[#22c55e]'}`}
           style={{ width: `${barPct}%` }}
         />
-        <div className="absolute inset-0 flex items-center justify-center font-mono text-sm font-semibold text-[#1a1a1a]">
+        <div className="absolute inset-0 flex items-center justify-center font-mono text-sm font-semibold text-ink">
           {fmt(utilized)} / {fmt(cap)} sold{full ? ' — all epochs full' : ''}
         </div>
       </div>
 
-      <div className="flex justify-between mt-2 font-mono text-xs text-[#6b6560]">
+      <div className="flex justify-between mt-2 font-mono text-xs text-ink-2">
         <span className="num">{rawPct.toFixed(2)}% of monthly capacity</span>
         <span>combined across {segments.length || '—'} epochs</span>
       </div>
