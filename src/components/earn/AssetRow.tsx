@@ -8,8 +8,9 @@ interface AssetRowProps {
   symbol: string
   name: string
   type: string
-  maxAPR: number
-  minAPR: number
+  /** Undefined while the live quote is still loading. */
+  maxAPR?: number
+  minAPR?: number
   href: string
   /** When set, the row is not navigable and the action is shown as disabled. */
   disabled?: boolean
@@ -28,6 +29,7 @@ export function AssetRow({
   disabledReason,
 }: AssetRowProps) {
   const router = useRouter()
+  const fmt = (v?: number) => (v == null ? '…' : formatAPR(v))
   return (
     <div
       role={disabled ? undefined : 'button'}
@@ -59,8 +61,8 @@ export function AssetRow({
           </div>
         </div>
         <div className="col-span-3 font-mono text-sm text-ink">{type}</div>
-        <div className="col-span-2 num text-[#22c55e] font-bold">{formatAPR(maxAPR)}</div>
-        <div className="col-span-1 num text-[#22c55e]/70">{formatAPR(minAPR)}</div>
+        <div className="col-span-2 num text-[#22c55e] font-bold">{fmt(maxAPR)}</div>
+        <div className="col-span-1 num text-[#22c55e]/70">{fmt(minAPR)}</div>
         <div className="col-span-2 flex justify-end">
           {disabled ? (
             <span
@@ -98,7 +100,7 @@ export function AssetRow({
             <div className="font-mono text-[11px] text-ink-2 truncate">{name} · {type}</div>
           </div>
           <div className="text-right shrink-0">
-            <div className="num text-[#22c55e] font-bold text-sm">{formatAPR(maxAPR)}</div>
+            <div className="num text-[#22c55e] font-bold text-sm">{fmt(maxAPR)}</div>
             <div className="font-mono text-[10px] text-ink-2 uppercase">max apr</div>
           </div>
         </div>
