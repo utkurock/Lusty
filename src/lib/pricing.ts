@@ -48,6 +48,55 @@ export function blackScholesPut(
   return strike * Math.exp(-rate * timeYears) * normalCDF(-d2) - spot * normalCDF(-d1)
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Black-76 — forward-based option pricing. THE canonical pricer for Lusty.
+//
+// Unlike Black-Scholes it prices off the forward F (carry baked in via the perp
+// funding rate — see forward.ts) instead of spot + an assumed risk-free rate.
+// The discount factor e^(-rT) is negligible for short-dated XLM weeklies, so we
+// default the discount rate to 0: the carry lives in F, not in a rate we don't
+// actually have. This removes the arbitrary r=0.05 the old BS path assumed.
+//
+//   d1 = [ln(F/K) + (σ²/2)·T] / (σ·√T)
+//   d2 = d1 − σ·√T
+//   Call = e^(−rT)·[F·N(d1) − K·N(d2)]
+//   Put  = e^(−rT)·[K·N(−d2) − F·N(−d1)]
+//
+// Put-call parity sanity check: Call − Put = e^(−rT)·(F − K).
+// ────────────────────────────────────────────────────────────────────────────
+
+export const DISCOUNT_RATE = 0 // carry is in the forward; short-dated → e^(-rT)≈1
+
+export function black76Call(
+  forward: number,
+  strike: number,
+  timeYears: number,
+  vol: number,
+  rate: number = DISCOUNT_RATE
+): number {
+  if (timeYears <= 0) return Math.max(forward - strike, 0)
+  const sqrtT = vol * Math.sqrt(timeYears)
+  if (sqrtT <= 0) return Math.max(forward - strike, 0) * Math.exp(-rate * timeYears)
+  const d1 = (Math.log(forward / strike) + 0.5 * vol * vol * timeYears) / sqrtT
+  const d2 = d1 - sqrtT
+  return Math.exp(-rate * timeYears) * (forward * normalCDF(d1) - strike * normalCDF(d2))
+}
+
+export function black76Put(
+  forward: number,
+  strike: number,
+  timeYears: number,
+  vol: number,
+  rate: number = DISCOUNT_RATE
+): number {
+  if (timeYears <= 0) return Math.max(strike - forward, 0)
+  const sqrtT = vol * Math.sqrt(timeYears)
+  if (sqrtT <= 0) return Math.max(strike - forward, 0) * Math.exp(-rate * timeYears)
+  const d1 = (Math.log(forward / strike) + 0.5 * vol * vol * timeYears) / sqrtT
+  const d2 = d1 - sqrtT
+  return Math.exp(-rate * timeYears) * (strike * normalCDF(-d2) - forward * normalCDF(-d1))
+}
+
 // Protocol revenue share taken from every premium (25% of Black-Scholes
 // fair value). The user receives 75% of the BS premium; the remaining 25%
 // is the protocol's edge — paid to FEE_WALLET on every successful deposit.
@@ -62,10 +111,11 @@ export function blackScholesPut(
 export const PROTOCOL_FEE_BPS = 2500 // 25.00%
 export const PROTOCOL_FEE = PROTOCOL_FEE_BPS / 10_000
 
-// Volatility smile: deep OTM strikes need a higher effective IV than ATM.
-// iv_eff = iv_base × (1 + SMILE_K × ln(K/S)^2)
-// SMILE_K calibrated so a ±60% strike roughly doubles the base IV.
-export const SMILE_K = 6.0
+// NOTE: There is intentionally no volatility smile here. A smile is an
+// *observed* market artifact read off an options surface. XLM has no options
+// market, so any smile we wrote down would be fabricated. The old
+// `iv_eff = iv_base × (1 + SMILE_K × ln(K/S)²)` hack has been removed; tail
+// risk is instead carried in the realized-vol spread (see vol.ts / quote.ts).
 
 // Round a strike to a Deribit-style "nice" tick size based on the spot price.
 // The tick is chosen from a 1-2-5 ladder so strikes like $0.23, $42, $1500
@@ -90,12 +140,6 @@ export function roundStrike(strike: number, spot: number): number {
   return Math.round(strike / step) * step
 }
 
-export function effectiveIv(baseIv: number, spot: number, strike: number): number {
-  if (spot <= 0 || strike <= 0) return baseIv
-  const m = Math.log(strike / spot)
-  return baseIv * (1 + SMILE_K * m * m)
-}
-
 export function calculateAPR(
   premiumUsdc: number,
   assetValueUsdc: number,
@@ -113,24 +157,35 @@ export interface StrikeOption {
   label: string
 }
 
+// Strike ladders. The OTM multipliers below define the rungs; the canonical
+// pricing/APR for each rung comes from the server engine (quote.ts via
+// /api/vault/quote) using real realized vol + forward, so what the user sees
+// equals what the vault pays. These exported ladder definitions are shared so
+// the server and any client preview agree on the strike set.
+export const CALL_STRIKE_MULTIPLIERS = [1.02, 1.06, 1.12, 1.20]
+export const PUT_STRIKE_MULTIPLIERS = [0.98, 0.94, 0.88, 0.80]
+
+export function callStrikeLabel(mult: number): string {
+  return `+${((mult - 1) * 100).toFixed(0)}% OTM`
+}
+export function putStrikeLabel(mult: number): string {
+  return `-${((1 - mult) * 100).toFixed(0)}% OTM`
+}
+
+// Legacy synchronous preview ladders. Kept for non-authoritative previews only
+// (forward defaults to spot, flat σ, no utilization haircut). The live earn UI
+// fetches /api/vault/quote instead so the displayed APR is the paid APR.
 export function generateCallStrikes(
   spotPrice: number,
   impliedVol: number = 0.80,
   daysToExpiry: number = 7
 ): StrikeOption[] {
   const timeYears = daysToExpiry / 365
-  // Closest-to-spot first → highest APR (and assignment risk).
-  const multipliers = [1.02, 1.06, 1.12, 1.20]
-
-  return multipliers.map((mult, i) => {
+  return CALL_STRIKE_MULTIPLIERS.map((mult, i) => {
     const strike = roundStrike(spotPrice * mult, spotPrice)
-    const ivEff = effectiveIv(impliedVol, spotPrice, strike)
-    const grossPremium = blackScholesCall(spotPrice, strike, timeYears, ivEff)
-    const premium = grossPremium * (1 - PROTOCOL_FEE)
+    const premium = black76Call(spotPrice, strike, timeYears, impliedVol)
     const apr = calculateAPR(premium, spotPrice, daysToExpiry)
-    const pctOtm = ((mult - 1) * 100).toFixed(0)
-    const label = `+${pctOtm}% OTM`
-    return { index: i, strike, premium, apr, label }
+    return { index: i, strike, premium, apr, label: callStrikeLabel(mult) }
   })
 }
 
@@ -140,17 +195,11 @@ export function generatePutStrikes(
   daysToExpiry: number = 7
 ): StrikeOption[] {
   const timeYears = daysToExpiry / 365
-  // Furthest-from-spot first → safest, lowest APR; last is closest to spot.
-  const multipliers = [0.80, 0.88, 0.94, 0.98]
-
-  return multipliers.map((mult, i) => {
+  return PUT_STRIKE_MULTIPLIERS.map((mult, i) => {
     const strike = roundStrike(spotPrice * mult, spotPrice)
-    const ivEff = effectiveIv(impliedVol, spotPrice, strike)
-    const grossPremium = blackScholesPut(spotPrice, strike, timeYears, ivEff)
-    const premium = grossPremium * (1 - PROTOCOL_FEE)
-    const apr = calculateAPR(premium, spotPrice, daysToExpiry)
-    const pctOtm = ((1 - mult) * 100).toFixed(0)
-    const label = `-${pctOtm}% OTM`
-    return { index: i, strike, premium, apr, label }
+    const premium = black76Put(spotPrice, strike, timeYears, impliedVol)
+    // Cash-secured put: capital at risk is the strike (cash locked), not spot.
+    const apr = calculateAPR(premium, strike, daysToExpiry)
+    return { index: i, strike, premium, apr, label: putStrikeLabel(mult) }
   })
 }

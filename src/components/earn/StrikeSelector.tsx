@@ -8,8 +8,7 @@ import { useWalletContext } from '@/providers/WalletProvider'
 import { MIN_DEPOSIT_XLM, MAX_DEPOSIT_XLM, formatExpiry, formatUsdc } from '@/lib/utils'
 import { useXlmPrice } from '@/hooks/useXlmPrice'
 import { useVaultStats } from '@/hooks/useVaultStats'
-import { generateCallStrikes, generatePutStrikes, StrikeOption } from '@/lib/pricing'
-import { getExpiryOptions, adjustApr, ExpiryOption } from '@/lib/expiries'
+import { getExpiryOptions, ExpiryOption } from '@/lib/expiries'
 import { StablePicker, Stable } from '@/components/shared/StablePicker'
 import { buildVaultDepositTx, submitUserTx } from '@/lib/vault'
 import { savePosition } from '@/lib/positions'
@@ -20,6 +19,15 @@ import { ChevronDown, TrendingUp, TrendingDown } from 'lucide-react'
 interface StrikeSelectorProps {
   assetSymbol: string
   type: 'call' | 'put'
+}
+
+// One priced strike returned by /api/vault/quote — only the user-facing fields.
+interface Rung {
+  index: number
+  strike: number
+  label: string
+  apr: number
+  userPremium: number
 }
 
 export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
@@ -76,28 +84,56 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
     return () => document.removeEventListener('mousedown', onClick)
   }, [expiryOpen])
 
-  // Strikes computed locally so APR reflects both the selected expiry's
-  // days-to-expiry AND its pool utilization (dynamic APR layer).
-  const strikes: StrikeOption[] = useMemo(() => {
-    if (!xlmPrice || !expiry) return []
-    const gen = type === 'call' ? generateCallStrikes : generatePutStrikes
-    const base = gen(xlmPrice, 0.80, expiry.daysToExpiry)
-    return base.map((s) => ({ ...s, apr: adjustApr(s.apr, expiry) }))
-  }, [xlmPrice, expiry, type])
+  // Strikes + APR come from the server quote engine (/api/vault/quote) — the
+  // SAME engine that pays the premium on deposit — so what's shown equals what's
+  // paid. The engine prices Black-76 off XLM's real realized vol (no fabricated
+  // σ) and the perp forward, with a utilization-aware haircut. We pass the
+  // selected expiry's days + pool utilization so the quote matches the payout.
+  const [strikes, setStrikes] = useState<Rung[]>([])
+  const [quoteLoading, setQuoteLoading] = useState(false)
+  const [quoteError, setQuoteError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!expiry) return
+    const ctrl = new AbortController()
+    setQuoteLoading(true)
+    setQuoteError(null)
+    const params = new URLSearchParams({
+      side: type,
+      days: String(expiry.daysToExpiry),
+      util: String(expiry.utilization ?? 0),
+    })
+    fetch(`/api/vault/quote?${params.toString()}`, { signal: ctrl.signal })
+      .then(async (r) => {
+        const j = await r.json()
+        if (!r.ok || !j.ok) throw new Error(j.error ?? 'quote failed')
+        setStrikes(j.strikes as Rung[])
+      })
+      .catch((e) => {
+        if (e?.name === 'AbortError') return
+        setQuoteError(e?.message ?? 'quote unavailable')
+        setStrikes([])
+      })
+      .finally(() => {
+        if (!ctrl.signal.aborted) setQuoteLoading(false)
+      })
+    return () => ctrl.abort()
+  }, [type, expiry])
 
   const amount = useMemo(() => parseFloat(amountStr) || 0, [amountStr])
   const selectedStrike = strikes[selectedIdx]
 
   const apr = selectedStrike?.apr ?? 0
 
-  // Premium is derived directly from the *displayed* APR and the notional
-  // so the UI stays internally consistent (Rysk-style):
-  //   premium_usdc = notional_usdc × (APR / 100) × (days / 365)
+  // Premium = per-unit user premium × number of option units. This is exactly
+  // what the deposit route pays (units = XLM for calls, cash/strike for puts),
+  // so the displayed upfront equals the paid upfront.
   const premium = useMemo(() => {
-    if (!selectedStrike || !expiry) return 0
-    const notionalUsd = type === 'call' ? amount * (xlmPrice || 0) : amount
-    return notionalUsd * (apr / 100) * (expiry.daysToExpiry / 365)
-  }, [selectedStrike, expiry, amount, xlmPrice, apr, type])
+    if (!selectedStrike) return 0
+    const units =
+      type === 'call' ? amount : selectedStrike.strike > 0 ? amount / selectedStrike.strike : 0
+    return selectedStrike.userPremium * units
+  }, [selectedStrike, amount, type])
 
   // The capacity bucket for the selected expiry — drives the cap gate + donut.
   const selectedBucket = useMemo(() => {
@@ -395,6 +431,15 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
           expiryDate={expiry.date}
           type={type}
         />
+      )}
+
+      {quoteLoading && strikes.length === 0 && (
+        <div className="p-3 font-mono text-xs text-ink-2 rounded-sm">Pricing strikes…</div>
+      )}
+      {quoteError && (
+        <div className="p-3 border border-[#f59e0b]/40 bg-[#f59e0b]/10 font-mono text-xs text-[#f59e0b] rounded-sm">
+          Couldn&apos;t load live pricing: {quoteError}
+        </div>
       )}
 
       {error && (

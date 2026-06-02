@@ -11,7 +11,7 @@ import {
 import { logTransaction } from '@/lib/db-queries'
 import { rateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
-import { quoteOption } from '@/lib/pricing-server'
+import { quoteOptionLive } from '@/lib/pricing-server'
 import {
   computeExpirySold,
   computeOpenBuckets,
@@ -19,7 +19,7 @@ import {
   CALL_EPOCH_CAP_XLM,
   PUT_EPOCH_CAP_USD,
 } from '@/lib/vault-state'
-import { dynamicAprFactor, expiryUtilization } from '@/lib/expiries'
+import { expiryUtilization } from '@/lib/expiries'
 import { getBreakerState } from '@/lib/circuit-breaker'
 import { LUSD_CODE, LUSD_ISSUER, LUSD_DISTRIBUTOR } from '@/lib/lusd'
 
@@ -27,9 +27,9 @@ const HORIZON =
   process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
 const DISTRIBUTOR_SECRET = process.env.LUSD_DISTRIBUTOR_SECRET ?? ''
 const FEE_WALLET = process.env.FEE_WALLET ?? ''
-// Must match pricing.ts PROTOCOL_FEE_BPS — kept here to avoid coupling the
-// API route to client-side modules. If you change one, change both.
-const PROTOCOL_FEE_RATE = 0.25 // 25% revenue share — see pricing.ts for rationale
+// The protocol edge per option is the haircut between fair and user premium,
+// computed by the single quote engine (pricing-server.ts) — not a flat rate
+// applied here. See `quote.protocolEdge` below.
 
 // Per-wallet position cap (USD notional) — stops one user monopolizing the vault.
 const MAX_USER_NOTIONAL_USD = Number(process.env.MAX_USER_NOTIONAL_USD ?? 50_000)
@@ -360,39 +360,22 @@ export async function POST(req: Request) {
       )
     }
 
-    // ---- compute premium in LUSD
+    // ---- compute premium in LUSD via the single quote engine
     //
     // Server-canonical premium. Strike and daysToExpiry come from the user
-    // (they're choosing the option, not its price); spot comes from Binance
-    // server-side; everything else flows from quoteOption() — never from any
-    // APR or premium field the client might supply. The previous code
-    // multiplied notionalUsd by a client-supplied APR, which let an
-    // attacker tune APR up to ~10% (capped at 10_000) and drain the
-    // distributor up to the per-call MAX_PREMIUM_LUSD cap on every hit.
+    // (they're choosing the option, not its price); spot, σ (realized vol) and
+    // the forward come from the server; everything else flows from
+    // quoteOptionLive() — never from any APR or premium field the client might
+    // supply. This is the SAME function the UI calls via /api/vault/quote, so
+    // the paid premium equals the displayed premium. The previous code applied
+    // a second "dynFactor" only on the server, which could diverge from the UI.
     const spot = await fetchXlmUsd()
     const notionalUsd =
       body.type === 'call' ? paidAmount * spot : paidAmount // LUSD ≈ $1
 
-    const quote = quoteOption({
-      side: body.type,
-      spot,
-      strike: body.strikePrice,
-      daysToExpiry: body.daysToExpiry,
-    })
-
-    // ---- dynamic-APR parity with the UI quote ----
-    //
-    // The UI quotes baseApr × timeFactor × utilFactor (expiries.ts: adjustApr
-    // → dynamicAprFactor). If we paid the raw Black-Scholes premium here the
-    // payout would diverge from the "NOW … upfront received" figure the user
-    // just saw — by several × when the vault is full and the expiry is near.
-    // So we apply the SAME factor, recomputed from the server's own trusted
-    // on-chain utilization (never from any client-supplied APR).
-    //
-    // Utilization mirrors the UI exactly: aggregate open-interest / capacity
-    // for this side, spread across the rolling expiries by REAL_DISTRIBUTION
-    // and keyed by this deposit's expiry slot.
-    let dynFactor = 1
+    // Pool utilization for this deposit's expiry — the haircut input. Computed
+    // from the server's own trusted on-chain open interest, mirroring the UI.
+    let utilization = 0
     try {
       const openBuckets = await computeOpenBuckets()
       const n = openBuckets.length || 1
@@ -403,23 +386,40 @@ export async function POST(req: Request) {
       const slot = openBuckets.findIndex(
         (b) => b.dateKey === expiryDateKey(canonicalExpiryIso)
       )
-      const utilization = expiryUtilization(aggUtil, slot >= 0 ? slot : 0)
-      dynFactor = dynamicAprFactor(body.daysToExpiry, utilization)
+      utilization = expiryUtilization(aggUtil, slot >= 0 ? slot : 0)
     } catch (dynErr) {
-      // DB was reachable moments ago (the cap/limit checks above fail-closed
-      // on it), so this is unlikely. If it does fail, assume a nearly-full
-      // pool: time-decay only, never the full BS premium, so we never overpay.
-      console.warn('vault/deposit: util read failed, applying floor', dynErr)
-      dynFactor = dynamicAprFactor(body.daysToExpiry, 0.98)
+      // DB was reachable moments ago (the cap/limit checks above fail-closed on
+      // it), so this is unlikely. If it does fail, assume a nearly-full pool so
+      // the haircut is maximal and we never overpay.
+      console.warn('vault/deposit: util read failed, assuming full pool', dynErr)
+      utilization = 0.98
     }
 
-    // Effective APR the user is actually offered (post dynamic adjustment) —
-    // this is what the UI displayed and what we pay against.
-    const effectiveApr = quote.apr * dynFactor
+    // THE quote. σ from XLM realized vol, forward from perp funding, haircut
+    // from base + utilization. Fails closed if the σ feed is unavailable.
+    const { quote, context } = await quoteOptionLive({
+      side: body.type,
+      spot,
+      strike: body.strikePrice,
+      daysToExpiry: body.daysToExpiry,
+      utilization,
+    })
 
-    // Observability only: log when the legacy client APR field differs from
-    // what we'd quote. The server never reads body.apr — this just helps us
-    // notice clients drifting out of sync with pricing changes.
+    // Number of option units this collateral backs:
+    //   call → 1 unit of XLM per XLM deposited.
+    //   put  → cash secures (cash / strike) units of XLM.
+    const units =
+      body.type === 'call' ? paidAmount : paidAmount / body.strikePrice
+
+    // Premium and fee are the per-unit engine outputs scaled by units. No
+    // second adjustment layer — userPremium is exactly what the UI showed.
+    const premium = quote.userPremium * units
+    const fee = quote.protocolEdge * units
+    const grossPremium = quote.fairPremium * units
+    const effectiveApr = quote.apr
+
+    // Observability only: log when a legacy client APR field diverges from the
+    // server quote. The server never reads body.apr.
     if (
       typeof body.apr === 'number' &&
       isFinite(body.apr) &&
@@ -432,10 +432,6 @@ export async function POST(req: Request) {
         days: body.daysToExpiry,
       })
     }
-
-    const premium = notionalUsd * (effectiveApr / 100) * (body.daysToExpiry / 365)
-    const fee = premium * (PROTOCOL_FEE_RATE / (1 - PROTOCOL_FEE_RATE))
-    const grossPremium = premium + fee // == adjusted BS fair value
 
     if (!isFinite(premium) || premium <= 0) {
       return NextResponse.json({ error: 'upfront computed as zero' }, { status: 400 })
@@ -548,13 +544,18 @@ export async function POST(req: Request) {
           collateralAmount: paidAmount,
           strikePrice: body.strikePrice,
           apr: effectiveApr,
-          baseApr: quote.apr,
-          dynFactor,
           daysToExpiry: body.daysToExpiry,
           expiryIso: canonicalExpiryIso,
           spot,
-          baseIv: quote.baseIv,
-          ivEff: quote.ivEff,
+          forward: quote.forward,
+          sigmaRealized: quote.sigmaRealized,
+          sigmaOffered: quote.sigmaOffered,
+          haircut: quote.haircut,
+          utilization: quote.utilization,
+          fairPremium: quote.fairPremium,
+          units,
+          forwardSource: context.forwardSource,
+          volMethod: context.volMethod,
         },
       })
     } catch (dbErr: any) {
