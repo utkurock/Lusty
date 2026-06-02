@@ -76,6 +76,19 @@ function daysBetween(a: Date, b: Date): number {
   return Math.max(0, Math.ceil((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24)))
 }
 
+/**
+ * Days-to-expiry of the FARTHEST currently-open expiry. The pricing engine uses
+ * this as the time-scaling reference so the longest open expiry quotes at the
+ * APR ceiling and nearer expiries scale below it — robust to the rolling
+ * schedule (the reference moves with the expiries instead of being a fixed
+ * constant that the longest expiry may never reach).
+ */
+export function maxOpenExpiryDays(from: Date = new Date()): number {
+  const dates = upcomingExpiryDates(from, ACTIVE_EXPIRY_COUNT)
+  const last = dates[dates.length - 1]
+  return Math.max(MIN_DAYS_TO_EXPIRY, daysBetween(from, last))
+}
+
 interface RealVaultStats {
   totalDeposited: number  // USD-equivalent already sold to the vault
   vaultCap: number        // USD-equivalent total capacity

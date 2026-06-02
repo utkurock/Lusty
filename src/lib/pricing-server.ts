@@ -34,6 +34,7 @@ import {
 } from './pricing'
 import { getRealizedVol } from './vol'
 import { getForward } from './forward'
+import { maxOpenExpiryDays } from './expiries'
 
 // ────────────────────────────────────────────────────────────────────────────
 // Tunables — "Balanced" risk appetite (see env overrides below).
@@ -58,12 +59,32 @@ const MAX_PRICING_SIGMA = num(process.env.MAX_PRICING_SIGMA, 1.0) // 100%
 // number. Bound the offered APR for a stable, sustainable quote.
 const MAX_APR = num(process.env.MAX_APR, 120) // percent
 
+// Explicit protocol commission, taken as a fraction of the upfront premium the
+// user receives (never from their collateral). Guaranteed revenue on every
+// deposit, independent of how the option settles. The displayed APR/premium are
+// net of this, so what's shown equals what's paid. Set 0 to disable.
+const PREMIUM_FEE_RATE = num(process.env.PREMIUM_FEE_RATE, 0.10) // 10% of upfront
+
 // Time-to-expiry reference (days). The offered APR scales with days-to-expiry
 // (timeFactor = min(1, days/ref)), so longer commitments quote a higher APR and
-// the quote tapers down as expiry approaches. Set near the longest open expiry
-// so the farthest expiry quotes near the cap. Raw APR ∝ 1/√days, and this factor
+// the quote tapers down as expiry approaches. Raw APR ∝ 1/√days and this factor
 // ∝ days, so the net offered APR ∝ √days — monotonically rising with tenor.
-const TIME_REF_DAYS = num(process.env.TIME_REF_DAYS, 21)
+//
+// Default (env 0 / unset) = AUTO: the reference is the farthest open expiry, so
+// the longest expiry always quotes at the ceiling and the schedule rolling
+// forward never strands it below cap. Set TIME_REF_DAYS>0 to pin a fixed value.
+const TIME_REF_DAYS_ENV = num(process.env.TIME_REF_DAYS, 0)
+const TIME_REF_FALLBACK = 21 // used only if dynamic lookup is unavailable
+
+function resolveTimeRefDays(): number {
+  if (TIME_REF_DAYS_ENV > 0) return TIME_REF_DAYS_ENV
+  try {
+    const d = maxOpenExpiryDays()
+    return d > 0 ? d : TIME_REF_FALLBACK
+  } catch {
+    return TIME_REF_FALLBACK
+  }
+}
 
 // Utilization → extra haircut (kinked, Aave/Compound style). Empty pool → 0
 // extra (max APR to attract flow); past the kink the haircut ramps hard so the
@@ -111,6 +132,8 @@ export interface QuoteInput {
   sigmaRealized: number
   /** Pool utilization 0..1 for this strike/expiry. Default 0 (empty → max APR). */
   utilization?: number
+  /** Time-scaling reference (days). Defaults to the farthest open expiry. */
+  timeRefDays?: number
 }
 
 export interface Quote {
@@ -135,10 +158,12 @@ export interface Quote {
   capital: number
   /** Utilization used in the haircut (0..1). */
   utilization: number
-  /** Annualized premium yield offered to the user (percent). */
+  /** Annualized premium yield offered to the user (percent), net of the fee. */
   apr: number
   /** True if the APR hit the MAX_APR ceiling (premium pinned below fair). */
   aprCapped: boolean
+  /** Explicit protocol commission per unit notional (USD), taken from upfront. */
+  protocolFee: number
 }
 
 // Raw (un-normalized) Black-76 → haircut → annualized APR for a single strike.
@@ -207,18 +232,28 @@ export function quoteOption(input: QuoteInput): Quote {
   const ref = rawStrike(side, forward, spot, nearStrike, timeYears, daysToExpiry, sigmaOffered, baseHaircut)
 
   // Time-scaled ceiling for the top strike (longer tenor → higher target).
-  const targetTop = MAX_APR * Math.min(1, daysToExpiry / TIME_REF_DAYS)
+  const timeRefDays =
+    input.timeRefDays && input.timeRefDays > 0 ? input.timeRefDays : resolveTimeRefDays()
+  const targetTop = MAX_APR * Math.min(1, daysToExpiry / timeRefDays)
   const scaleFactor = ref.apr > 0 ? Math.min(1, targetTop / ref.apr) : 1
   const aprCapped = scaleFactor < 1
 
-  const apr = self.apr * scaleFactor
+  // Gross offered APR after ladder normalization (pre-commission).
+  const grossApr = self.apr * scaleFactor
   const capital = self.capital
   const fairPremium = self.fair
-  // Premium is synced to the final offered APR so paid == shown.
-  const userPremium = capital * (apr / 100) * (daysToExpiry / 365)
-  const protocolEdge = fairPremium - userPremium
-  // Effective haircut actually applied (after scaling).
-  const haircut = fairPremium > 0 ? 1 - userPremium / fairPremium : baseHaircut
+  const grossUpfront = capital * (grossApr / 100) * (daysToExpiry / 365)
+
+  // Apply the explicit protocol commission: the user receives the upfront net of
+  // the fee; APR is reduced by the same fraction so displayed == paid.
+  const apr = grossApr * (1 - PREMIUM_FEE_RATE)
+  const userPremium = grossUpfront * (1 - PREMIUM_FEE_RATE)
+  const protocolFee = grossUpfront - userPremium
+
+  // Implicit edge (below-fair pricing, realized at settlement) is separate from
+  // the explicit fee and measured against the gross upfront.
+  const protocolEdge = fairPremium - grossUpfront
+  const haircut = fairPremium > 0 ? 1 - grossUpfront / fairPremium : baseHaircut
 
   return {
     side,
@@ -236,6 +271,7 @@ export function quoteOption(input: QuoteInput): Quote {
     utilization,
     apr,
     aprCapped,
+    protocolFee,
   }
 }
 

@@ -145,5 +145,33 @@ export async function ensureSchema(): Promise<void> {
     group by t.address
   `)
 
+  // Security hardening (idempotent). The app connects as the privileged owner
+  // role, which bypasses RLS — but Supabase also exposes a public PostgREST API
+  // through the `anon`/`authenticated` roles. Every table here is server-only,
+  // so enable RLS (deny-all, no policies) on all public tables and strip those
+  // roles' grants (tables + the leaderboard view) so nothing leaks through the
+  // public API. Re-applied on every boot so freshly-created tables stay locked.
+  await pool.query(`
+    do $$
+    declare r record;
+    begin
+      for r in select tablename from pg_tables where schemaname = 'public' loop
+        execute format('alter table public.%I enable row level security', r.tablename);
+      end loop;
+      if exists (select 1 from pg_roles where rolname = 'anon') then
+        for r in select tablename from pg_tables where schemaname = 'public' loop
+          execute format('revoke all on public.%I from anon', r.tablename);
+        end loop;
+        execute 'revoke all on public.leaderboard_view from anon';
+      end if;
+      if exists (select 1 from pg_roles where rolname = 'authenticated') then
+        for r in select tablename from pg_tables where schemaname = 'public' loop
+          execute format('revoke all on public.%I from authenticated', r.tablename);
+        end loop;
+        execute 'revoke all on public.leaderboard_view from authenticated';
+      end if;
+    end $$;
+  `)
+
   global.__pgSchemaReady = true
 }

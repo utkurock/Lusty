@@ -26,9 +26,12 @@ import { LUSD_CODE, LUSD_ISSUER, LUSD_DISTRIBUTOR } from '@/lib/lusd'
 const HORIZON =
   process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
 const DISTRIBUTOR_SECRET = process.env.LUSD_DISTRIBUTOR_SECRET ?? ''
-// No fee wallet payout at deposit time: the protocol edge is implicit (the
-// quote engine pays below fair value; the difference is realized at settlement).
-// `quote.protocolEdge` is logged for analytics only.
+// Protocol commission wallet. The explicit fee is a slice of the upfront the
+// user would receive (computed by the quote engine as `quote.protocolFee`), so
+// total distributor outflow stays equal to the gross upfront — the fee is just
+// redirected here instead of going to the user. If unset / no trustline, the
+// fee stays in the distributor and is recorded for accounting.
+const FEE_WALLET = process.env.FEE_WALLET ?? ''
 
 // Per-wallet position cap (USD notional) — stops one user monopolizing the vault.
 const MAX_USER_NOTIONAL_USD = Number(process.env.MAX_USER_NOTIONAL_USD ?? 50_000)
@@ -410,13 +413,14 @@ export async function POST(req: Request) {
     const units =
       body.type === 'call' ? paidAmount : paidAmount / body.strikePrice
 
-    // Premium paid to the user — the single engine output × units. This is the
-    // ONLY on-chain payout the distributor makes. The protocol's edge is
-    // implicit: we pay below fair value and realize it at settlement, so there
-    // is no separate fee transfer at deposit time (that would just drain the
-    // distributor for no economic gain). `protocolEdgeNotional` is recorded for
-    // analytics only — it is never moved on-chain here.
+    // Upfront paid to the user — already net of the explicit protocol fee (the
+    // engine took the commission out of the upfront, not the collateral). The
+    // fee slice is routed to FEE_WALLET below; total distributor outflow =
+    // premium + fee = the gross upfront, so this is NOT the old leak (which paid
+    // the full fair premium). `protocolEdgeNotional` is the implicit settlement
+    // edge, recorded for analytics only.
     const premium = quote.userPremium * units
+    const fee = quote.protocolFee * units
     const protocolEdgeNotional = quote.protocolEdge * units
     const effectiveApr = quote.apr
 
@@ -438,9 +442,11 @@ export async function POST(req: Request) {
     if (!isFinite(premium) || premium <= 0) {
       return NextResponse.json({ error: 'upfront computed as zero' }, { status: 400 })
     }
-    if (premium > MAX_PREMIUM_LUSD) {
+    // Cap guards total distributor outflow (user upfront + protocol fee).
+    const grossUpfront = premium + fee
+    if (grossUpfront > MAX_PREMIUM_LUSD) {
       return NextResponse.json(
-        { error: `upfront ${premium.toFixed(2)} exceeds cap ${MAX_PREMIUM_LUSD}` },
+        { error: `upfront ${grossUpfront.toFixed(2)} exceeds cap ${MAX_PREMIUM_LUSD}` },
         { status: 400 }
       )
     }
@@ -466,9 +472,7 @@ export async function POST(req: Request) {
       fee: BASE_FEE,
       networkPassphrase: Networks.TESTNET,
     })
-      // Single payout: the upfront premium to the user. The protocol edge is
-      // implicit (below-fair pricing realized at settlement), so nothing is
-      // sent to a fee wallet here.
+      // Pay the user their net upfront (already fee-deducted by the engine).
       .addOperation(
         Operation.payment({
           destination: body.address,
@@ -476,6 +480,32 @@ export async function POST(req: Request) {
           amount: premium.toFixed(7),
         })
       )
+
+    // Route the explicit commission to FEE_WALLET (LUSD). This slice came OUT of
+    // the upfront, so total outflow = premium + fee = gross upfront (no leak).
+    // If FEE_WALLET is unset or lacks a LUSD trustline, the fee simply stays in
+    // the distributor (still protocol-owned) and we record it for accounting.
+    let feeSent = false
+    let feeNote: string | undefined
+    if (FEE_WALLET && fee > 0.0000001) {
+      try {
+        const feeAcc = await server.loadAccount(FEE_WALLET)
+        const feeHasTrust = feeAcc.balances.some(
+          (b: any) => b.asset_code === LUSD_CODE && b.asset_issuer === LUSD_ISSUER
+        )
+        if (feeHasTrust) {
+          txBuilder.addOperation(
+            Operation.payment({ destination: FEE_WALLET, asset, amount: fee.toFixed(7) })
+          )
+          feeSent = true
+        } else {
+          feeNote = `FEE_WALLET has no LUSD trustline — ${fee.toFixed(4)} LUSD fee kept in distributor`
+        }
+      } catch (feeErr: any) {
+        feeNote = `FEE_WALLET load failed (${feeErr?.message ?? 'unknown'}) — fee kept in distributor`
+        console.error('vault/deposit:', feeNote)
+      }
+    }
 
     const premiumTx = txBuilder.setTimeout(60).build()
     premiumTx.sign(distributor)
@@ -507,6 +537,8 @@ export async function POST(req: Request) {
           haircut: quote.haircut,
           utilization: quote.utilization,
           fairPremium: quote.fairPremium,
+          protocolFee: fee,
+          feeSent,
           protocolEdgeNotional,
           units,
           forwardSource: context.forwardSource,
@@ -523,6 +555,8 @@ export async function POST(req: Request) {
       depositHash: body.txHash,
       premiumHash: (payRes as any).hash,
       premium: premium.toFixed(4),
+      feeSent,
+      ...(feeNote ? { feeNote } : {}),
       ...(dbWarning ? { warning: `Leaderboard not updated: ${dbWarning}` } : {}),
     })
   } catch (e: any) {
