@@ -14,10 +14,12 @@ import { isValidStellarAddress } from '@/lib/utils'
 import { quoteOption } from '@/lib/pricing-server'
 import {
   computeExpirySold,
+  computeOpenBuckets,
   expiryDateKey,
   CALL_EPOCH_CAP_XLM,
   PUT_EPOCH_CAP_USD,
 } from '@/lib/vault-state'
+import { dynamicAprFactor, expiryUtilization } from '@/lib/expiries'
 import { getBreakerState } from '@/lib/circuit-breaker'
 import { LUSD_CODE, LUSD_ISSUER, LUSD_DISTRIBUTOR } from '@/lib/lusd'
 
@@ -378,25 +380,62 @@ export async function POST(req: Request) {
       daysToExpiry: body.daysToExpiry,
     })
 
+    // ---- dynamic-APR parity with the UI quote ----
+    //
+    // The UI quotes baseApr × timeFactor × utilFactor (expiries.ts: adjustApr
+    // → dynamicAprFactor). If we paid the raw Black-Scholes premium here the
+    // payout would diverge from the "NOW … upfront received" figure the user
+    // just saw — by several × when the vault is full and the expiry is near.
+    // So we apply the SAME factor, recomputed from the server's own trusted
+    // on-chain utilization (never from any client-supplied APR).
+    //
+    // Utilization mirrors the UI exactly: aggregate open-interest / capacity
+    // for this side, spread across the rolling expiries by REAL_DISTRIBUTION
+    // and keyed by this deposit's expiry slot.
+    let dynFactor = 1
+    try {
+      const openBuckets = await computeOpenBuckets()
+      const n = openBuckets.length || 1
+      const aggUtil =
+        body.type === 'call'
+          ? openBuckets.reduce((a, b) => a + b.callXlm, 0) / (CALL_EPOCH_CAP_XLM * n)
+          : openBuckets.reduce((a, b) => a + b.putUsd, 0) / (PUT_EPOCH_CAP_USD * n)
+      const slot = openBuckets.findIndex(
+        (b) => b.dateKey === expiryDateKey(canonicalExpiryIso)
+      )
+      const utilization = expiryUtilization(aggUtil, slot >= 0 ? slot : 0)
+      dynFactor = dynamicAprFactor(body.daysToExpiry, utilization)
+    } catch (dynErr) {
+      // DB was reachable moments ago (the cap/limit checks above fail-closed
+      // on it), so this is unlikely. If it does fail, assume a nearly-full
+      // pool: time-decay only, never the full BS premium, so we never overpay.
+      console.warn('vault/deposit: util read failed, applying floor', dynErr)
+      dynFactor = dynamicAprFactor(body.daysToExpiry, 0.98)
+    }
+
+    // Effective APR the user is actually offered (post dynamic adjustment) —
+    // this is what the UI displayed and what we pay against.
+    const effectiveApr = quote.apr * dynFactor
+
     // Observability only: log when the legacy client APR field differs from
     // what we'd quote. The server never reads body.apr — this just helps us
     // notice clients drifting out of sync with pricing changes.
     if (
       typeof body.apr === 'number' &&
       isFinite(body.apr) &&
-      Math.abs(body.apr - quote.apr) / Math.max(quote.apr, 1e-6) > 0.05
+      Math.abs(body.apr - effectiveApr) / Math.max(effectiveApr, 1e-6) > 0.05
     ) {
       console.warn('vault/deposit: client APR diverged from server quote', {
         clientApr: body.apr,
-        serverApr: quote.apr,
+        serverApr: effectiveApr,
         strike: body.strikePrice,
         days: body.daysToExpiry,
       })
     }
 
-    const premium = notionalUsd * (quote.apr / 100) * (body.daysToExpiry / 365)
+    const premium = notionalUsd * (effectiveApr / 100) * (body.daysToExpiry / 365)
     const fee = premium * (PROTOCOL_FEE_RATE / (1 - PROTOCOL_FEE_RATE))
-    const grossPremium = premium + fee // == original BS fair value
+    const grossPremium = premium + fee // == adjusted BS fair value
 
     if (!isFinite(premium) || premium <= 0) {
       return NextResponse.json({ error: 'upfront computed as zero' }, { status: 400 })
@@ -508,7 +547,9 @@ export async function POST(req: Request) {
         metadata: {
           collateralAmount: paidAmount,
           strikePrice: body.strikePrice,
-          apr: quote.apr,
+          apr: effectiveApr,
+          baseApr: quote.apr,
+          dynFactor,
           daysToExpiry: body.daysToExpiry,
           expiryIso: canonicalExpiryIso,
           spot,

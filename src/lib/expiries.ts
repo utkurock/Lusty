@@ -24,6 +24,22 @@ export const MIN_DAYS_TO_EXPIRY = 2
 // Rolling expiries open at once — mirrors VAULT_EPOCHS_PER_MONTH on the server.
 export const ACTIVE_EXPIRY_COUNT = 3
 
+// How aggregate vault utilization is spread across the rolling expiries: the
+// front expiry carries 100% of it, mid 60%, back 30%. Reflects real-world flow
+// concentration and means the front-week APR drops first as the vault fills.
+// Shared by the UI quote AND the deposit API so the displayed and paid premium
+// agree (see expiryUtilization / dynamicAprFactor).
+export const REAL_DISTRIBUTION = [1.0, 0.6, 0.3]
+
+// Per-expiry utilization (0..0.98) for the dynamic-APR engine, derived from the
+// aggregate sold/cap ratio and the expiry's slot in the rolling schedule.
+export function expiryUtilization(aggregateUtil: number, index: number): number {
+  const realU = Math.min(0.98, Math.max(0, aggregateUtil))
+  const dist =
+    REAL_DISTRIBUTION[index] ?? REAL_DISTRIBUTION[REAL_DISTRIBUTION.length - 1]
+  return Math.max(0, Math.min(0.98, realU * dist))
+}
+
 export function expiryLabel(date: Date): string {
   return `${MONTH_ABBR[date.getUTCMonth()]}_${String(date.getUTCDate()).padStart(2, '0')}`
 }
@@ -94,10 +110,9 @@ export function getExpiryOptions(
   // Distribute the live utilization across expiries: front month carries
   // ~100% of it, mid ~60%, back ~30%. Reflects real-world flow concentration
   // and means the front-week APR drops first when the vault fills.
-  const realU = realStats
-    ? Math.min(0.98, Math.max(0, realStats.totalDeposited / Math.max(realStats.vaultCap, 1)))
+  const realURaw = realStats
+    ? realStats.totalDeposited / Math.max(realStats.vaultCap, 1)
     : null
-  const realDistribution = [1.0, 0.6, 0.3]
 
   return fridays.map((date, i) => {
     const daysToExpiry = Math.max(MIN_DAYS_TO_EXPIRY, daysBetween(now, date))
@@ -106,8 +121,8 @@ export function getExpiryOptions(
     // Cap & utilization: prefer real on-chain data when available.
     const vaultCap = realStats?.vaultCap ?? 5_000_000
     let utilization: number
-    if (realU !== null) {
-      utilization = Math.max(0, Math.min(0.98, realU * realDistribution[i]))
+    if (realURaw !== null) {
+      utilization = expiryUtilization(realURaw, i)
     } else {
       const baseUtil = [0.68, 0.42, 0.18][i] ?? 0.3
       const jitter = (rand(i) - 0.5) * 0.12
@@ -175,8 +190,16 @@ function kinkedUtilFactor(u: number): number {
   return UTIL_AT_KINK + (UTIL_AT_FULL - UTIL_AT_KINK) * Math.pow(over, 1.5)
 }
 
+// The multiplier the dynamic-APR engine applies on top of the Black-Scholes
+// fair APR: time-decay × kinked-utilization. Always in [0, 1] (never boosts
+// above fair value). Pulled out so the server can apply the EXACT same factor
+// when it pays the premium, keeping the paid amount equal to the UI quote.
+export function dynamicAprFactor(daysToExpiry: number, utilization: number): number {
+  const timeFactor = Math.min(1, daysToExpiry / APR_REFERENCE_DAYS)
+  const utilFactor = kinkedUtilFactor(utilization)
+  return Math.max(0, timeFactor * utilFactor)
+}
+
 export function adjustApr(baseApr: number, expiry: ExpiryOption): number {
-  const timeFactor = Math.min(1, expiry.daysToExpiry / APR_REFERENCE_DAYS)
-  const utilFactor = kinkedUtilFactor(expiry.utilization)
-  return Math.max(0, baseApr * timeFactor * utilFactor)
+  return Math.max(0, baseApr * dynamicAprFactor(expiry.daysToExpiry, expiry.utilization))
 }
