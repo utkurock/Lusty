@@ -176,8 +176,8 @@ export default function LeaderboardPage() {
           className="absolute inset-0 pointer-events-none"
           style={{
             backgroundImage: 'url(/leaderboard-dither.png)',
-            backgroundSize: '140% auto',
-            backgroundPosition: '50% center',
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
             backgroundRepeat: 'no-repeat',
             opacity: 0.5,
             mixBlendMode: 'screen',

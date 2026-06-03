@@ -86,14 +86,8 @@ function resolveTimeRefDays(): number {
   }
 }
 
-// Utilization → extra haircut (kinked, Aave/Compound style). Empty pool → 0
-// extra (max APR to attract flow); past the kink the haircut ramps hard so the
-// last slice of capacity quotes little (discourages crowding a full vault).
-const UTIL_KINK = 0.80
-const UTIL_MARGIN_AT_KINK = 0.08
-const UTIL_MARGIN_AT_FULL = 0.33
-
-// Clamp on the effective haircut so we never gouge nor give the vault away.
+// Clamp on the base haircut (protocol edge accounting only — see note in
+// quoteOption; the utilization response is a separate APR taper below).
 const HAIRCUT_MIN = 0.08
 const HAIRCUT_MAX = 0.50
 
@@ -102,14 +96,17 @@ function num(raw: string | undefined, fallback: number): number {
   return isFinite(n) && n >= 0 ? n : fallback
 }
 
-/** Kinked utilization → extra haircut. u ∈ [0,1]. */
-export function utilizationMargin(u: number): number {
+// Utilization APR taper. The offered APR falls LINEARLY with pool fill, from the
+// full empty-pool APR (u=0) down to (1 − MAX_UTIL_DISCOUNT) of it at a full pool
+// (u=1). Default 0.50 → a full vault quotes half the empty-vault APR (e.g. an
+// 108% headline becomes 54%). Applied AFTER ladder normalization so it scales
+// the whole ladder uniformly (gradient preserved) and moves the PAID premium too
+// (deposit passes the real on-chain utilization).
+const MAX_UTIL_DISCOUNT = Math.min(1, num(process.env.MAX_UTIL_DISCOUNT, 0.50))
+
+export function utilizationTaper(u: number): number {
   const uc = Math.max(0, Math.min(1, u))
-  if (uc <= UTIL_KINK) {
-    return UTIL_MARGIN_AT_KINK * (uc / UTIL_KINK)
-  }
-  const over = (uc - UTIL_KINK) / (1 - UTIL_KINK)
-  return UTIL_MARGIN_AT_KINK + (UTIL_MARGIN_AT_FULL - UTIL_MARGIN_AT_KINK) * Math.pow(over, 1.5)
+  return 1 - MAX_UTIL_DISCOUNT * uc
 }
 
 export function offeredVol(sigmaRealized: number): number {
@@ -212,11 +209,12 @@ export function quoteOption(input: QuoteInput): Quote {
 
   const sigmaOffered = offeredVol(sigmaRealized)
 
-  // Base haircut: protocol edge + safety + utilization response.
-  const baseHaircut = Math.max(
-    HAIRCUT_MIN,
-    Math.min(HAIRCUT_MAX, HAIRCUT_BASE + utilizationMargin(utilization)),
-  )
+  // Base haircut: protocol edge / safety buffer (constant). NOTE: under ladder
+  // normalization the base haircut cancels out of the offered APR (it applies
+  // equally to a strike and the reference rung it's normalized against), so it
+  // affects the protocolEdge accounting only. The utilization response is a
+  // separate APR taper applied below, which does move the offered APR.
+  const baseHaircut = Math.max(HAIRCUT_MIN, Math.min(HAIRCUT_MAX, HAIRCUT_BASE))
 
   // This strike's raw (un-normalized) Black-76 APR.
   const self = rawStrike(side, forward, spot, strike, timeYears, daysToExpiry, sigmaOffered, baseHaircut)
@@ -242,7 +240,10 @@ export function quoteOption(input: QuoteInput): Quote {
   // (near-ATM or ITM) whose raw APR scales above the nearest rung; without this
   // bound it would price — and pay — well above the displayed cap. The nearest
   // ladder rung already sits exactly at targetTop, so this is a no-op for it.
-  const grossApr = Math.min(self.apr * scaleFactor, targetTop)
+  // Normalize to the ceiling, then taper by pool utilization. The taper is the
+  // ONLY thing utilization moves now, and it scales the whole ladder uniformly.
+  const normalizedApr = Math.min(self.apr * scaleFactor, targetTop)
+  const grossApr = normalizedApr * utilizationTaper(utilization)
   const aprCapped = scaleFactor < 1 || self.apr * scaleFactor > targetTop
   const capital = self.capital
   const fairPremium = self.fair

@@ -40,6 +40,47 @@ export async function POST(req: Request) {
       )
     }
 
+    // Durable abuse caps. The in-memory rate limit above resets per address and
+    // doesn't survive across serverless instances, so on its own it can't stop
+    // address-farming that would drain the SHARED distributor (which also pays
+    // premiums/swaps/settlements). These DB-backed caps hold globally. Fail
+    // closed: if we can't verify, we don't drip.
+    const FAUCET_ADDR_LIFETIME_MAX = Number(process.env.FAUCET_ADDR_LIFETIME_MAX ?? 10_000)
+    const FAUCET_GLOBAL_DAILY_MAX = Number(process.env.FAUCET_GLOBAL_DAILY_MAX ?? 500_000)
+    try {
+      const { getPool, ensureSchema } = await import('@/lib/db')
+      await ensureSchema()
+      const pool = getPool()
+      const drip = parseFloat(AMOUNT)
+      const addrRes = await pool.query(
+        `select coalesce(sum(amount), 0)::float as s
+         from transactions where type = 'faucet' and address = $1`,
+        [address]
+      )
+      if (parseFloat(addrRes.rows[0].s) + drip > FAUCET_ADDR_LIFETIME_MAX) {
+        return NextResponse.json(
+          { error: 'faucet lifetime limit reached for this address' },
+          { status: 429 }
+        )
+      }
+      const dayRes = await pool.query(
+        `select coalesce(sum(amount), 0)::float as s
+         from transactions where type = 'faucet' and created_at > now() - interval '1 day'`
+      )
+      if (parseFloat(dayRes.rows[0].s) + drip > FAUCET_GLOBAL_DAILY_MAX) {
+        return NextResponse.json(
+          { error: 'faucet daily limit reached — please try again later' },
+          { status: 503 }
+        )
+      }
+    } catch (capErr) {
+      console.error('faucet: cap check unavailable', capErr)
+      return NextResponse.json(
+        { error: 'faucet temporarily unavailable — retry shortly' },
+        { status: 503 }
+      )
+    }
+
     const server = new Horizon.Server(HORIZON)
     const distributor = Keypair.fromSecret(DISTRIBUTOR_SECRET)
     const asset = new Asset(LUSD_CODE, LUSD_ISSUER)
