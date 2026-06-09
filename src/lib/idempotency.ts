@@ -1,12 +1,22 @@
 import { getPool, ensureSchema } from './db'
 
-export type ActionType = 'claim' | 'swap'
+export type ActionType = 'deposit' | 'claim' | 'swap'
 
 /**
  * Atomically reserves a (action_type, source_hash) pair so the same source
- * transaction can never be processed twice. Backed by a UNIQUE primary key —
- * a parallel second caller hits a conflict and gets `alreadyProcessed: true`
- * without a race window.
+ * transaction can never be processed twice. Two layers of uniqueness, both
+ * enforced in the database (no race window):
+ *
+ *   1. The (action_type, source_hash) primary key blocks same-endpoint
+ *      replay — the same hash claimed twice, swapped twice, deposited twice.
+ *   2. A partial unique index on source_hash over the INTAKE types
+ *      ('deposit','swap') blocks cross-endpoint reuse — one on-chain payment
+ *      to the distributor can fund a deposit OR a swap, never both. 'claim'
+ *      is exempt because it legitimately reuses the deposit's hash to settle
+ *      that same position.
+ *
+ * The target-less ON CONFLICT swallows violations of EITHER index, so both
+ * cases surface uniformly as `alreadyProcessed: true`.
  *
  * If the downstream payout fails, call `releaseAction()` so the user can
  * retry. If the server crashes between reserve and payout, the row stays
@@ -25,7 +35,7 @@ export async function reserveAction(
   const res = await pool.query(
     `insert into processed_actions (action_type, source_hash)
      values ($1, $2)
-     on conflict (action_type, source_hash) do nothing
+     on conflict do nothing
      returning source_hash`,
     [actionType, sourceHash]
   )

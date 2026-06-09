@@ -215,13 +215,19 @@ export async function POST(req: Request) {
     }
 
     // Replay guard: atomically reserve the user's source txHash before the
-    // distributor payout. Same source hash submitted twice → 409. If Horizon
-    // submit fails, release so the user can retry; on success record the
-    // payout hash for audit.
+    // distributor payout. Same source hash submitted twice → 409, and a hash
+    // already consumed as a vault DEPOSIT is also rejected (intake
+    // exclusivity — one on-chain payment funds a deposit or a swap, never
+    // both). If Horizon submit fails, release so the user can retry; on
+    // success record the payout hash for audit.
     const reservation = await reserveAction('swap', body.txHash)
     if (reservation.alreadyProcessed) {
       return NextResponse.json(
-        { error: 'swap already processed for this txHash' },
+        {
+          error:
+            'this payment has already been processed (as a swap or a deposit)',
+          code: 'already_processed',
+        },
         { status: 409 }
       )
     }

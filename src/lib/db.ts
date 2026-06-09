@@ -83,17 +83,30 @@ export async function ensureSchema(): Promise<void> {
     );
 
     -- Idempotency ledger: prevents the same on-chain source hash from being
-    -- processed twice by the claim or swap endpoints. The composite primary
-    -- key is the replay guard; UNIQUE alone would also work but PK doubles as
-    -- the lookup index.
+    -- processed twice by the deposit, claim or swap endpoints. The composite
+    -- primary key guards same-endpoint replay. 'deposit' and 'swap' are both
+    -- INTAKE actions (they consume the user's payment tx), so they are
+    -- additionally mutually exclusive on source_hash via a partial unique
+    -- index below — one on-chain payment can fund a deposit OR a swap, never
+    -- both. 'claim' legitimately reuses the deposit's hash (it settles that
+    -- position), so it is excluded from the intake index.
     create table if not exists processed_actions (
-      action_type   text not null check (action_type in ('claim','swap')),
+      action_type   text not null check (action_type in ('deposit','claim','swap')),
       source_hash   text not null,
       reserved_at   timestamptz not null default now(),
       confirmed_at  timestamptz,
       payout_hash   text,
       primary key (action_type, source_hash)
     );
+    -- Migrate pre-existing tables whose CHECK predates the 'deposit' type.
+    alter table processed_actions
+      drop constraint if exists processed_actions_action_type_check;
+    alter table processed_actions
+      add constraint processed_actions_action_type_check
+      check (action_type in ('deposit','claim','swap'));
+    create unique index if not exists processed_actions_intake_hash_uniq
+      on processed_actions (source_hash)
+      where action_type in ('deposit','swap');
     create index if not exists processed_actions_reserved_at_idx
       on processed_actions (reserved_at desc);
 

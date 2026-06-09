@@ -11,6 +11,11 @@ import {
 import { logTransaction } from '@/lib/db-queries'
 import { rateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
+import {
+  reserveAction,
+  releaseAction,
+  confirmAction,
+} from '@/lib/idempotency'
 import { quoteOptionLive } from '@/lib/pricing-server'
 import {
   computeExpirySold,
@@ -517,10 +522,35 @@ export async function POST(req: Request) {
       }
     }
 
+    // Replay guard: atomically reserve this deposit txHash before paying the
+    // upfront. Same hash POSTed again → 409 instead of a second premium drip.
+    // The reservation also blocks the hash from ever being consumed by
+    // /api/swap (intake exclusivity — one on-chain payment, one payout). If
+    // the Horizon submit below fails we release so the user can retry.
+    const reservation = await reserveAction('deposit', body.txHash)
+    if (reservation.alreadyProcessed) {
+      return NextResponse.json(
+        {
+          error:
+            'this payment has already been processed (as a deposit or a swap)',
+          code: 'already_processed',
+        },
+        { status: 409 }
+      )
+    }
+
     const premiumTx = txBuilder.setTimeout(60).build()
     premiumTx.sign(distributor)
 
-    const payRes = await server.submitTransaction(premiumTx as any)
+    let payRes: Awaited<ReturnType<typeof server.submitTransaction>>
+    try {
+      payRes = await server.submitTransaction(premiumTx as any)
+    } catch (submitErr) {
+      await releaseAction('deposit', body.txHash)
+      throw submitErr
+    }
+
+    await confirmAction('deposit', body.txHash, (payRes as any).hash)
 
     // Log transaction to database
     let dbWarning: string | undefined
