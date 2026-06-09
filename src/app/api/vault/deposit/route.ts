@@ -8,7 +8,6 @@ import {
   Networks,
   BASE_FEE,
 } from '@stellar/stellar-sdk'
-import { logTransaction } from '@/lib/db-queries'
 import { rateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
 import {
@@ -16,9 +15,14 @@ import {
   releaseAction,
   confirmAction,
 } from '@/lib/idempotency'
+import {
+  reserveDepositCapacity,
+  finalizeDeposit,
+  cancelPendingDeposit,
+  CapExceededError,
+} from '@/lib/deposit-capacity'
 import { quoteOptionLive } from '@/lib/pricing-server'
 import {
-  computeExpirySold,
   computeOpenBuckets,
   expiryDateKey,
   CALL_EPOCH_CAP_XLM,
@@ -131,6 +135,15 @@ export async function POST(req: Request) {
       if (!isFinite(t) || t <= Date.now()) {
         return NextResponse.json({ error: 'invalid expiryIso' }, { status: 400 })
       }
+      // Mirror the daysToExpiry <= 365 bound. Without this a client could
+      // pass a far-future expiryIso (the canonical settlement date) while
+      // keeping daysToExpiry innocuous, and get a multi-year option priced.
+      if (t > Date.now() + 366 * 86400_000) {
+        return NextResponse.json(
+          { error: 'expiryIso too far in the future (max 365 days)' },
+          { status: 400 }
+        )
+      }
       canonicalExpiryIso = new Date(t).toISOString()
     } else {
       canonicalExpiryIso = new Date(
@@ -227,145 +240,11 @@ export async function POST(req: Request) {
       )
     }
 
-    // Per-expiry cap: gate only against what's already sold for this expiry.
-    // This deposit isn't in the DB yet, so add paidAmount to the projection.
-    // Fail-closed (503) if the DB is unreachable.
-    {
-      const dateKey = expiryDateKey(canonicalExpiryIso)
-      let sold
-      try {
-        sold = (await computeExpirySold([dateKey])).get(dateKey) ?? {
-          callXlm: 0,
-          putUsd: 0,
-        }
-      } catch (capErr) {
-        console.error('vault/deposit: cap check unavailable', capErr)
-        return NextResponse.json(
-          {
-            error:
-              'vault sanity check unavailable — please retry in a few seconds',
-            code: 'cap_check_unavailable',
-          },
-          { status: 503 }
-        )
-      }
-      if (body.type === 'call') {
-        const projectedXlm = sold.callXlm + paidAmount
-        if (projectedXlm > CALL_EPOCH_CAP_XLM) {
-          return NextResponse.json(
-            {
-              error: `covered-call epoch is full for this expiry — ${projectedXlm.toFixed(0)}/${CALL_EPOCH_CAP_XLM.toFixed(0)} XLM. Pick another expiry. Your collateral was received but no upfront will be paid. Withdraw via support.`,
-              code: 'cap_exceeded',
-            },
-            { status: 409 }
-          )
-        }
-      } else {
-        const projectedUsd = sold.putUsd + paidAmount
-        if (projectedUsd > PUT_EPOCH_CAP_USD) {
-          return NextResponse.json(
-            {
-              error: `cash-secured-put epoch is full for this expiry — $${projectedUsd.toFixed(0)}/$${PUT_EPOCH_CAP_USD.toFixed(0)}. Pick another expiry. Your collateral was received but no upfront will be paid. Withdraw via support.`,
-              code: 'cap_exceeded',
-            },
-            { status: 409 }
-          )
-        }
-      }
-    }
-
-    // ---- enforce per-user and per-strike notional caps
-    //
-    // Both checks share a single DB connection and a single estimate of
-    // notional USD (from the still-needed price feed) so we don't hit
-    // Binance twice or the database twice for the same deposit.
-    //
-    // Fail-closed: if the DB is unreachable we can't enforce either cap, so
-    // we refuse the deposit (503) instead of waving it through. SCF review
-    // flagged that the previous "non-fatal" handling silently disabled the
-    // protocol's safety bounds whenever the DB was flaky.
-    try {
-      const { getPool, ensureSchema } = await import('@/lib/db')
-      await ensureSchema()
-      const pool = getPool()
-
-      // notionalUsd is computed properly below; here we just need an estimate
-      // for the limit checks. For puts, paidAmount is already USD-equivalent.
-      // For calls we MUST have a live spot — without it the per-user cap
-      // becomes meaningless, so fail-closed if Binance is also down.
-      let estimatedNotional: number
-      if (body.type === 'call') {
-        const estimatedSpot = await fetchXlmUsd().catch(() => null)
-        if (estimatedSpot === null) {
-          return NextResponse.json(
-            {
-              error:
-                'price feed unavailable — please retry in a few seconds',
-              code: 'price_feed_unavailable',
-            },
-            { status: 503 }
-          )
-        }
-        estimatedNotional = paidAmount * estimatedSpot
-      } else {
-        estimatedNotional = paidAmount
-      }
-
-      // Per-user 30-day check
-      const userRes = await pool.query(
-        `select coalesce(sum(amount), 0)::float as sum
-         from transactions
-         where address = $1
-           and type = 'deposit'
-           and (subtype is null or subtype != 'swap')
-           and created_at > now() - interval '30 days'`,
-        [body.address]
-      )
-      const existingUserNotional = parseFloat(userRes.rows[0]?.sum ?? '0')
-      if (existingUserNotional + estimatedNotional > MAX_USER_NOTIONAL_USD) {
-        return NextResponse.json(
-          {
-            error: `per-wallet 30d limit exceeded — you have $${existingUserNotional.toFixed(0)} of $${MAX_USER_NOTIONAL_USD} already deposited. Wait for some positions to expire.`,
-            code: 'user_limit_exceeded',
-          },
-          { status: 409 }
-        )
-      }
-
-      // Per-strike 14-day check
-      const lo = body.strikePrice * (1 - STRIKE_BUCKET_PCT)
-      const hi = body.strikePrice * (1 + STRIKE_BUCKET_PCT)
-      const strikeRes = await pool.query(
-        `select coalesce(sum(amount), 0)::float as sum
-         from transactions
-         where type = 'deposit'
-           and (subtype is null or subtype != 'swap')
-           and metadata ? 'strikePrice'
-           and (metadata->>'strikePrice')::float8 between $1 and $2
-           and created_at > now() - interval '14 days'`,
-        [lo, hi]
-      )
-      const existingStrikeNotional = parseFloat(strikeRes.rows[0]?.sum ?? '0')
-      if (existingStrikeNotional + estimatedNotional > STRIKE_INVENTORY_LIMIT_USD) {
-        return NextResponse.json(
-          {
-            error: `strike $${body.strikePrice.toFixed(4)} is full — $${existingStrikeNotional.toFixed(0)} of $${STRIKE_INVENTORY_LIMIT_USD} already sold against this strike. Pick a different strike.`,
-            code: 'strike_limit_exceeded',
-          },
-          { status: 409 }
-        )
-      }
-    } catch (limitErr) {
-      console.error('vault/deposit: limit check unavailable', limitErr)
-      return NextResponse.json(
-        {
-          error:
-            'deposit limit check unavailable — please retry in a few seconds',
-          code: 'limit_check_unavailable',
-        },
-        { status: 503 }
-      )
-    }
+    // NOTE: the per-epoch / per-user / per-strike caps are now enforced
+    // ATOMICALLY in reserveDepositCapacity() right before the premium payout
+    // (single DB transaction + advisory lock). The old read-check-then-insert
+    // sequence here had a TOCTOU race: N concurrent deposits all read the
+    // same "existing" totals, all passed, and overshot every cap by up to N×.
 
     // ---- compute premium in LUSD via the single quote engine
     //
@@ -376,7 +255,21 @@ export async function POST(req: Request) {
     // supply. This is the SAME function the UI calls via /api/vault/quote, so
     // the paid premium equals the displayed premium. The previous code applied
     // a second "dynFactor" only on the server, which could diverge from the UI.
-    const spot = await fetchXlmUsd()
+    // Fail-closed on the price feed: without spot we can neither price the
+    // option nor value the deposit against the USD caps.
+    let spot: number
+    try {
+      spot = await fetchXlmUsd()
+    } catch (priceErr) {
+      console.error('vault/deposit: price feed unavailable', priceErr)
+      return NextResponse.json(
+        {
+          error: 'price feed unavailable — please retry in a few seconds',
+          code: 'price_feed_unavailable',
+        },
+        { status: 503 }
+      )
+    }
     const notionalUsd =
       body.type === 'call' ? paidAmount * spot : paidAmount // LUSD ≈ $1
 
@@ -526,7 +419,7 @@ export async function POST(req: Request) {
     // upfront. Same hash POSTed again → 409 instead of a second premium drip.
     // The reservation also blocks the hash from ever being consumed by
     // /api/swap (intake exclusivity — one on-chain payment, one payout). If
-    // the Horizon submit below fails we release so the user can retry.
+    // anything downstream fails we release so the user can retry.
     const reservation = await reserveAction('deposit', body.txHash)
     if (reservation.alreadyProcessed) {
       return NextResponse.json(
@@ -539,31 +432,27 @@ export async function POST(req: Request) {
       )
     }
 
-    const premiumTx = txBuilder.setTimeout(60).build()
-    premiumTx.sign(distributor)
-
-    let payRes: Awaited<ReturnType<typeof server.submitTransaction>>
+    // Capacity reservation: per-user, per-strike and per-epoch caps are
+    // checked and the position row inserted in ONE advisory-locked DB
+    // transaction, so concurrent deposits can't all pass the same caps
+    // (TOCTOU). The row is written BEFORE the payout, marked pending; it
+    // counts toward the caps immediately and already carries everything the
+    // claim endpoint needs, so a post-payout DB blip can no longer produce a
+    // paid-but-untracked position.
+    let pendingId: number
     try {
-      payRes = await server.submitTransaction(premiumTx as any)
-    } catch (submitErr) {
-      await releaseAction('deposit', body.txHash)
-      throw submitErr
-    }
-
-    await confirmAction('deposit', body.txHash, (payRes as any).hash)
-
-    // Log transaction to database
-    let dbWarning: string | undefined
-    try {
-      await logTransaction({
+      pendingId = await reserveDepositCapacity({
         address: body.address,
-        type: 'deposit',
-        subtype: body.type,
-        amount: notionalUsd,
-        asset: body.type === 'call' ? 'XLM' : 'LUSD',
+        type: body.type,
+        collateralAmount: paidAmount,
+        notionalUsd,
+        strikePrice: body.strikePrice,
+        strikeBucketPct: STRIKE_BUCKET_PCT,
+        expiryIso: canonicalExpiryIso,
+        daysToExpiry: pricingDays,
         txHash: body.txHash,
-        premiumHash: (payRes as any).hash,
-        premiumAmount: premium,
+        maxUserNotionalUsd: MAX_USER_NOTIONAL_USD,
+        strikeInventoryLimitUsd: STRIKE_INVENTORY_LIMIT_USD,
         metadata: {
           collateralAmount: paidAmount,
           strikePrice: body.strikePrice,
@@ -585,9 +474,47 @@ export async function POST(req: Request) {
           volMethod: context.volMethod,
         },
       })
+    } catch (capErr) {
+      await releaseAction('deposit', body.txHash)
+      if (capErr instanceof CapExceededError) {
+        return NextResponse.json(
+          { error: capErr.message, code: capErr.code },
+          { status: 409 }
+        )
+      }
+      console.error('vault/deposit: capacity reservation unavailable', capErr)
+      return NextResponse.json(
+        {
+          error:
+            'deposit limit check unavailable — please retry in a few seconds',
+          code: 'limit_check_unavailable',
+        },
+        { status: 503 }
+      )
+    }
+
+    const premiumTx = txBuilder.setTimeout(60).build()
+    premiumTx.sign(distributor)
+
+    let payRes: Awaited<ReturnType<typeof server.submitTransaction>>
+    try {
+      payRes = await server.submitTransaction(premiumTx as any)
+    } catch (submitErr) {
+      await cancelPendingDeposit(pendingId)
+      await releaseAction('deposit', body.txHash)
+      throw submitErr
+    }
+
+    await confirmAction('deposit', body.txHash, (payRes as any).hash)
+
+    // Mark the pending position as paid. Non-fatal on failure: the row
+    // already exists with full claim metadata and counts toward the caps.
+    let dbWarning: string | undefined
+    try {
+      await finalizeDeposit(pendingId, (payRes as any).hash, premium)
     } catch (dbErr: any) {
       dbWarning = dbErr?.message ?? 'unknown DB error'
-      console.error('Failed to log deposit transaction:', dbErr)
+      console.error('Failed to finalize deposit transaction:', dbErr)
     }
 
     return NextResponse.json({
