@@ -44,6 +44,11 @@ const FEE_WALLET = process.env.FEE_WALLET ?? ''
 
 // Per-wallet position cap (USD notional) — stops one user monopolizing the vault.
 const MAX_USER_NOTIONAL_USD = Number(process.env.MAX_USER_NOTIONAL_USD ?? 50_000)
+// Per-wallet allowance PER EXPIRY, in collateral units. Cumulative within an
+// expiry (1k + 9k deposits both pass; the 10,001st unit doesn't) and resets
+// with each expiry bucket — a user may fill every open epoch to this max.
+const MAX_USER_EPOCH_CALL_XLM = Number(process.env.MAX_USER_EPOCH_CALL_XLM ?? 10_000)
+const MAX_USER_EPOCH_PUT_USD = Number(process.env.MAX_USER_EPOCH_PUT_USD ?? 10_000)
 // Per-strike inventory cap (in USD notional). Stops one strike from
 // soaking up all the vault's risk budget. Without this, a whale could
 // dump $200k on a single 6%-OTM weekly call and concentrate the entire
@@ -453,6 +458,8 @@ export async function POST(req: Request) {
         txHash: body.txHash,
         maxUserNotionalUsd: MAX_USER_NOTIONAL_USD,
         strikeInventoryLimitUsd: STRIKE_INVENTORY_LIMIT_USD,
+        maxUserEpochCallXlm: MAX_USER_EPOCH_CALL_XLM,
+        maxUserEpochPutUsd: MAX_USER_EPOCH_PUT_USD,
         metadata: {
           collateralAmount: paidAmount,
           strikePrice: body.strikePrice,

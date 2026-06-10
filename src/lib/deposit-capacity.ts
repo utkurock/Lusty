@@ -60,6 +60,10 @@ export interface CapacityInput {
   /** Caps, passed in so the route's env-derived values stay authoritative. */
   maxUserNotionalUsd: number
   strikeInventoryLimitUsd: number
+  /** Per-user allowance PER EXPIRY, in collateral units (XLM for calls). */
+  maxUserEpochCallXlm: number
+  /** Per-user allowance PER EXPIRY, in collateral units (LUSD≈USD for puts). */
+  maxUserEpochPutUsd: number
   /** Full metadata to persist on the position row (claim reads this). */
   metadata: Record<string, unknown>
 }
@@ -95,6 +99,49 @@ export async function reserveDepositCapacity(
       )
     }
 
+    // Per-user PER-EXPIRY allowance, in collateral units. Cumulative within
+    // one expiry bucket: 1k now + 9k later is fine, the 10,001st unit is not.
+    // Each open expiry is a fresh allowance — a user can fill all three
+    // epochs to their personal max, which is intended (the global epoch caps
+    // below still bound total vault risk per expiry).
+    const dateKey = input.expiryIso.slice(0, 10)
+    const userEpochRes = await client.query(
+      `select coalesce(sum(case when subtype = 'call'
+                                then (metadata->>'collateralAmount')::float8 end), 0)::float8 as call_xlm,
+              coalesce(sum(case when subtype = 'put'
+                                then amount end), 0)::float8 as put_usd
+         from transactions
+        where type = 'deposit'
+          and subtype in ('call', 'put')
+          and address = $1
+          and metadata ? 'expiryIso'
+          and left(metadata->>'expiryIso', 10) = $2`,
+      [input.address, dateKey]
+    )
+    if (input.type === 'call') {
+      const used = Number(userEpochRes.rows[0]?.call_xlm ?? 0)
+      const limit = input.maxUserEpochCallXlm
+      if (used + input.collateralAmount > limit) {
+        await client.query('rollback')
+        const remaining = Math.max(0, limit - used)
+        throw new CapExceededError(
+          `per-wallet limit for this expiry exceeded — you have used ${used.toFixed(0)} of ${limit.toFixed(0)} XLM (${remaining.toFixed(0)} XLM remaining). Other expiries have a fresh allowance.`,
+          'user_epoch_limit_exceeded'
+        )
+      }
+    } else {
+      const used = Number(userEpochRes.rows[0]?.put_usd ?? 0)
+      const limit = input.maxUserEpochPutUsd
+      if (used + input.collateralAmount > limit) {
+        await client.query('rollback')
+        const remaining = Math.max(0, limit - used)
+        throw new CapExceededError(
+          `per-wallet limit for this expiry exceeded — you have used $${used.toFixed(0)} of $${limit.toFixed(0)} ($${remaining.toFixed(0)} remaining). Other expiries have a fresh allowance.`,
+          'user_epoch_limit_exceeded'
+        )
+      }
+    }
+
     // Per-strike 14-day inventory (USD).
     const lo = input.strikePrice * (1 - input.strikeBucketPct)
     const hi = input.strikePrice * (1 + input.strikeBucketPct)
@@ -120,9 +167,8 @@ export async function reserveDepositCapacity(
       )
     }
 
-    // Per-expiry epoch cap (call in XLM, put in USD). Mirrors
-    // vault-state.computeExpirySold for a single date key.
-    const dateKey = input.expiryIso.slice(0, 10)
+    // Per-expiry epoch cap (call in XLM, put in USD), GLOBAL across users.
+    // Mirrors vault-state.computeExpirySold for a single date key.
     const epochRes = await client.query(
       `select coalesce(sum(case when subtype = 'call'
                                 then (metadata->>'collateralAmount')::float8 end), 0)::float8 as call_xlm,
