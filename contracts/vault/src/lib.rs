@@ -1,21 +1,23 @@
-//! Lusty Vault — trustless covered-call escrow (Soroban PoC).
+//! Lusty Vault — trustless covered-call vault (Soroban, v2).
 //!
-//! This is the Tranche-1 proof of concept for moving Lusty's settlement
-//! on-chain. It replaces the two trust assumptions of the current server-side
-//! vault with contract guarantees:
+//! v2 closes the full money loop on-chain. All three legs of a covered call
+//! are now contract-enforced:
 //!
-//!   1. ESCROW: collateral is held by this contract, not by a custodial
-//!      distributor account. Nobody — including the protocol — can move it
-//!      except through `settle()`.
-//!   2. ORACLE SETTLEMENT: the assignment decision (spot vs strike at expiry)
-//!      is read from a Reflector price feed on-chain, pinned to the expiry
-//!      timestamp — the same expiry-pinned rule the off-chain vault enforces,
-//!      now without trusting our server.
+//!   1. ESCROW: collateral (XLM) is held by this contract — nobody, including
+//!      the protocol, can move it except through `settle()`.
+//!   2. PREMIUM: paid to the writer in cash (USDC) from the contract's pool
+//!      ATOMICALLY inside `deposit()` — no separate server payout to trust.
+//!      The premium amount is the protocol's signed offer: `deposit` requires
+//!      auth from both the writer AND the quoter (the pricing engine's key),
+//!      the on-chain equivalent of an RFQ. Custody and settlement never
+//!      depend on the quoter.
+//!   3. SETTLEMENT: decided by the Reflector price AT EXPIRY, permissionless.
+//!      Assigned positions now follow real covered-call economics: the writer
+//!      receives the strike value in cash, the collateral goes to the
+//!      treasury. Kept positions return the collateral whole.
 //!
-//! Deliberately out of scope for the PoC (tracked for T2): premium payout in
-//! LUSD at deposit time, cash-secured puts, partial fills, position NFTs.
-//! Assignment routes collateral to the protocol treasury; in T2 it will be
-//! swapped at the strike and the USD leg returned to the writer.
+//! Remaining for T3: cash-secured puts, position tokens, upgrade governance,
+//! automated pool solvency management (today: ops funds the pool via `fund`).
 
 #![no_std]
 
@@ -74,6 +76,7 @@ pub enum Error {
     NotExpired = 6,
     NoPrice = 7,
     StalePrice = 8,
+    InvalidPremium = 9,
 }
 
 #[contracttype]
@@ -85,8 +88,12 @@ pub struct Config {
     pub feed: Symbol,
     /// Collateral token (SAC address; native XLM SAC for covered calls).
     pub token: Address,
-    /// Where assigned collateral is routed (T2: swap at strike instead).
+    /// Cash token (USDC SAC) — premiums out, assignment payouts out.
+    pub cash: Address,
+    /// Receives assigned collateral (T3: automated solvency management).
     pub treasury: Address,
+    /// Pricing-engine key that must co-sign every deposit's premium (RFQ).
+    pub quoter: Address,
 }
 
 #[contracttype]
@@ -99,6 +106,8 @@ pub struct Position {
     pub strike: i128,
     /// Unix seconds. Settlement uses the oracle price AT this timestamp.
     pub expiry: u64,
+    /// Cash premium paid to the writer at deposit (cash token units).
+    pub premium: i128,
     pub settled: bool,
     /// "open" | "kept" | "assigned"
     pub outcome: Symbol,
@@ -117,16 +126,56 @@ pub struct LustyVault;
 
 #[contractimpl]
 impl LustyVault {
-    pub fn __constructor(env: Env, oracle: Address, feed: Symbol, token: Address, treasury: Address) {
-        env.storage().instance().set(&DataKey::Config, &Config { oracle, feed, token, treasury });
+    pub fn __constructor(
+        env: Env,
+        oracle: Address,
+        feed: Symbol,
+        token: Address,
+        cash: Address,
+        treasury: Address,
+        quoter: Address,
+    ) {
+        env.storage().instance().set(
+            &DataKey::Config,
+            &Config { oracle, feed, token, cash, treasury, quoter },
+        );
         env.storage().instance().set(&DataKey::NextId, &0u64);
     }
 
-    /// Escrow `amount` of collateral as a covered call at `strike` until
-    /// `expiry`. The writer authorizes the token transfer; the collateral can
-    /// only leave through `settle()`.
-    pub fn deposit(env: Env, owner: Address, amount: i128, strike: i128, expiry: u64) -> u64 {
+    /// Top up the cash pool that pays premiums and assignment payouts.
+    /// Permissionless — anyone may add solvency, nobody can take it out
+    /// except through settlement.
+    pub fn fund(env: Env, from: Address, amount: i128) {
+        from.require_auth();
+        if amount <= 0 {
+            panic_with_error!(&env, Error::InvalidAmount);
+        }
+        let cfg: Config = env.storage().instance().get(&DataKey::Config).unwrap();
+        token::Client::new(&env, &cfg.cash).transfer(
+            &from,
+            &env.current_contract_address(),
+            &amount,
+        );
+        env.events().publish((symbol_short!("fund"),), (from, amount));
+    }
+
+    /// Write a covered call: escrow `amount` collateral at `strike` until
+    /// `expiry`, receiving `premium` cash instantly from the pool — one
+    /// atomic transaction. The writer authorizes the collateral transfer;
+    /// the quoter (pricing engine) co-signs the premium figure, so neither
+    /// side can set the price alone. If the pool cannot cover the premium
+    /// the deposit fails whole (fail-closed).
+    pub fn deposit(
+        env: Env,
+        owner: Address,
+        amount: i128,
+        strike: i128,
+        expiry: u64,
+        premium: i128,
+    ) -> u64 {
+        let cfg: Config = env.storage().instance().get(&DataKey::Config).unwrap();
         owner.require_auth();
+        cfg.quoter.require_auth();
         if amount <= 0 {
             panic_with_error!(&env, Error::InvalidAmount);
         }
@@ -136,13 +185,15 @@ impl LustyVault {
         if expiry <= env.ledger().timestamp() {
             panic_with_error!(&env, Error::InvalidExpiry);
         }
+        if premium < 0 {
+            panic_with_error!(&env, Error::InvalidPremium);
+        }
 
-        let cfg: Config = env.storage().instance().get(&DataKey::Config).unwrap();
-        token::Client::new(&env, &cfg.token).transfer(
-            &owner,
-            &env.current_contract_address(),
-            &amount,
-        );
+        let this = env.current_contract_address();
+        token::Client::new(&env, &cfg.token).transfer(&owner, &this, &amount);
+        if premium > 0 {
+            token::Client::new(&env, &cfg.cash).transfer(&this, &owner, &premium);
+        }
 
         let id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap();
         env.storage().instance().set(&DataKey::NextId, &(id + 1));
@@ -153,13 +204,16 @@ impl LustyVault {
                 amount,
                 strike,
                 expiry,
+                premium,
                 settled: false,
                 outcome: symbol_short!("open"),
             },
         );
 
-        env.events()
-            .publish((symbol_short!("deposit"), id), (owner, amount, strike, expiry));
+        env.events().publish(
+            (symbol_short!("deposit"), id),
+            (owner, amount, strike, expiry, premium),
+        );
         id
     }
 
@@ -167,8 +221,12 @@ impl LustyVault {
     /// Permissionless: anyone may trigger it (the outcome is deterministic),
     /// so the writer does not depend on the protocol being online.
     ///
-    ///   price(expiry) >  strike → assigned: collateral to the treasury
-    ///   price(expiry) <= strike → kept:     collateral back to the writer
+    ///   price(expiry) >  strike → assigned: collateral to the treasury,
+    ///                             strike value paid to the writer in cash —
+    ///                             economically identical to selling the
+    ///                             collateral at the strike, as a covered
+    ///                             call settles.
+    ///   price(expiry) <= strike → kept: collateral returned to the writer.
     pub fn settle(env: Env, id: u64) -> Symbol {
         let key = DataKey::Position(id);
         let mut pos: Position = env
@@ -185,19 +243,31 @@ impl LustyVault {
         }
 
         let cfg: Config = env.storage().instance().get(&DataKey::Config).unwrap();
-        let price = Self::settlement_price(&env, &cfg, pos.expiry, now);
+        let oracle = ReflectorClient::new(&env, &cfg.oracle);
+        let price = Self::settlement_price(&env, &oracle, &cfg, pos.expiry, now);
 
+        let this = env.current_contract_address();
         let outcome = if price > pos.strike {
+            // Assigned: writer sells the collateral at the strike. Collateral
+            // to treasury; strike value to the writer in cash.
+            //   cash = amount[token units] × strike[10^dec $/unit] / 10^dec
+            // (token stroops and cash units are both 7 decimals, so the
+            // scales cancel and only the oracle scaling remains.)
+            let dec = oracle.decimals();
+            let strike_value = pos
+                .amount
+                .checked_mul(pos.strike)
+                .unwrap_or_else(|| panic_with_error!(&env, Error::InvalidAmount))
+                / 10i128.pow(dec);
+            token::Client::new(&env, &cfg.token).transfer(&this, &cfg.treasury, &pos.amount);
+            if strike_value > 0 {
+                token::Client::new(&env, &cfg.cash).transfer(&this, &pos.owner, &strike_value);
+            }
             symbol_short!("assigned")
         } else {
+            token::Client::new(&env, &cfg.token).transfer(&this, &pos.owner, &pos.amount);
             symbol_short!("kept")
         };
-        let recipient = if price > pos.strike { &cfg.treasury } else { &pos.owner };
-        token::Client::new(&env, &cfg.token).transfer(
-            &env.current_contract_address(),
-            recipient,
-            &pos.amount,
-        );
 
         pos.settled = true;
         pos.outcome = outcome.clone();
@@ -224,8 +294,13 @@ impl LustyVault {
     /// historical price at the expiry period; falls back to `lastprice` only
     /// while it is fresh (≤ 1h). A stale/empty feed BLOCKS settlement
     /// (fail-closed) rather than settling at a wrong price.
-    fn settlement_price(env: &Env, cfg: &Config, expiry: u64, now: u64) -> i128 {
-        let oracle = ReflectorClient::new(env, &cfg.oracle);
+    fn settlement_price(
+        env: &Env,
+        oracle: &ReflectorClient,
+        cfg: &Config,
+        expiry: u64,
+        now: u64,
+    ) -> i128 {
         let asset = reflector::Asset::Other(cfg.feed.clone());
 
         // Normalize the expiry to the feed's resolution grid. Reflector
