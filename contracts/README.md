@@ -50,20 +50,25 @@ stellar contract build    # target/wasm32v1-none/release/lusty_vault.wasm
 
 ## Testnet deployment (v2)
 
+The contract is cash-token agnostic (`cash` is a constructor parameter). Two
+v2 instances are live on testnet:
+
 | What | Address |
 | --- | --- |
-| Vault v2 | `CASVHBJ7MOZ5YFSVAYXKZFWIYAR6Y3Q4JI2P6GGJMRFUJBZN6APTZEZD` |
+| **Vault v2 — LUSD cash** (matches the testnet web app) | `CDKFRHEK2BAST2RWQIM254UGBRPCUDS5P3TRPW2EQCHANVMPQQYPKOAR` |
+| Vault v2 — USDC cash (mainnet framing demo) | `CASVHBJ7MOZ5YFSVAYXKZFWIYAR6Y3Q4JI2P6GGJMRFUJBZN6APTZEZD` |
 | Reflector oracle (external CEX/DEX feed) | `CCYOZJCOPG34LLQQ7N24YXBM7LL62R7ONMZ3G6WZAAYPB5OYKOMJRN63` |
 | Feed asset | `Other("XLM")`, 14 decimals, 300 s resolution |
 | Collateral token | native XLM SAC `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC` |
-| Cash token (test USDC SAC) | `CA7W4C26OTIHHFK3KMP7HGJH63ZD337534OPMGCKDZFNW62BCLRIQL6B` |
+| LUSD SAC | `CDTMNV7F7P3LUH6LLBTXY4EQYBUYGVGYRC7P73HMFV5PXLO5NE6A74QB` |
+| Test USDC SAC | `CA7W4C26OTIHHFK3KMP7HGJH63ZD337534OPMGCKDZFNW62BCLRIQL6B` |
 | Vault v1 (escrow-only PoC) | `CDUHKBXJCIQCU4PCHBJRN5BNFGNLXGKXKA74YAJHF3B7XABIFMGURB4B` |
 
-On mainnet the cash token is Circle's native USDC; the testnet deployment uses
-a stand-in issue. (LUSD remains a legacy testnet convenience for the web app
-and has no mainnet path.) The live testnet demo deployment sets `quoter` to
-the demo wallet for CLI convenience; the dual-auth requirement itself is
-enforced by the contract and covered by unit tests.
+On testnet the LUSD instance is the product-consistent one (the web app pays
+premiums in LUSD). On mainnet the cash token is Circle's native USDC — LUSD
+has no mainnet path. The live testnet demo deployments set `quoter` to the
+demo wallet for CLI convenience; the dual-auth requirement itself is enforced
+by the contract and covered by unit tests.
 
 Deploy command:
 
