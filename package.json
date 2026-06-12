@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "vitest run"
   },
   "dependencies": {
     "@creit.tech/stellar-wallets-kit": "latest",
@@ -25,5 +26,8 @@
     "react-dom": "^18.3.0",
     "tailwindcss": "^3.4.0",
     "typescript": "^5.4.0"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.8"
   }
 }
