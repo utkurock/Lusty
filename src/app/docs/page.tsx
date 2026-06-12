@@ -90,14 +90,15 @@ const GROUPS: Group[] = [
               to earn yield by monetizing the volatility of XLM and USDC.
             </P>
             <Today>
-              Lusty today runs as a <strong>server-settled venue on Stellar
+              Lusty today runs as a <strong>server-operated venue on Stellar
               Classic</strong>. Collateral is held by a protocol-operated
-              distributor account; pricing and settlement run server-side
-              against a Binance spot feed; positions are recorded in a database.
-              It is <strong>custodial and pre-audit (testnet only)</strong>. The
-              fully on-chain, non-custodial Soroban version described in the
-              roadmap callouts below is <strong>T2/T3 work</strong>, not the
-              current deployment.
+              distributor account and positions are recorded in a database.
+              Settlement already reads the on-chain{' '}
+              <strong>Reflector oracle</strong>, pinned to expiry; Binance only
+              feeds the quote inputs (volatility, forward). It is{' '}
+              <strong>custodial and pre-audit (testnet only)</strong> — the
+              deployed Soroban vault that also takes custody on-chain is the
+              T2 migration, not yet the default rail.
             </Today>
             <P>
               Lusty makes <strong>option strategies accessible</strong> to anyone
@@ -276,10 +277,11 @@ cash-secured put :  0.98x · 0.94x · 0.88x · 0.80x   (below spot)`}
               a later one.
             </P>
             <Today>
-              Settlement is performed <strong>server-side</strong> by the
-              protocol operator using the Binance spot price at expiry. On-chain
-              settlement driven by the <strong>Reflector</strong> oracle is
-              roadmap work (T2/T3).
+              Settlement reads the <strong>Reflector</strong> oracle price
+              pinned to your expiry timestamp, so when you claim cannot change
+              the outcome. The server submits the payout today; the deployed
+              Soroban vault performs the same settlement permissionlessly
+              on-chain, which is the T2 migration.
             </Today>
             <H>Pricing you can verify</H>
             <P>
@@ -548,17 +550,18 @@ APR_quoted   = APR_fair × time_factor × util_factor`}
             </List>
             <H>Oracle</H>
             <P>
-              Both the live UI tape and the settlement price come from{' '}
-              <strong>Binance</strong> today: the public websocket drives the
-              UI, and the server reads the Binance spot price at expiry to
-              settle the epoch.
+              Settlement reads the <strong>Reflector</strong> oracle, Stellar&apos;s
+              native decentralized price feed, pinned to the epoch&apos;s expiry
+              timestamp. The same feed and rule back the on-chain Soroban vault,
+              so an epoch settles at one verifiable number regardless of rail.
+              Binance only drives the live UI tape and supplies the volatility
+              and forward inputs to the quote.
             </P>
             <Roadmap>
-              Settlement will move to <strong>Reflector</strong>, Stellar&apos;s
-              native decentralized oracle, alongside the Soroban contracts.
-              At that point the settlement price becomes on-chain and
-              independently verifiable, and the UI will label it explicitly as
-              the Reflector price for the given epoch.
+              As custody moves into the Soroban vault (T2), settlement becomes
+              fully permissionless on-chain: anyone can trigger it and the
+              outcome is determined entirely by the Reflector price at expiry,
+              with no server in the path.
             </Roadmap>
           </>
         ),
@@ -904,12 +907,12 @@ APR_quoted   = APR_fair × time_factor × util_factor`}
               a custodial server is a trust assumption you should weigh.
             </P>
             <Roadmap>
-              The Soroban vault, pricing and settlement contracts are{' '}
-              <strong>in development</strong>. When they ship they will be
-              externally audited before any mainnet launch, followed by a bug
-              bounty, and contract upgrades will sit behind a timelock. Until
-              the audit report is published on this page, assume the eventual
-              contracts may contain bugs.
+              The Soroban vault is <strong>deployed on testnet</strong> and
+              settles real positions against Reflector, but it is{' '}
+              <strong>not yet audited</strong>. An independent audit before any
+              mainnet launch, a bug bounty, and a timelock on upgrades are part
+              of the T2 scope. Until the audit report is published on this page,
+              assume the contract may contain bugs.
             </Roadmap>
             <H>What this means for you</H>
             <List>
@@ -985,26 +988,34 @@ APR_quoted   = APR_fair × time_factor × util_factor`}
             <H>Blockchain (today)</H>
             <List>
               <li>
-                <strong>Stellar Classic</strong> — settlement layer for all
+                <strong>Stellar Classic</strong> — payment layer for all
                 collateral and LUSD upfront transfers, via a protocol-operated
-                distributor account.
+                distributor account (2-of-3 multisig on the issuer).
               </li>
               <li>
-                <strong>Binance API</strong> — server-side spot price used for
-                pricing and settlement, plus a public websocket for the live UI
-                tape.
+                <strong>Reflector</strong> — Stellar-native decentralized
+                oracle; settlement reads its <Code>XLM/USD</Code> feed via
+                Soroban RPC, pinned to expiry. Already the settlement source on
+                both rails.
+              </li>
+              <li>
+                <strong>Soroban</strong> — the Lusty vault contract (Rust) is
+                deployed on testnet and settles real positions against
+                Reflector. See the technical architecture page.
+              </li>
+              <li>
+                <strong>Binance API</strong> — quote inputs only: realized-vol
+                history and perp funding for pricing, plus a public websocket
+                for the live UI tape and a settlement fallback candle.
               </li>
             </List>
-            <H>Blockchain (roadmap — T2/T3)</H>
+            <H>Blockchain (roadmap — T2)</H>
             <List>
               <li>
-                <strong>Soroban</strong> — Stellar&apos;s smart-contract runtime;
-                the Lusty vault, pricing and settlement contracts are in
-                development in Rust, not yet deployed.
-              </li>
-              <li>
-                <strong>Reflector</strong> — decentralized Stellar-native oracle
-                planned for on-chain settlement prices at epoch expiry.
+                Move custody into the deployed Soroban vault so collateral is
+                escrowed on-chain rather than by the distributor, add an
+                in-contract premium ceiling and a multisig quoter, and bring
+                cash-secured puts into the contract.
               </li>
             </List>
             <H>Smart-contract tooling</H>
@@ -1046,10 +1057,19 @@ APR_quoted   = APR_fair × time_factor × util_factor`}
             <H>Price oracle</H>
             <List>
               <li>
-                <strong>Binance REST API</strong> — server-side spot price for
-                upfront calculation and settlement (<Code>XLMUSDT</Code> ticker).
-                If the feed is unavailable, transactions are rejected rather
-                than falling back to a stale price.
+                <strong>Reflector</strong> — the settlement oracle. The server
+                reads its <Code>XLM/USD</Code> feed via Soroban RPC, pinned to
+                expiry; the Soroban vault reads the same feed on-chain. If no
+                expiry-pinned price is available the claim is refused rather
+                than settled at a live price.
+              </li>
+              <li>
+                <strong>Binance REST API</strong> — quote inputs (realized-vol
+                history, perp funding) and the live spot used to value deposits
+                against the USD caps (<Code>XLMUSDT</Code>), plus the
+                expiry-minute candle used as a settlement fallback. If a needed
+                feed is unavailable, transactions are rejected rather than
+                falling back to a stale price.
               </li>
               <li>
                 <strong>Binance WebSocket</strong> — client-side live tape for
@@ -1073,22 +1093,25 @@ APR_quoted   = APR_fair × time_factor × util_factor`}
             </P>
             <List>
               <li>
-                Website — <Code>lusty.finance</Code>
+                Website &amp; app — <Code>lusty.finance</Code>
               </li>
               <li>
-                App — <Code>app.lusty.finance</Code>
+                Docs — <Code>lusty.finance/docs</Code> (this site)
               </li>
               <li>
-                Docs — <Code>docs.lusty.finance</Code> (this site)
+                Technical architecture —{' '}
+                <Code>lusty.finance/architecture</Code>
               </li>
               <li>
-                Twitter / X — <Code>@lustyfinance</Code>
-              </li>
-              <li>
-                GitHub — <Code>github.com/lustyfinance</Code>
-              </li>
-              <li>
-                Discord — invite in the footer of the main site.
+                GitHub —{' '}
+                <a
+                  href="https://github.com/utkurock/Lusty"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline hover:text-ink"
+                >
+                  <Code>github.com/utkurock/Lusty</Code>
+                </a>
               </li>
             </List>
           </>
@@ -1099,26 +1122,54 @@ APR_quoted   = APR_fair × time_factor × util_factor`}
         icon: '🔮',
         title: 'Oracle & price feed',
         eyebrow: 'RESOURCES',
+        tagline: 'Reflector settles every position; Binance feeds the quote inputs.',
         body: (
           <>
             <P>
-              Lusty uses the <strong>Binance public API</strong> as its price
-              oracle for all upfront calculations and settlement. The server
-              fetches the live <Code>XLMUSDT</Code> spot price from Binance at
-              the moment of every deposit, claim and swap.
+              Lusty draws a clear line between the price that <strong>settles
+              your money</strong> and the prices that only <strong>feed the
+              quote</strong>. The settlement price is the one that decides
+              whether you are assigned, so it comes from the on-chain{' '}
+              <strong>Reflector oracle</strong>.
+            </P>
+            <H>Settlement price — Reflector</H>
+            <P>
+              At settlement the server reads the Reflector{' '}
+              <Code>XLM/USD</Code> feed through Soroban RPC, pinned to your
+              position&apos;s <strong>expiry timestamp</strong> (not the price
+              at the moment you claim). This is the same feed and the same
+              expiry-pinned rule the on-chain Soroban vault uses, so both rails
+              settle a position at the same number. Reads are free RPC
+              simulations — no key is touched and nothing is signed.
+            </P>
+            <P>
+              Reflector keeps about 24 hours of history. If you claim long
+              after expiry and the record has been pruned, settlement falls
+              back to the Binance 1-minute candle at the same expiry minute,
+              which is also expiry-pinned. If neither source can produce an
+              expiry-pinned price, the claim is refused rather than settled at
+              a live price.
+            </P>
+            <H>Quote inputs — Binance</H>
+            <P>
+              Pricing a fresh quote needs data Reflector does not carry: the
+              realized-volatility history (for σ) and the perpetual funding rate
+              (for the forward). Those come from Binance, along with the live
+              spot used to value a deposit against the USD caps. These never
+              decide a settlement; they only shape the premium you are offered.
             </P>
             <H>Safety mechanism</H>
             <P>
-              If the Binance price feed is unreachable or returns invalid data,
-              all financial transactions (deposit, claim, swap) are
-              automatically rejected with a <Code>price feed unavailable</Code>{' '}
-              error. There is no hardcoded fallback price — this prevents
-              any transaction from executing at a stale or incorrect price.
+              Every price source is fail-closed. If the feed needed for an
+              operation is unreachable or returns invalid data, the transaction
+              is rejected with a <Code>price feed unavailable</Code> error.
+              There is no hardcoded fallback price, and an expired position is
+              never settled at a live price.
             </P>
             <P>
               The frontend streams live spot from the Binance public websocket
               for responsiveness. This stream drives the UI price display and
-              the TradingView chart on the research page.
+              the TradingView chart on the research page only.
             </P>
           </>
         ),
@@ -1151,21 +1202,23 @@ LUSD distributor     :  GBAIN6CHZJGBL365JNXSRQEKALXYTWKXANQZ3RBM7AGUEYYKLJJ6SNR6
                 from it.
               </li>
             </List>
-            <H>Soroban contracts</H>
+            <H>Soroban contracts (testnet)</H>
             <Pre>
-{`USDC (SAC)           :  CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA
-Covered call vault   :  TBD — deploying before mainnet
-Cash-secured put     :  TBD — deploying before mainnet`}
+{`Vault v2 (LUSD cash)  :  CAWDKJUH5WSXJVOOAUGULE4HY2TTYSXUSI5QXTDKUZ6J5L4UTXWPK2Y4
+Vault v2 (USDC cash)  :  CASVHBJ7MOZ5YFSVAYXKZFWIYAR6Y3Q4JI2P6GGJMRFUJBZN6APTZEZD
+Reflector oracle      :  CCYOZJCOPG34LLQQ7N24YXBM7LL62R7ONMZ3G6WZAAYPB5OYKOMJRN63
+XLM SAC (collateral)  :  CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC`}
             </Pre>
             <P>
-              The vault logic currently runs as server-side Stellar classic
-              payments through the distributor account. Soroban smart contracts
-              for on-chain vault management, pricing and settlement are in
-              development and will be deployed before mainnet launch.
+              The Soroban vault is deployed on testnet and settles real
+              positions against the Reflector oracle. The user-facing app still
+              routes deposits through the distributor account today; moving
+              custody into the deployed contract is the T2 migration. Full
+              detail is on the technical architecture page.
             </P>
             <P>
-              Always verify addresses from this page or the official
-              Twitter before interacting.
+              Always verify addresses from this page or the official GitHub
+              repository before interacting.
             </P>
           </>
         ),
@@ -1197,7 +1250,10 @@ Cash-secured put     :  TBD — deploying before mainnet`}
             </List>
             <H>Scope</H>
             <List>
-              <li>Soroban contract code in the <Code>lustyfinance</Code> org.</li>
+              <li>
+                Soroban contract code in the{' '}
+                <Code>utkurock/Lusty</Code> repository.
+              </li>
               <li>Pricing engine math and oracle handling.</li>
               <li>Frontend issues that could cause funds loss or misrepresentation of state.</li>
             </List>
@@ -1406,6 +1462,31 @@ border              : #c4bfb2`}
 export default function DocsPage() {
   const allItems = GROUPS.flatMap((g) => g.items)
   const [activeId, setActiveId] = useState(allItems[0].id)
+  const [copied, setCopied] = useState(false)
+
+  // Select a section and reflect it in the URL hash so the address bar always
+  // points at the section you're reading (and the Copy button can grab it).
+  const selectSection = (id: string) => {
+    setActiveId(id)
+    if (typeof window !== 'undefined') {
+      history.replaceState(null, '', `#${id}`)
+    }
+  }
+
+  // Copy a deep link to the section currently open.
+  const copyLink = async () => {
+    if (typeof window === 'undefined') return
+    const url = `${window.location.origin}${window.location.pathname}#${activeId}`
+    try {
+      await navigator.clipboard.writeText(url)
+    } catch {
+      // Clipboard API unavailable (insecure context) — fall back to a prompt.
+      window.prompt('Copy this link:', url)
+      return
+    }
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
 
   // Deep-link support: a hash like /docs#points opens that section directly
   // (e.g. the leaderboard "How points work" button). Also reacts to in-page
@@ -1442,7 +1523,7 @@ export default function DocsPage() {
                   return (
                     <li key={s.id}>
                       <button
-                        onClick={() => setActiveId(s.id)}
+                        onClick={() => selectSection(s.id)}
                         className={
                           'w-full text-left py-1.5 px-2 rounded-md transition ' +
                           (isActive
@@ -1459,6 +1540,13 @@ export default function DocsPage() {
             </div>
           ))}
 
+          <a
+            href="/architecture"
+            className="mt-2 flex items-center justify-between border border-line bg-card hover:bg-surface rounded-md px-3 py-2.5 text-ink-2 hover:text-ink transition"
+          >
+            <span className="font-mono text-xs">architecture</span>
+            <ChevronRight size={14} />
+          </a>
         </aside>
 
         {/* Article */}
@@ -1467,10 +1555,13 @@ export default function DocsPage() {
             <div className="text-[#eab308] font-mono text-xs font-bold tracking-wider">
               {active.eyebrow}
             </div>
-            <button className="flex items-center gap-1.5 text-xs border border-line bg-card hover:bg-surface rounded-md px-3 py-1.5 font-mono text-ink-3">
+            <button
+              onClick={copyLink}
+              title="Copy a link to this section"
+              className="flex items-center gap-1.5 text-xs border border-line bg-card hover:bg-surface rounded-md px-3 py-1.5 font-mono text-ink-3 transition"
+            >
               <Copy size={12} />
-              Copy
-              <ChevronRight size={12} className="rotate-90" />
+              {copied ? 'Copied' : 'Copy link'}
             </button>
           </div>
 
@@ -1486,7 +1577,7 @@ export default function DocsPage() {
           <div className="mt-12 pb-20 grid grid-cols-1 sm:grid-cols-2 gap-4">
             {prev ? (
               <button
-                onClick={() => setActiveId(prev.id)}
+                onClick={() => selectSection(prev.id)}
                 className="group flex items-center gap-3 text-left border border-line bg-card hover:bg-surface rounded-lg p-4 transition"
               >
                 <ChevronLeft
@@ -1507,7 +1598,7 @@ export default function DocsPage() {
             )}
             {next ? (
               <button
-                onClick={() => setActiveId(next.id)}
+                onClick={() => selectSection(next.id)}
                 className="group flex items-center gap-3 text-right border border-line bg-card hover:bg-surface rounded-lg p-4 transition sm:col-start-2"
               >
                 <div className="min-w-0 flex-1">
