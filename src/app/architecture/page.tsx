@@ -62,9 +62,9 @@ const TOC = [
 
 export default function ArchitecturePage() {
   return (
-    <div className="max-w-5xl mx-auto px-6 py-12 flex gap-10">
+    <div className="max-w-7xl mx-auto px-6 py-10 grid lg:grid-cols-[260px_1fr] gap-10">
       {/* TOC */}
-      <nav className="hidden lg:block w-56 shrink-0">
+      <nav className="hidden lg:block">
         <div className="sticky top-24">
           <div className="font-mono text-[11px] uppercase tracking-wider text-ink-2 mb-3">
             Contents
@@ -85,7 +85,7 @@ export default function ArchitecturePage() {
       </nav>
 
       {/* Body */}
-      <article className="min-w-0 flex-1">
+      <article className="min-w-0">
         <div className="font-mono text-[11px] uppercase tracking-wider text-[#eab308] font-bold mb-2">
           Technical Architecture
         </div>

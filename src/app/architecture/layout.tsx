@@ -14,7 +14,7 @@ export default function ArchitectureLayout({
   return (
     <div className="min-h-screen flex flex-col bg-surface">
       <header className="w-full border-b border-line bg-surface sticky top-0 z-40">
-        <div className="max-w-5xl mx-auto px-6 h-16 flex items-center justify-between">
+        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <Link
             href="/earn"
             className="font-mono font-bold text-xl tracking-tight text-ink"
