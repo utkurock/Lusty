@@ -17,6 +17,7 @@ import {
   confirmAction,
 } from '@/lib/idempotency'
 import { LUSD_CODE, LUSD_ISSUER, LUSD_DISTRIBUTOR } from '@/lib/lusd'
+import { reflectorPriceAt, reflectorLastPrice } from '@/lib/reflector'
 
 const HORIZON =
   process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
@@ -321,10 +322,25 @@ async function fetchXlmUsd(): Promise<number> {
   return n
 }
 
-// Settlement price = XLM close at the expiry minute, independent of when the
-// user actually claims. Falls back to the live price only if the historical
-// candle is unavailable (e.g. claim within the same minute as expiry).
+// Settlement price = XLM at the expiry moment, independent of when the user
+// actually claims. Source order:
+//   1. Reflector oracle, price pinned to the expiry period — THE settlement
+//      source, shared with the on-chain Soroban vault so both rails settle a
+//      position at the same number.
+//   2. Reflector lastprice (only while fresh ≤ 1h, e.g. claim within the
+//      same period as expiry before the record lands).
+//   3. Binance 1m kline at expiry (still expiry-pinned).
+//   4. Binance live ticker (last resort).
 async function fetchXlmUsdAt(atMs: number): Promise<number> {
+  try {
+    const pinned = await reflectorPriceAt(atMs)
+    if (pinned !== null) return pinned
+    const last = await reflectorLastPrice()
+    if (last !== null) return last
+    console.warn('claim: reflector has no usable price, falling back to Binance')
+  } catch (e) {
+    console.error('claim: reflector unavailable, falling back to Binance', e)
+  }
   try {
     const url =
       `https://api.binance.com/api/v3/klines?symbol=XLMUSDT&interval=1m` +
