@@ -313,8 +313,16 @@ impl LustyVault {
         if let Some(p) = oracle.price(&asset, &ts_norm) {
             return p.price;
         }
-        // History not yet recorded (settling within the expiry period) or
-        // already pruned — fall back to the live price while it is fresh.
+        // No historical record. The live price is a valid proxy for the
+        // expiry price ONLY when the claim is prompt — within the staleness
+        // window of EXPIRY, before the period record is queryable. For a late
+        // claim (Reflector retains ~24h; the record has been pruned) the live
+        // price is just the current market, and settling on it would re-grant
+        // the writer the timing discretion expiry-pinning removes. So gate on
+        // `now - expiry`, not merely on how fresh the lastprice record is.
+        if now.saturating_sub(expiry) > MAX_PRICE_STALENESS_SECS {
+            panic_with_error!(env, Error::StalePrice);
+        }
         let lp = oracle
             .lastprice(&asset)
             .unwrap_or_else(|| panic_with_error!(env, Error::NoPrice));

@@ -17,7 +17,7 @@ import {
   confirmAction,
 } from '@/lib/idempotency'
 import { LUSD_CODE, LUSD_ISSUER, LUSD_DISTRIBUTOR } from '@/lib/lusd'
-import { reflectorPriceAt, reflectorLastPrice } from '@/lib/reflector'
+import { reflectorSettlementPrice } from '@/lib/reflector'
 
 const HORIZON =
   process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
@@ -310,18 +310,6 @@ export async function POST(req: Request) {
   }
 }
 
-async function fetchXlmUsd(): Promise<number> {
-  const r = await fetch(
-    'https://api.binance.com/api/v3/ticker/price?symbol=XLMUSDT',
-    { cache: 'no-store' }
-  )
-  if (!r.ok) throw new Error('price feed unavailable')
-  const j = await r.json()
-  const n = parseFloat(j.price)
-  if (!isFinite(n) || n <= 0) throw new Error('invalid price from feed')
-  return n
-}
-
 // Settlement price = XLM at the expiry moment, independent of when the user
 // actually claims. Source order:
 //   1. Reflector oracle, price pinned to the expiry period — THE settlement
@@ -333,28 +321,24 @@ async function fetchXlmUsd(): Promise<number> {
 //   4. Binance live ticker (last resort).
 async function fetchXlmUsdAt(atMs: number): Promise<number> {
   try {
-    const pinned = await reflectorPriceAt(atMs)
-    if (pinned !== null) return pinned
-    const last = await reflectorLastPrice()
-    if (last !== null) return last
-    console.warn('claim: reflector has no usable price, falling back to Binance')
+    const px = await reflectorSettlementPrice(atMs)
+    if (px !== null) return px
+    console.warn('claim: reflector has no expiry-pinned price, trying Binance kline')
   } catch (e) {
-    console.error('claim: reflector unavailable, falling back to Binance', e)
+    console.error('claim: reflector unavailable, trying Binance kline', e)
   }
-  try {
-    const url =
-      `https://api.binance.com/api/v3/klines?symbol=XLMUSDT&interval=1m` +
-      `&startTime=${atMs}&limit=1`
-    const r = await fetch(url, { cache: 'no-store' })
-    if (r.ok) {
-      const rows = await r.json()
-      if (Array.isArray(rows) && rows[0]) {
-        const close = parseFloat(rows[0][4])
-        if (isFinite(close) && close > 0) return close
-      }
+  const url =
+    `https://api.binance.com/api/v3/klines?symbol=XLMUSDT&interval=1m` +
+    `&startTime=${atMs}&limit=1`
+  const r = await fetch(url, { cache: 'no-store' })
+  if (r.ok) {
+    const rows = await r.json()
+    if (Array.isArray(rows) && rows[0]) {
+      const close = parseFloat(rows[0][4])
+      if (isFinite(close) && close > 0) return close
     }
-  } catch {
-    /* fall through to live price */
   }
-  return fetchXlmUsd()
+  // No expiry-pinned price from any source. Fail closed — never settle an
+  // expired position at the live price, which would re-grant timing discretion.
+  throw new Error('no expiry-pinned settlement price available')
 }

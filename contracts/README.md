@@ -64,7 +64,7 @@ backs both instances below.
 
 | What | Address |
 | --- | --- |
-| Vault v2, LUSD cash (matches the testnet web app) | `CDKFRHEK2BAST2RWQIM254UGBRPCUDS5P3TRPW2EQCHANVMPQQYPKOAR` |
+| Vault v2, LUSD cash (matches the testnet web app) | `CAWDKJUH5WSXJVOOAUGULE4HY2TTYSXUSI5QXTDKUZ6J5L4UTXWPK2Y4` |
 | Vault v2, USDC cash (mainnet framing demo) | `CASVHBJ7MOZ5YFSVAYXKZFWIYAR6Y3Q4JI2P6GGJMRFUJBZN6APTZEZD` |
 | Reflector oracle (external CEX/DEX feed) | `CCYOZJCOPG34LLQQ7N24YXBM7LL62R7ONMZ3G6WZAAYPB5OYKOMJRN63` |
 | Feed asset | `Other("XLM")`, 14 decimals, 300 s resolution |

@@ -33,6 +33,7 @@ const DECIMALS = Number(process.env.REFLECTOR_DECIMALS ?? 14)
 const RESOLUTION_SECS = Number(process.env.REFLECTOR_RESOLUTION_SECS ?? 300)
 // Reject a lastprice fallback older than this — mirrors the Soroban contract.
 const MAX_STALENESS_SECS = 3600
+export const REFLECTOR_MAX_STALENESS_SECS = MAX_STALENESS_SECS
 
 // Any funded account works as the simulation source; it signs nothing.
 const SIM_SOURCE =
@@ -105,6 +106,14 @@ export async function reflectorPriceAt(atMs: number): Promise<number | null> {
  * Latest feed price, accepted only while fresh (≤ 1h, same rule as the
  * Soroban contract). Returns null when stale or missing — callers fall
  * back to the next source rather than settling on bad data.
+ *
+ * SECURITY: this is the LIVE price, not an expiry-pinned one. It is only a
+ * safe settlement source when the claim happens within the staleness window
+ * OF EXPIRY — i.e. the expiry record has not landed yet. For an old expiry
+ * (history pruned) the live price is whatever the market is doing now, which
+ * would hand the writer exactly the timing discretion expiry-pinning removes.
+ * Callers must gate this on `now - expiry`, not just on `now - lastprice.ts`.
+ * See settlementPinnedToExpiry() for the safe wrapper.
  */
 export async function reflectorLastPrice(): Promise<number | null> {
   const rec = await simulateOracleCall('lastprice', [feedAsset()])
@@ -115,4 +124,33 @@ export async function reflectorLastPrice(): Promise<number | null> {
     return null
   }
   return rec.price
+}
+
+/**
+ * Reflector settlement price for a position expiring at `expiryMs`, with the
+ * timing-discretion guard applied:
+ *
+ *   1. The expiry-pinned historical price, if Reflector still has it.
+ *   2. Otherwise the live price, but ONLY if the claim is prompt — within the
+ *      staleness window of expiry, before the period record is queryable.
+ *
+ * Returns null when neither applies (old expiry, history pruned). The caller
+ * must then use another expiry-pinned source (Binance kline) and must NOT
+ * fall back to any live price. Reflector retains ~24h of history, so a writer
+ * who waits longer hits this null path rather than settling at a stale-but-
+ * "fresh-looking" live price.
+ */
+export async function reflectorSettlementPrice(
+  expiryMs: number
+): Promise<number | null> {
+  const pinned = await reflectorPriceAt(expiryMs)
+  if (pinned !== null) return pinned
+
+  const sinceExpirySecs = Math.floor((Date.now() - expiryMs) / 1000)
+  if (sinceExpirySecs > MAX_STALENESS_SECS) {
+    // Claim is late and the expiry record is gone — the live price is no
+    // longer a proxy for the expiry price. Refuse, don't guess.
+    return null
+  }
+  return reflectorLastPrice()
 }

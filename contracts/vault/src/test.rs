@@ -289,6 +289,22 @@ fn settle_blocks_when_feed_is_empty() {
     s.vault.settle(&id);
 }
 
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")] // StalePrice
+fn settle_blocks_late_claim_with_pruned_history() {
+    // The timing-discretion guard: an ITM writer must not be able to wait out
+    // Reflector's ~24h retention and then settle on the (now unrelated) live
+    // price. Here the expiry record is gone, the live price is perfectly fresh
+    // and below strike (would settle "kept" and dodge assignment) — but the
+    // claim is 2h after expiry, so the contract refuses rather than mis-settle.
+    let s = setup();
+    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    let now = EXPIRY + 7200; // 2h late, > 1h staleness window
+    s.oracle.set_lastprice(&23_000_000_000_000, &(now - 60)); // fresh, < strike
+    s.env.ledger().with_mut(|l| l.timestamp = now);
+    s.vault.settle(&id);
+}
+
 // ── Auth ────────────────────────────────────────────────────────────
 
 #[test]
