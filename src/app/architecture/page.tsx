@@ -100,6 +100,13 @@ export default function ArchitecturePage() {
           completes.
         </p>
 
+        <div className="mt-8 rounded-lg overflow-hidden border border-line bg-inverse text-cream aspect-[16/6] flex flex-col items-center justify-center font-mono">
+          <div className="text-5xl tracking-[0.3em] font-bold">lusty</div>
+          <div className="mt-4 text-xs tracking-[0.25em] text-[#eab308]">
+            SOROBAN · REFLECTOR · STELLAR CLASSIC
+          </div>
+        </div>
+
         {/* 1 */}
         <H2 id="summary">1. Summary</H2>
         <P>

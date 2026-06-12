@@ -945,6 +945,31 @@ APR_quoted   = APR_fair × time_factor × util_factor`}
     label: 'RESOURCES',
     items: [
       {
+        id: 'architecture',
+        icon: '🏛️',
+        title: 'Technical architecture',
+        eyebrow: 'RESOURCES',
+        tagline: 'The full Stellar architecture: Soroban, Reflector, SAC, multisig.',
+        body: (
+          <>
+            <P>
+              The complete technical architecture lives on its own page. It
+              covers the two rails, every Stellar building block Lusty uses
+              (Soroban contracts, the Reflector oracle, the Stellar Asset
+              Contract, multisig, trustlines, Horizon and Soroban RPC), the
+              vault contract interface, expiry-pinned settlement, end-to-end
+              flows, and the security model.
+            </P>
+            <a
+              href="/architecture"
+              className="inline-flex items-center gap-2 mt-2 h-10 px-4 bg-inverse text-cream font-mono text-sm rounded-sm hover:bg-line-2 transition"
+            >
+              Open the architecture document →
+            </a>
+          </>
+        ),
+      },
+      {
         id: 'stack',
         icon: '🧰',
         title: 'Tech stack',

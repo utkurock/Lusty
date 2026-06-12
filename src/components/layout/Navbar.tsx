@@ -20,7 +20,8 @@ export function Navbar() {
   const pathname = usePathname()
   const [open, setOpen] = useState(false)
 
-  if (pathname?.startsWith('/docs')) return null
+  if (pathname?.startsWith('/docs') || pathname?.startsWith('/architecture'))
+    return null
 
   return (
     <header className="w-full border-b border-line bg-surface sticky top-0 z-40">

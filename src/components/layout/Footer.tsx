@@ -3,7 +3,8 @@ import { usePathname } from 'next/navigation'
 
 export function Footer() {
   const pathname = usePathname()
-  if (pathname?.startsWith('/docs')) return null
+  if (pathname?.startsWith('/docs') || pathname?.startsWith('/architecture'))
+    return null
   return (
     <footer className="w-full border-t border-line bg-surface mt-8">
       <div className="max-w-7xl mx-auto px-6 py-8 flex flex-col md:flex-row justify-between items-center gap-4">
