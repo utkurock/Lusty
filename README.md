@@ -1,7 +1,7 @@
 # Lusty
 
-Options yield protocol on Stellar. Sell covered calls and cash-secured puts on
-XLM, get the premium upfront, settle at expiry against an oracle price.
+Sell covered calls and cash-secured puts on XLM. The premium hits your wallet
+the moment you deposit. At expiry, settlement runs against an oracle price.
 
 **Network:** Stellar Testnet · **Live:** [lusty.finance](https://lusty.finance)
 
@@ -9,44 +9,44 @@ XLM, get the premium upfront, settle at expiry against an oracle price.
 
 ## Where Lusty is today
 
-Two rails, one pricing engine, one oracle:
+The protocol runs on two rails that share one pricing engine and one oracle.
 
-- **Web vault (Stellar Classic).** The production testnet app. Collateral is
-  held by a protocol distributor account and premiums are paid by the server —
-  custodial by design while the contract rail matures. Settlement prices come
-  from the **Reflector oracle**, pinned to the expiry timestamp.
-- **Soroban vault (v2, deployed).** The trustless rail, live on testnet: the
-  contract escrows collateral, pays the premium in USDC **atomically inside
-  `deposit()`**, and settles permissionlessly against Reflector at the expiry
-  price. Real ITM/OTM positions have been opened and settled end-to-end on
-  testnet. See [`contracts/README.md`](contracts/README.md).
+The web vault is the production testnet app. It runs on Stellar Classic: a
+protocol distributor account holds collateral and the server pays premiums.
+This rail is custodial on purpose while the contract rail matures. Settlement
+prices come from the Reflector oracle, pinned to the expiry timestamp.
 
-What remains for the trustless migration (Tranche 2): pointing the web app's
-deposit flow at the contract, cash-secured puts in-contract, and an
-independent audit. Custody is the only trust assumption left — pricing and
-settlement already run on the same oracle on both rails.
+The Soroban vault is the trustless rail, deployed on testnet. The contract
+escrows collateral, pays the premium inside the same `deposit()` transaction,
+and settles permissionlessly against Reflector at the expiry price. Real ITM
+and OTM positions have been opened and settled end to end on testnet. Details
+in [`contracts/README.md`](contracts/README.md).
 
-**LUSD** is a testnet convenience token (faucet-issued, unbacked, documented
-as such in the app). It has **no mainnet path** — mainnet settles in Circle's
-native USDC, as the contract rail already does.
+Tranche 2 covers what remains of the migration: pointing the web app's deposit
+flow at the contract, in-contract cash-secured puts, and an independent audit.
+Custody is the only trust assumption left. Pricing and settlement already run
+on the same oracle on both rails.
+
+LUSD is a testnet convenience token, faucet-issued and unbacked, and the app
+says so. It has no mainnet path. Mainnet settles in Circle's native USDC,
+which the contract rail already supports.
 
 ## How a position works
 
-1. Pick a strike and expiry (rolling Friday expiries, 3 open at once).
-2. Deposit collateral — XLM for covered calls, cash for puts. The premium
-   lands in your wallet immediately; what you see quoted is exactly what you
-   are paid.
-3. At expiry, settlement reads the oracle price **at the expiry timestamp**
-   (your claim timing cannot change the outcome):
-   - covered call: spot ≤ strike → collateral back; spot > strike → assigned,
-     you receive the strike value in cash.
-   - put: mirrored.
-4. The premium is yours either way.
+1. Pick a strike and expiry. Expiries are rolling Fridays, three open at a
+   time.
+2. Deposit collateral: XLM for covered calls, cash for puts. The premium lands
+   in your wallet immediately, and the quoted number is the paid number.
+3. At expiry, settlement reads the oracle price at the expiry timestamp, so
+   when you claim cannot change the outcome. For a covered call, spot at or
+   below the strike returns your collateral whole; spot above the strike means
+   assignment and you receive the strike value in cash. Puts mirror this.
+4. You keep the premium in every case.
 
 ## Pricing
 
 One quote engine (`src/lib/pricing-server.ts`) prices everything the UI shows
-and everything the vault pays — there is no second adjustment layer.
+and everything the vault pays. There is no second adjustment layer.
 
 ```
 σ_realized  ← XLM price history (EWMA, RiskMetrics λ=0.94)
@@ -59,9 +59,10 @@ APR ladder  : nearest strike pinned to a time-scaled ceiling (120% × days/ref),
 − fee       : 10% of the upfront, taken from the premium (never collateral)
 ```
 
-Two invariants, enforced by unit tests: the user is never paid above the
-haircut fair value (protocol keeps ≥20% edge vs its own Black-76 estimate),
-and an off-ladder strike can never quote above the displayed ceiling.
+Unit tests enforce two invariants. The user is never paid above the haircut
+fair value, so the protocol keeps at least a 20% edge against its own Black-76
+estimate. And no strike, including off-ladder ones a client might submit, can
+quote above the displayed ceiling.
 
 ## Architecture
 
@@ -69,10 +70,10 @@ and an off-ladder strike can never quote above the displayed ceiling.
 |-------|------|
 | Frontend | Next.js 14, React 18, TypeScript, Tailwind |
 | Wallets | Stellar Wallets Kit (Freighter, xBull, Albedo, Lobstr) |
-| Settlement oracle | **Reflector** (both rails; Soroban RPC simulation server-side, cross-contract call on-chain) |
+| Settlement oracle | Reflector, on both rails: Soroban RPC simulation server-side, cross-contract call on-chain |
 | Contracts | Soroban (Rust), `contracts/vault` |
 | Web settlement | Stellar Classic payments from the distributor |
-| Quote inputs | Binance (realized vol history, perp funding) — quote inputs only, never the settlement price |
+| Quote inputs | Binance (realized vol history, perp funding). Quote inputs only, never the settlement price |
 | Database | PostgreSQL (Supabase), deny-all RLS |
 
 ## Testnet addresses
@@ -86,32 +87,34 @@ LUSD distributor     GBAIN6CHZJGBL365JNXSRQEKALXYTWKXANQZ3RBM7AGUEYYKLJJ6SNR6
 
 ## Security
 
-Hardened in response to (and beyond) SCF #43 panel review — every item below
-is verifiable in the commit history and covered by tests where applicable.
+The security model was rebuilt after the SCF #43 panel review. Each item below
+can be checked against the commit history, and most are covered by tests.
 
-- **Server-canonical money math.** Premiums are recomputed server-side from
-  the quote engine; strike/expiry/type at claim come from the deposit record,
-  never from the client.
-- **Expiry-pinned settlement** from Reflector — claim timing gives the writer
-  no optionality; Binance kline is only a fallback.
-- **Replay protection** on deposit, claim and swap (DB unique-constraint
-  ledger), including cross-endpoint reuse: one on-chain payment can fund a
-  deposit *or* a swap, never both.
-- **Atomic capacity caps.** Per-user/30d, per-user-per-expiry, per-strike and
-  per-expiry caps are checked and reserved in a single advisory-locked DB
-  transaction — concurrent requests cannot overshoot them.
-- **Fail-closed everywhere.** Price feed down, DB down, breaker state
-  unreadable, oracle stale → the operation is refused, never waved through.
-- **Circuit breaker** with automatic halts: volatility spike (≥3× baseline),
-  oracle stress (≥10% 1-minute move or feed unreachable), per-epoch loss cap.
-  Manual trips can only be cleared by a human.
-- **Multi-sig accounts.** Issuer requires 2-of-3 for every operation
-  (including minting). Distributor payments stay hot by design (bounded by
-  the caps above); its signer/threshold changes require 2-of-3.
-- **Tests.** 48 unit tests on the pricing path (which caught a real CDF
-  scaling bug), 17 on the Soroban contract incl. a mock oracle.
-- Rate limiting, parameterized SQL, wallet-signature admin auth, CSP/HSTS
-  headers, secrets gitignored.
+- Premiums are recomputed server side from the quote engine. At claim time the
+  strike, expiry, type and collateral come from the deposit record, never from
+  the client.
+- Settlement is pinned to the Reflector price at expiry, so claim timing gives
+  the writer no optionality. The Binance kline at expiry is only a fallback.
+- A database ledger with unique constraints blocks replays on deposit, claim
+  and swap. It also blocks cross-endpoint reuse: one on-chain payment can fund
+  a deposit or a swap, not both.
+- Capacity caps (per user over 30 days, per user per expiry, per strike,
+  per expiry) are checked and reserved in a single advisory-locked database
+  transaction, so concurrent requests cannot overshoot them.
+- Operations fail closed. If the price feed, the database, the breaker state
+  or the oracle is unavailable or stale, the request is refused.
+- A circuit breaker halts deposits on a volatility spike (3x the daily
+  baseline), on oracle stress (a 10% one-minute move or an unreachable feed),
+  and when a per-epoch loss cap is hit. A manual trip can only be cleared by
+  a human.
+- The issuer account requires 2-of-3 signatures for every operation, including
+  minting. The distributor stays hot for payments, bounded by the caps above,
+  and needs 2-of-3 for signer or threshold changes.
+- 48 unit tests cover the pricing path; writing them caught a real CDF scaling
+  bug in the Black-76 code. The Soroban contract has 17 more, including a mock
+  oracle.
+- Rate limiting, parameterized SQL, wallet-signature admin auth, CSP and HSTS
+  headers.
 
 ## Project structure
 
@@ -127,7 +130,7 @@ src/
       vault/{quote,deposit,claim,positions,stats}
       swap/  faucet/lusd/  leaderboard/  admin/  cron/monitor/
   lib/
-    pricing-server.ts  THE quote engine (Black-76 + ladder + taper + fee)
+    pricing-server.ts  The quote engine (Black-76 + ladder + taper + fee)
     pricing.ts         Black-76 / CDF primitives, strike ladders
     vol.ts forward.ts  Realized vol (EWMA), perp-funding forward
     reflector.ts       Reflector reads via Soroban RPC (settlement source)
