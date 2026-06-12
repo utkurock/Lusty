@@ -2,6 +2,11 @@
 // Mirrors the Soroban contract logic but uses JS floats
 
 export function normalCDF(x: number): number {
+  // Standard normal CDF via the Abramowitz-Stegun 7.1.26 erf approximation:
+  //   Φ(x) = ½ · (1 + erf(x / √2))
+  // The /√2 rescale is essential — erf alone is the CDF of N(0, ½), not the
+  // standard normal. Without it every Black-76 d1/d2 probability is pushed
+  // toward 0/1 (as if σ were ~√2 larger) and fair premiums come out inflated.
   const a1 =  0.254829592
   const a2 = -0.284496736
   const a3 =  1.421413741
@@ -10,12 +15,12 @@ export function normalCDF(x: number): number {
   const p  =  0.3275911
 
   const sign = x < 0 ? -1 : 1
-  x = Math.abs(x)
+  const z = Math.abs(x) / Math.SQRT2
 
-  const t = 1.0 / (1.0 + p * x)
-  const y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x)
+  const t = 1.0 / (1.0 + p * z)
+  const erf = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-z * z)
 
-  return 0.5 * (1.0 + sign * y)
+  return 0.5 * (1.0 + sign * erf)
 }
 
 export function blackScholesCall(
