@@ -6,6 +6,8 @@ import { Navbar } from '@/components/layout/Navbar'
 import { Footer } from '@/components/layout/Footer'
 import { WalletConnectModal } from '@/components/shared/WalletConnectModal'
 import { AdminOverlay } from '@/components/admin/AdminOverlay'
+import { AnalyticsTracker } from '@/components/shared/AnalyticsTracker'
+import { FeedbackWidget } from '@/components/shared/FeedbackWidget'
 
 export const metadata: Metadata = {
   title: 'Lusty — Earn yield upfront',
@@ -39,6 +41,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
             <WalletConnectModal />
             <AdminOverlay />
+            <FeedbackWidget />
+            <AnalyticsTracker />
           </WalletProvider>
         </ThemeProvider>
       </body>

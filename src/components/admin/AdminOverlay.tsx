@@ -12,9 +12,12 @@ import {
   ChevronLeft,
   ChevronRight,
   Loader2,
+  Activity,
+  MessageSquare,
+  Star,
 } from 'lucide-react'
 
-type Tab = 'overview' | 'users' | 'transactions'
+type Tab = 'overview' | 'users' | 'transactions' | 'analytics' | 'feedback'
 
 interface Stats {
   totalUsers: number
@@ -49,6 +52,40 @@ interface TxRow {
   createdAt: string
 }
 
+interface AnalyticsSummary {
+  totalEvents: number
+  pageViews: number
+  uniqueSessions: number
+  uniqueVisitors24h: number
+  walletConnects: number
+  eventsByName: { event: string; count: number }[]
+  topPaths: { path: string; count: number }[]
+  actions: {
+    deposits: number
+    claims: number
+    faucet: number
+    swaps: number
+    uniqueDepositors: number
+  }
+  daily: { day: string; pageViews: number; sessions: number }[]
+}
+
+interface FeedbackRow {
+  id: number
+  address: string | null
+  rating: number | null
+  category: string | null
+  message: string
+  path: string | null
+  createdAt: string
+}
+
+interface FeedbackSummary {
+  total: number
+  avgRating: number | null
+  ratedCount: number
+}
+
 export function AdminOverlay() {
   const { connected, address, signTransaction } = useWalletContext()
   const [sessionToken, setSessionToken] = useState<string | null>(null)
@@ -64,6 +101,11 @@ export function AdminOverlay() {
   const [txsTotal, setTxsTotal] = useState(0)
   const [txsPage, setTxsPage] = useState(0)
   const [txTypeFilter, setTxTypeFilter] = useState('')
+  const [analytics, setAnalytics] = useState<AnalyticsSummary | null>(null)
+  const [feedback, setFeedback] = useState<FeedbackRow[]>([])
+  const [feedbackTotal, setFeedbackTotal] = useState(0)
+  const [feedbackPage, setFeedbackPage] = useState(0)
+  const [feedbackSummary, setFeedbackSummary] = useState<FeedbackSummary | null>(null)
   const [loading, setLoading] = useState(false)
   const authInProgress = useRef(false)
 
@@ -181,6 +223,41 @@ export function AdminOverlay() {
     [sessionToken]
   )
 
+  // Fetch analytics summary
+  const fetchAnalytics = useCallback(() => {
+    if (!sessionToken) return
+    setLoading(true)
+    fetch('/api/admin/analytics', { headers: adminHeaders })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.ok) setAnalytics(data.summary)
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [sessionToken])
+
+  // Fetch feedback
+  const fetchFeedback = useCallback(
+    (page: number) => {
+      if (!sessionToken) return
+      setLoading(true)
+      fetch(`/api/admin/feedback?limit=${PAGE_SIZE}&offset=${page * PAGE_SIZE}`, {
+        headers: adminHeaders,
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.ok) {
+            setFeedback(data.rows)
+            setFeedbackTotal(data.total)
+            setFeedbackSummary(data.summary)
+          }
+        })
+        .catch(() => {})
+        .finally(() => setLoading(false))
+    },
+    [sessionToken]
+  )
+
   // Refresh stats when panel opens
   useEffect(() => {
     if (open && sessionToken && tab === 'overview') {
@@ -200,6 +277,14 @@ export function AdminOverlay() {
   useEffect(() => {
     if (open && tab === 'transactions') fetchTxs(txsPage, txTypeFilter)
   }, [open, tab, txsPage, txTypeFilter, fetchTxs])
+
+  useEffect(() => {
+    if (open && tab === 'analytics') fetchAnalytics()
+  }, [open, tab, fetchAnalytics])
+
+  useEffect(() => {
+    if (open && tab === 'feedback') fetchFeedback(feedbackPage)
+  }, [open, tab, feedbackPage, fetchFeedback])
 
   // Close on Escape
   useEffect(() => {
@@ -254,11 +339,13 @@ export function AdminOverlay() {
 
             <div className="p-6 space-y-6">
               {/* Tabs */}
-              <div className="flex gap-2 font-mono text-sm">
+              <div className="flex flex-wrap gap-2 font-mono text-sm">
                 {([
                   { key: 'overview' as Tab, label: 'Overview', icon: BarChart3 },
+                  { key: 'analytics' as Tab, label: 'Analytics', icon: Activity },
                   { key: 'users' as Tab, label: 'Users', icon: Users },
                   { key: 'transactions' as Tab, label: 'Transactions', icon: ArrowRightLeft },
+                  { key: 'feedback' as Tab, label: 'Feedback', icon: MessageSquare },
                 ]).map(({ key, label, icon: Icon }) => (
                   <button
                     key={key}
@@ -445,6 +532,200 @@ export function AdminOverlay() {
                       )}
                     </div>
                     <Pagination page={txsPage} setPage={setTxsPage} total={txsTotal} pageSize={PAGE_SIZE} />
+                  </div>
+                </div>
+              )}
+
+              {/* Analytics */}
+              {tab === 'analytics' && (
+                <div className="space-y-6">
+                  {loading && !analytics && (
+                    <div className="px-5 py-10 flex justify-center">
+                      <Loader2 size={20} className="animate-spin text-ink-2" />
+                    </div>
+                  )}
+                  {analytics && (
+                    <>
+                      {/* Top-line usage metrics */}
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                        {[
+                          { label: 'Page Views', value: analytics.pageViews.toLocaleString(), color: 'text-ink' },
+                          { label: 'Unique Sessions', value: analytics.uniqueSessions.toLocaleString(), color: 'text-ink' },
+                          { label: 'Visitors (24h)', value: analytics.uniqueVisitors24h.toLocaleString(), color: 'text-[#eab308]' },
+                          { label: 'Wallet Connects', value: analytics.walletConnects.toLocaleString(), color: 'text-ink' },
+                          { label: 'Unique Depositors', value: analytics.actions.uniqueDepositors.toLocaleString(), color: 'text-[#22c55e]' },
+                          { label: 'Total Events', value: analytics.totalEvents.toLocaleString(), color: 'text-ink-2' },
+                        ].map((s) => (
+                          <div key={s.label} className="light-card rounded-sm p-5">
+                            <div className="font-mono text-[11px] uppercase tracking-wider text-ink-2 mb-1">
+                              {s.label}
+                            </div>
+                            <div className={`font-mono text-2xl font-bold ${s.color}`}>{s.value}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Daily page views (last 14 days) */}
+                      <div className="light-card rounded-sm p-5">
+                        <div className="font-mono text-[11px] uppercase tracking-wider text-ink-2 mb-4">
+                          Page views · last 14 days
+                        </div>
+                        <div className="flex items-end gap-1.5 h-32">
+                          {analytics.daily.map((d) => {
+                            const max = Math.max(1, ...analytics.daily.map((x) => x.pageViews))
+                            const pct = (d.pageViews / max) * 100
+                            return (
+                              <div key={d.day} className="flex-1 flex flex-col items-center gap-1 group">
+                                <div className="relative w-full flex items-end h-full">
+                                  <div
+                                    className="w-full bg-[#eab308]/70 group-hover:bg-[#eab308] rounded-t-sm transition"
+                                    style={{ height: `${pct}%`, minHeight: d.pageViews > 0 ? '4px' : '0' }}
+                                    title={`${d.day}: ${d.pageViews} views, ${d.sessions} sessions`}
+                                  />
+                                </div>
+                                <div className="font-mono text-[9px] text-ink-2">
+                                  {d.day.slice(5)}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Action funnel + events split */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="light-card rounded-sm p-5">
+                          <div className="font-mono text-[11px] uppercase tracking-wider text-ink-2 mb-3">
+                            On-chain actions
+                          </div>
+                          <div className="space-y-2 font-mono text-sm">
+                            {[
+                              { label: 'Deposits', value: analytics.actions.deposits },
+                              { label: 'Claims', value: analytics.actions.claims },
+                              { label: 'Swaps', value: analytics.actions.swaps },
+                              { label: 'Faucet', value: analytics.actions.faucet },
+                            ].map((a) => (
+                              <div key={a.label} className="flex items-center justify-between">
+                                <span className="text-ink-2">{a.label}</span>
+                                <span className="num text-ink font-semibold">{a.value.toLocaleString()}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="light-card rounded-sm p-5">
+                          <div className="font-mono text-[11px] uppercase tracking-wider text-ink-2 mb-3">
+                            Top events
+                          </div>
+                          <div className="space-y-2 font-mono text-sm">
+                            {analytics.eventsByName.slice(0, 6).map((e) => (
+                              <div key={e.event} className="flex items-center justify-between">
+                                <span className="text-ink-2 truncate">{e.event}</span>
+                                <span className="num text-ink font-semibold">{e.count.toLocaleString()}</span>
+                              </div>
+                            ))}
+                            {analytics.eventsByName.length === 0 && (
+                              <span className="text-ink-2">No events yet</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Top paths */}
+                      {analytics.topPaths.length > 0 && (
+                        <div className="light-card rounded-sm p-5">
+                          <div className="font-mono text-[11px] uppercase tracking-wider text-ink-2 mb-3">
+                            Top pages
+                          </div>
+                          <div className="space-y-2 font-mono text-sm">
+                            {analytics.topPaths.map((p) => (
+                              <div key={p.path} className="flex items-center justify-between">
+                                <span className="text-ink-2 truncate">{p.path}</span>
+                                <span className="num text-ink font-semibold">{p.count.toLocaleString()}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* Feedback */}
+              {tab === 'feedback' && (
+                <div className="space-y-4">
+                  {feedbackSummary && (
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                      <div className="light-card rounded-sm p-5">
+                        <div className="font-mono text-[11px] uppercase tracking-wider text-ink-2 mb-1">
+                          Total Feedback
+                        </div>
+                        <div className="font-mono text-2xl font-bold text-ink">
+                          {feedbackSummary.total.toLocaleString()}
+                        </div>
+                      </div>
+                      <div className="light-card rounded-sm p-5">
+                        <div className="font-mono text-[11px] uppercase tracking-wider text-ink-2 mb-1">
+                          Avg Rating
+                        </div>
+                        <div className="font-mono text-2xl font-bold text-[#eab308] flex items-center gap-1">
+                          {feedbackSummary.avgRating ?? '—'}
+                          {feedbackSummary.avgRating !== null && (
+                            <Star size={18} className="fill-[#eab308] text-[#eab308]" />
+                          )}
+                        </div>
+                      </div>
+                      <div className="light-card rounded-sm p-5">
+                        <div className="font-mono text-[11px] uppercase tracking-wider text-ink-2 mb-1">
+                          Rated
+                        </div>
+                        <div className="font-mono text-2xl font-bold text-ink">
+                          {feedbackSummary.ratedCount.toLocaleString()}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="light-card rounded-sm">
+                    {loading && (
+                      <div className="px-5 py-10 flex justify-center">
+                        <Loader2 size={20} className="animate-spin text-ink-2" />
+                      </div>
+                    )}
+                    {!loading && feedback.map((f) => (
+                      <div key={f.id} className="px-5 py-4 dashed-row">
+                        <div className="flex items-center justify-between mb-1.5">
+                          <div className="flex items-center gap-2">
+                            {f.rating && (
+                              <div className="flex items-center gap-0.5">
+                                {Array.from({ length: f.rating }).map((_, i) => (
+                                  <Star key={i} size={12} className="fill-[#eab308] text-[#eab308]" />
+                                ))}
+                              </div>
+                            )}
+                            {f.category && (
+                              <span className="px-1.5 py-0.5 rounded-sm text-[10px] uppercase bg-ink-2/15 text-ink-2 font-mono">
+                                {f.category}
+                              </span>
+                            )}
+                          </div>
+                          <span className="font-mono text-[11px] text-ink-2">
+                            {new Date(f.createdAt).toLocaleString()}
+                          </span>
+                        </div>
+                        <p className="text-sm text-ink whitespace-pre-wrap break-words">{f.message}</p>
+                        <div className="font-mono text-[11px] text-ink-2 mt-1.5">
+                          {f.address ? formatAddress(f.address) : 'anonymous'}
+                          {f.path && <span> · {f.path}</span>}
+                        </div>
+                      </div>
+                    ))}
+                    {!loading && feedback.length === 0 && (
+                      <div className="px-5 py-10 text-center font-mono text-xs text-ink-2">
+                        No feedback yet
+                      </div>
+                    )}
+                    <Pagination page={feedbackPage} setPage={setFeedbackPage} total={feedbackTotal} pageSize={PAGE_SIZE} />
                   </div>
                 </div>
               )}

@@ -124,6 +124,38 @@ export async function ensureSchema(): Promise<void> {
     );
     insert into circuit_breaker (id, tripped) values (1, false)
       on conflict (id) do nothing;
+
+    -- Analytics: lightweight client-fired usage events (page_view,
+    -- wallet_connect, etc.). Action-level analytics (deposits, claims,
+    -- faucet) are derived from the transactions table, so the core
+    -- on-chain flows stay untouched. address/session_id are best-effort
+    -- and may be null for anonymous visitors.
+    create table if not exists analytics_events (
+      id          bigserial primary key,
+      event       text not null,
+      address     text,
+      path        text,
+      session_id  text,
+      metadata    jsonb,
+      created_at  timestamptz not null default now()
+    );
+    create index if not exists analytics_events_event_idx on analytics_events(event);
+    create index if not exists analytics_events_created_at_idx on analytics_events(created_at desc);
+    create index if not exists analytics_events_session_idx on analytics_events(session_id);
+
+    -- User feedback: in-app widget submissions. rating is an optional
+    -- 1–5 star score; message is required. address/path are best-effort
+    -- context captured at submit time.
+    create table if not exists feedback (
+      id          bigserial primary key,
+      address     text,
+      rating      integer check (rating between 1 and 5),
+      category    text,
+      message     text not null,
+      path        text,
+      created_at  timestamptz not null default now()
+    );
+    create index if not exists feedback_created_at_idx on feedback(created_at desc);
   `)
 
   // (Re)create leaderboard view.

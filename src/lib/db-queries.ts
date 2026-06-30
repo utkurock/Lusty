@@ -483,3 +483,204 @@ export async function getAllTransactions(
     total,
   }
 }
+
+// ── Analytics ──────────────────────────────────────────────────────
+
+interface LogEventParams {
+  event: string
+  address?: string | null
+  path?: string | null
+  sessionId?: string | null
+  metadata?: Record<string, unknown> | null
+}
+
+export async function logEvent(params: LogEventParams) {
+  await ensureSchema()
+  const pool = getPool()
+  await pool.query(
+    `insert into analytics_events (event, address, path, session_id, metadata)
+     values ($1, $2, $3, $4, $5)`,
+    [
+      params.event,
+      params.address ?? null,
+      params.path ?? null,
+      params.sessionId ?? null,
+      params.metadata ? JSON.stringify(params.metadata) : null,
+    ]
+  )
+}
+
+export interface AnalyticsSummary {
+  totalEvents: number
+  pageViews: number
+  uniqueSessions: number
+  uniqueVisitors24h: number
+  walletConnects: number
+  eventsByName: { event: string; count: number }[]
+  topPaths: { path: string; count: number }[]
+  // Action funnel derived from the transactions table (on-chain proof).
+  actions: {
+    deposits: number
+    claims: number
+    faucet: number
+    swaps: number
+    uniqueDepositors: number
+  }
+  // Daily page-view series for the last 14 days, oldest first.
+  daily: { day: string; pageViews: number; sessions: number }[]
+}
+
+export async function getAnalyticsSummary(): Promise<AnalyticsSummary> {
+  await ensureSchema()
+  const pool = getPool()
+
+  const [
+    totals,
+    byName,
+    paths,
+    actions,
+    uniqueDepositors,
+    daily,
+  ] = await Promise.all([
+    pool.query(`
+      select
+        count(*)                                                          as total_events,
+        count(*) filter (where event = 'page_view')                      as page_views,
+        count(distinct session_id)                                       as unique_sessions,
+        count(distinct session_id) filter (where created_at > now() - interval '24 hours') as unique_24h,
+        count(*) filter (where event = 'wallet_connect')                 as wallet_connects
+      from analytics_events
+    `),
+    pool.query(`
+      select event, count(*)::int as count
+      from analytics_events
+      group by event
+      order by count desc
+    `),
+    pool.query(`
+      select coalesce(path, '(unknown)') as path, count(*)::int as count
+      from analytics_events
+      where event = 'page_view'
+      group by path
+      order by count desc
+      limit 10
+    `),
+    pool.query(`
+      select
+        count(*) filter (where type = 'deposit' and (subtype is null or subtype != 'swap')) as deposits,
+        count(*) filter (where type = 'claim')                                              as claims,
+        count(*) filter (where type = 'faucet')                                             as faucet,
+        count(*) filter (where subtype = 'swap')                                            as swaps
+      from transactions
+    `),
+    pool.query(`
+      select count(distinct address) as c
+      from transactions
+      where type = 'deposit' and (subtype is null or subtype != 'swap')
+    `),
+    pool.query(`
+      select
+        to_char(d.day, 'YYYY-MM-DD') as day,
+        coalesce(count(e.*) filter (where e.event = 'page_view'), 0)::int as page_views,
+        coalesce(count(distinct e.session_id), 0)::int as sessions
+      from generate_series(
+        (now() - interval '13 days')::date, now()::date, interval '1 day'
+      ) as d(day)
+      left join analytics_events e
+        on e.created_at >= d.day and e.created_at < d.day + interval '1 day'
+      group by d.day
+      order by d.day asc
+    `),
+  ])
+
+  const t = totals.rows[0]
+  const a = actions.rows[0]
+  return {
+    totalEvents: parseInt(t.total_events, 10),
+    pageViews: parseInt(t.page_views, 10),
+    uniqueSessions: parseInt(t.unique_sessions, 10),
+    uniqueVisitors24h: parseInt(t.unique_24h, 10),
+    walletConnects: parseInt(t.wallet_connects, 10),
+    eventsByName: byName.rows.map((r: any) => ({ event: r.event, count: r.count })),
+    topPaths: paths.rows.map((r: any) => ({ path: r.path, count: r.count })),
+    actions: {
+      deposits: parseInt(a.deposits, 10),
+      claims: parseInt(a.claims, 10),
+      faucet: parseInt(a.faucet, 10),
+      swaps: parseInt(a.swaps, 10),
+      uniqueDepositors: parseInt(uniqueDepositors.rows[0].c, 10),
+    },
+    daily: daily.rows.map((r: any) => ({
+      day: r.day,
+      pageViews: r.page_views,
+      sessions: r.sessions,
+    })),
+  }
+}
+
+// ── Feedback ───────────────────────────────────────────────────────
+
+interface InsertFeedbackParams {
+  address?: string | null
+  rating?: number | null
+  category?: string | null
+  message: string
+  path?: string | null
+}
+
+export async function insertFeedback(params: InsertFeedbackParams) {
+  await ensureSchema()
+  const pool = getPool()
+  await pool.query(
+    `insert into feedback (address, rating, category, message, path)
+     values ($1, $2, $3, $4, $5)`,
+    [
+      params.address ?? null,
+      params.rating ?? null,
+      params.category ?? null,
+      params.message,
+      params.path ?? null,
+    ]
+  )
+}
+
+export async function getFeedback(limit = 50, offset = 0) {
+  await ensureSchema()
+  const pool = getPool()
+
+  const countRes = await pool.query('select count(*) from feedback')
+  const total = parseInt(countRes.rows[0].count, 10)
+
+  const [rows, summary] = await Promise.all([
+    pool.query(
+      `select * from feedback order by created_at desc limit $1 offset $2`,
+      [limit, offset]
+    ),
+    pool.query(`
+      select
+        count(*)::int                                  as total,
+        round(avg(rating)::numeric, 2)                 as avg_rating,
+        count(*) filter (where rating is not null)::int as rated_count
+      from feedback
+    `),
+  ])
+
+  const s = summary.rows[0]
+  return {
+    rows: rows.rows.map((r: any) => ({
+      id: r.id,
+      address: r.address,
+      rating: r.rating,
+      category: r.category,
+      message: r.message,
+      path: r.path,
+      createdAt: r.created_at,
+    })),
+    total,
+    summary: {
+      total: s.total,
+      avgRating: s.avg_rating !== null ? parseFloat(s.avg_rating) : null,
+      ratedCount: s.rated_count,
+    },
+  }
+}
