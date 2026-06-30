@@ -1,0 +1,68 @@
+name: CI
+
+# Runs the full quality gate on every push and PR to main:
+#   1. Soroban contract: unit tests + a real wasm build (stellar contract build)
+#   2. Next.js app: vitest suite + production build
+# Both jobs run in parallel and must pass before a change is considered green.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Soroban contract (test + wasm build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: contracts
+
+      - name: Run contract unit tests
+        run: cargo test --workspace --locked
+
+      - name: Install Stellar CLI
+        uses: cargo-bins/cargo-binstall@main
+
+      - name: Install Stellar CLI binary
+        run: cargo binstall -y stellar-cli
+
+      - name: Build contract wasm
+        run: stellar contract build
+
+  frontend:
+    name: Next.js app (test + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run frontend tests
+        run: npm run test
+
+      - name: Production build
+        run: npm run build
