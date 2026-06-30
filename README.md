@@ -3,7 +3,32 @@
 Sell covered calls and cash-secured puts on XLM. The premium hits your wallet
 the moment you deposit. At expiry, settlement runs against an oracle price.
 
-**Network:** Stellar Testnet · **Live:** [lusty.finance](https://lusty.finance)
+**Network:** Stellar Testnet · **Live:** [lusty.finance](https://lusty.finance) · **Demo:** [2-min walkthrough](https://www.youtube.com/watch?v=mkML5AbZLdg)
+
+---
+
+## Demo
+
+[![Lusty demo](https://img.youtube.com/vi/mkML5AbZLdg/0.jpg)](https://www.youtube.com/watch?v=mkML5AbZLdg)
+
+A two-minute walkthrough: connect a wallet, quote a covered call, deposit and
+receive the premium instantly, then settle against the Reflector oracle.
+
+## Screens
+
+**Earn** — pick an asset, see live capacity across three rolling epochs.
+
+![Earn](docs/screenshots/earn.png)
+
+**Strike selector** — choose a strike, see the upfront premium and the exact
+payoff at expiry before depositing.
+
+![Strike selector](docs/screenshots/deposit.png)
+
+**Research desk** — live XLM tape, an auto-refreshing desk note, and a news
+feed, all feeding the same volatility inputs the quote engine uses.
+
+![Research desk](docs/screenshots/research.png)
 
 ---
 
