@@ -77,6 +77,7 @@ interface FeedbackRow {
   category: string | null
   message: string
   path: string | null
+  ip: string | null
   createdAt: string
 }
 
@@ -717,6 +718,7 @@ export function AdminOverlay() {
                         <div className="font-mono text-[11px] text-ink-2 mt-1.5">
                           {f.address ? formatAddress(f.address) : 'anonymous'}
                           {f.path && <span> · {f.path}</span>}
+                          {f.ip && <span> · {f.ip}</span>}
                         </div>
                       </div>
                     ))}

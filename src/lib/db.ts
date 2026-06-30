@@ -153,9 +153,15 @@ export async function ensureSchema(): Promise<void> {
       category    text,
       message     text not null,
       path        text,
+      ip          text,
       created_at  timestamptz not null default now()
     );
+    -- Migrate pre-existing feedback tables created before the ip column.
+    alter table feedback add column if not exists ip text;
     create index if not exists feedback_created_at_idx on feedback(created_at desc);
+    -- Supports the duplicate-suppression lookup in the anti-spam guard:
+    -- "same ip + same message in the last N minutes".
+    create index if not exists feedback_ip_created_at_idx on feedback(ip, created_at desc);
   `)
 
   // (Re)create leaderboard view.

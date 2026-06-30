@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { MessageSquare, Star, Loader2, Check } from 'lucide-react'
+import { useState, useRef } from 'react'
+import { MessageCircle, Star, Loader2, Check } from 'lucide-react'
 import { Modal } from './Modal'
 import { useWalletContext } from '@/providers/WalletProvider'
 import { track } from '@/lib/analytics'
@@ -25,9 +25,14 @@ export function FeedbackWidget() {
   const [message, setMessage] = useState('')
   const [status, setStatus] = useState<Status>('idle')
   const [error, setError] = useState<string | null>(null)
+  // Anti-spam: honeypot value (must stay empty for humans) + the moment the
+  // form was opened, so the server can reject instant bot submissions.
+  const [honeypot, setHoneypot] = useState('')
+  const openedAt = useRef<number>(0)
 
   function openWidget() {
     setOpen(true)
+    openedAt.current = Date.now()
     track('feedback_open', undefined, address)
   }
 
@@ -38,6 +43,7 @@ export function FeedbackWidget() {
     setMessage('')
     setStatus('idle')
     setError(null)
+    setHoneypot('')
   }
 
   async function submit() {
@@ -57,6 +63,9 @@ export function FeedbackWidget() {
           category,
           address: address ?? null,
           path: typeof window !== 'undefined' ? window.location.pathname : null,
+          // Anti-spam signals (ignored for legit users).
+          website: honeypot,
+          elapsedMs: openedAt.current ? Date.now() - openedAt.current : undefined,
         }),
       })
       const data = await res.json().catch(() => ({}))
@@ -81,14 +90,16 @@ export function FeedbackWidget() {
   return (
     <>
       {/* Floating trigger — bottom-left so it never collides with the admin
-          shield (bottom-right). */}
+          shield (bottom-right). Matches the faucet button's hover treatment:
+          card surface with a soft bg shift on hover. */}
       <button
         onClick={openWidget}
-        className="fixed bottom-6 left-6 z-40 flex items-center gap-2 px-3.5 h-10 rounded-full bg-inverse text-cream shadow-lg hover:scale-105 transition opacity-80 hover:opacity-100 font-mono text-xs"
+        className="fixed bottom-6 left-6 z-40 h-10 px-3 rounded-sm border border-line bg-card hover:bg-surface text-ink font-mono text-sm flex items-center gap-2 shadow-sm transition"
         title="Send feedback"
+        aria-label="Send feedback"
       >
-        <MessageSquare size={16} />
-        <span className="hidden sm:inline">Feedback</span>
+        <MessageCircle size={14} />
+        <span className="hidden sm:inline">feedback</span>
       </button>
 
       <Modal
@@ -174,6 +185,20 @@ export function FeedbackWidget() {
                 className="w-full px-3 py-2 rounded-sm border border-line bg-card text-ink font-mono text-sm resize-none focus:outline-none focus:border-ink transition"
               />
             </div>
+
+            {/* Honeypot — invisible to humans, off-screen and excluded from
+                tab order + screen readers. Bots fill every field, so any
+                value here flags the submission as spam server-side. */}
+            <input
+              type="text"
+              name="website"
+              tabIndex={-1}
+              autoComplete="off"
+              aria-hidden="true"
+              value={honeypot}
+              onChange={(e) => setHoneypot(e.target.value)}
+              className="absolute -left-[9999px] w-px h-px opacity-0"
+            />
 
             {error && (
               <p className="font-mono text-xs text-[#ef4444]">{error}</p>

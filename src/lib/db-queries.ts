@@ -626,22 +626,47 @@ interface InsertFeedbackParams {
   category?: string | null
   message: string
   path?: string | null
+  ip?: string | null
 }
 
 export async function insertFeedback(params: InsertFeedbackParams) {
   await ensureSchema()
   const pool = getPool()
   await pool.query(
-    `insert into feedback (address, rating, category, message, path)
-     values ($1, $2, $3, $4, $5)`,
+    `insert into feedback (address, rating, category, message, path, ip)
+     values ($1, $2, $3, $4, $5, $6)`,
     [
       params.address ?? null,
       params.rating ?? null,
       params.category ?? null,
       params.message,
       params.path ?? null,
+      params.ip ?? null,
     ]
   )
+}
+
+/**
+ * Anti-spam duplicate guard: true if the same IP submitted an identical
+ * message within the last `windowSeconds`. Skipped (returns false) when no IP
+ * is available so we never block on a missing-header false positive.
+ */
+export async function isDuplicateFeedback(
+  ip: string | null,
+  message: string,
+  windowSeconds = 600
+): Promise<boolean> {
+  if (!ip) return false
+  await ensureSchema()
+  const pool = getPool()
+  const res = await pool.query(
+    `select 1 from feedback
+     where ip = $1 and message = $2
+       and created_at > now() - ($3 || ' seconds')::interval
+     limit 1`,
+    [ip, message, String(windowSeconds)]
+  )
+  return (res.rowCount ?? 0) > 0
 }
 
 export async function getFeedback(limit = 50, offset = 0) {
@@ -674,6 +699,7 @@ export async function getFeedback(limit = 50, offset = 0) {
       category: r.category,
       message: r.message,
       path: r.path,
+      ip: r.ip,
       createdAt: r.created_at,
     })),
     total,
