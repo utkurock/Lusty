@@ -39,14 +39,12 @@ jobs:
       - name: Run contract unit tests
         run: cargo test --workspace --locked
 
-      - name: Install Stellar CLI
-        uses: cargo-bins/cargo-binstall@main
-
-      - name: Install Stellar CLI binary
-        run: cargo binstall -y stellar-cli
-
+      # `stellar contract build` is `cargo rustc --crate-type=cdylib
+      # --target=wasm32v1-none --release` under the hood. Building with cargo
+      # directly proves the wasm compiles without depending on a network
+      # install of the Stellar CLI (which is flaky in CI).
       - name: Build contract wasm
-        run: stellar contract build
+        run: cargo build --target wasm32v1-none --release
 
   frontend:
     name: Next.js app (test + build)
