@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useWalletContext } from '@/providers/WalletProvider'
 import { formatUsdc, formatXlm } from '@/lib/utils'
 import { ExternalLink, Loader2 } from 'lucide-react'
+import { OnChainActivity } from '@/components/shared/OnChainActivity'
 
 // Mirrors DbPosition from the /api/vault/positions response. Positions live in
 // the shared DB, so they show — and can be claimed — from any device.
@@ -277,6 +278,10 @@ export default function DashboardPage() {
           })}
         </div>
       )}
+
+      {/* Live on-chain event feed — public, streamed from the ledger via
+          Soroban RPC getEvents (the contract's own deposit/settle/fund events). */}
+      <OnChainActivity />
     </div>
   )
 }
