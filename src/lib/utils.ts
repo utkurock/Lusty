@@ -5,6 +5,15 @@ export const SCALE = 10_000_000 // 1e7
 export const MIN_DEPOSIT_XLM = 100
 export const MAX_DEPOSIT_XLM = 10_000
 
+// Per-wallet allowance PER EXPIRY, in collateral units (XLM for calls,
+// USD≈LUSD for puts). Cumulative within one expiry bucket and resets with each
+// open expiry. Mirrors the server env defaults MAX_USER_EPOCH_CALL_XLM /
+// MAX_USER_EPOCH_PUT_USD in the deposit route — the client uses these only to
+// gate the button BEFORE any on-chain collateral is sent; the server stays
+// authoritative and rejects an over-limit deposit with a 409.
+export const MAX_USER_EPOCH_CALL_XLM = 10_000
+export const MAX_USER_EPOCH_PUT_USD = 10_000
+
 export function toScaled(value: number): bigint {
   return BigInt(Math.round(value * SCALE))
 }

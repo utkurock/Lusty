@@ -1,11 +1,18 @@
 'use client'
-import { useMemo, useState, useEffect, useRef } from 'react'
+import { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import { StrikeCard } from './StrikeCard'
 import { TokenInput } from '@/components/shared/TokenInput'
 import { PositionSummary } from './PositionSummary'
 import { EarnButton } from './EarnButton'
 import { useWalletContext } from '@/providers/WalletProvider'
-import { MIN_DEPOSIT_XLM, MAX_DEPOSIT_XLM, formatExpiry, formatUsdc } from '@/lib/utils'
+import {
+  MIN_DEPOSIT_XLM,
+  MAX_DEPOSIT_XLM,
+  MAX_USER_EPOCH_CALL_XLM,
+  MAX_USER_EPOCH_PUT_USD,
+  formatExpiry,
+  formatUsdc,
+} from '@/lib/utils'
 import { useXlmPrice } from '@/hooks/useXlmPrice'
 import { useVaultStats } from '@/hooks/useVaultStats'
 import { getExpiryOptions, ExpiryOption } from '@/lib/expiries'
@@ -72,6 +79,27 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
   const [successHash, setSuccessHash] = useState<string | null>(null)
 
   const expiry = expiries[selectedExpiryIdx]
+
+  // The connected wallet's own deposits, so we can pre-check the per-expiry
+  // allowance BEFORE any on-chain collateral is sent (mirrors the server's
+  // per-user 409). Without this, a wallet that has already filled its
+  // 10k-per-expiry allowance could still sign a deposit whose collateral lands
+  // in the vault but earns no upfront — money in, nothing back.
+  const [walletDeposits, setWalletDeposits] = useState<
+    { type: 'call' | 'put'; collateralAmount: number; expiryIso: string | null }[]
+  >([])
+
+  const loadWalletDeposits = useCallback(() => {
+    if (!address) { setWalletDeposits([]); return }
+    fetch(`/api/vault/positions?address=${address}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.ok && Array.isArray(d.positions)) setWalletDeposits(d.positions)
+      })
+      .catch(() => {})
+  }, [address])
+
+  useEffect(() => { loadWalletDeposits() }, [loadWalletDeposits])
 
   // Close dropdown on outside click
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -158,6 +186,25 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
     return type === 'call' ? selectedBucket.callFull : selectedBucket.putFull
   }, [type, selectedBucket])
 
+  // How much this wallet has already committed to the selected expiry + side,
+  // in collateral units (XLM for calls, USD≈stable for puts). Mirrors the
+  // server's per-user per-expiry SUM in reserveDepositCapacity.
+  const usedThisExpiry = useMemo(() => {
+    if (!expiry) return 0
+    const key = expiry.date.toISOString().slice(0, 10)
+    return walletDeposits
+      .filter((p) => p.type === type && (p.expiryIso ?? '').slice(0, 10) === key)
+      .reduce((s, p) => s + (Number(p.collateralAmount) || 0), 0)
+  }, [walletDeposits, expiry, type])
+
+  const walletAllowance =
+    type === 'call' ? MAX_USER_EPOCH_CALL_XLM : MAX_USER_EPOCH_PUT_USD
+  const remainingAllowance = Math.max(0, walletAllowance - usedThisExpiry)
+  const allowanceUnit = type === 'call' ? assetSymbol : 'USD'
+  // Epsilon so a floating-point collateral sum doesn't false-trip exactly at
+  // the cap. Only meaningful once connected (we can't read allowance otherwise).
+  const allowanceExceeded = connected && amount > remainingAllowance + 1e-6
+
   const epochUtil = useMemo(() => {
     if (!selectedBucket) return 0
     const u = type === 'call' ? selectedBucket.callXlm : selectedBucket.putUsd
@@ -189,6 +236,14 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
     }
     if (amount > maxAmount) {
       setError(`Maximum deposit is ${maxAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${type === 'call' ? assetSymbol : stable}`)
+      return
+    }
+    // Per-wallet per-expiry allowance — checked BEFORE sending collateral so we
+    // never let the user lock funds in a deposit the server will 409.
+    if (allowanceExceeded) {
+      setError(
+        `You've used ${usedThisExpiry.toLocaleString(undefined, { maximumFractionDigits: 0 })} of ${walletAllowance.toLocaleString()} ${allowanceUnit} for this expiry — ${remainingAllowance.toLocaleString(undefined, { maximumFractionDigits: 0 })} ${allowanceUnit} left. Lower the amount or pick another expiry.`
+      )
       return
     }
     if (!address) { setError('Wallet not connected'); return }
@@ -291,6 +346,10 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
       // utilization bar) reflect the new on-chain balance without waiting
       // for the 30s poll cycle.
       refreshVaultStats()
+
+      // Refresh this wallet's deposits so the per-expiry allowance gate
+      // reflects the collateral just committed.
+      loadWalletDeposits()
 
       // Tell the leaderboard page (if mounted) to refetch immediately so
       // the user sees their updated rank without waiting up to 2 minutes.
@@ -471,16 +530,53 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
         </div>
       )}
 
+      {/* Per-wallet allowance warning — shown BEFORE any collateral is sent so
+          the user never locks funds in a deposit the server would reject. */}
+      {!vaultFull && connected && usedThisExpiry > 0 && (
+        <div
+          className={
+            'p-3 border font-mono text-xs rounded-sm ' +
+            (remainingAllowance <= 0
+              ? 'border-[#ef4444]/40 bg-[#ef4444]/10 text-ink'
+              : allowanceExceeded
+                ? 'border-[#f59e0b]/40 bg-[#f59e0b]/10 text-[#f59e0b]'
+                : 'border-line bg-card text-ink-2')
+          }
+        >
+          {remainingAllowance <= 0 ? (
+            <>
+              You&apos;ve used your full{' '}
+              {walletAllowance.toLocaleString()} {allowanceUnit} allowance for this
+              expiry. Depositing more here would be rejected server-side (collateral
+              locked, no upfront) — pick another expiry, each has a fresh allowance.
+            </>
+          ) : (
+            <>
+              Wallet allowance for this expiry:{' '}
+              {usedThisExpiry.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              {' / '}
+              {walletAllowance.toLocaleString()} {allowanceUnit} used ·{' '}
+              <span className="text-ink font-semibold">
+                {remainingAllowance.toLocaleString(undefined, { maximumFractionDigits: 0 })} {allowanceUnit} left
+              </span>
+              {allowanceExceeded && ' — lower the amount to stay within it.'}
+            </>
+          )}
+        </div>
+      )}
+
       <EarnButton
         onClick={handleEarn}
         loading={txLoading}
-        disabled={vaultFull || amount <= 0 || amount < minAmount || amount > maxAmount}
+        disabled={vaultFull || allowanceExceeded || amount <= 0 || amount < minAmount || amount > maxAmount}
         label={
           vaultFull
             ? 'Vault full'
-            : connected
-              ? 'Earn upfront now'
-              : 'Connect wallet to earn'
+            : allowanceExceeded
+              ? 'Expiry allowance used'
+              : connected
+                ? 'Earn upfront now'
+                : 'Connect wallet to earn'
         }
       />
     </div>
