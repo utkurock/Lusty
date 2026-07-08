@@ -295,9 +295,10 @@ function staticFallbackPayload() {
     quoteVolume24h: 50_000_000,
   })
   return {
-    generatedAt: new Date().toISOString(),
+    ok: true,
+    generatedAt: Date.now(),
     price: 0.12,
-    change24h: 0,
+    change24hPct: 0,
     bias: c.bias,
     headline: c.headline,
     bullets: c.bullets,
@@ -379,9 +380,10 @@ export async function GET(req: Request) {
 
     // DB unavailable — return computed commentary directly so the UI still works.
     return NextResponse.json({
-      generatedAt: new Date().toISOString(),
+      ok: true,
+      generatedAt: Date.now(),
       price: ticker.price,
-      change24h: ticker.change24hPct,
+      change24hPct: ticker.change24hPct,
       bias: c.bias,
       headline: c.headline,
       bullets: c.bullets,
