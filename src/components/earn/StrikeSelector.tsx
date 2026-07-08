@@ -88,15 +88,32 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
   const [walletDeposits, setWalletDeposits] = useState<
     { type: 'call' | 'put'; collateralAmount: number; expiryIso: string | null }[]
   >([])
+  // 'idle' before a wallet connects; 'loaded' only after a successful read.
+  // Any other state (loading / error) means we do NOT know the wallet's usage,
+  // so deposits are blocked fail-closed — at scale we must never let collateral
+  // in without first proving the per-expiry allowance has room.
+  const [depositsStatus, setDepositsStatus] =
+    useState<'idle' | 'loading' | 'loaded' | 'error'>('idle')
 
   const loadWalletDeposits = useCallback(() => {
-    if (!address) { setWalletDeposits([]); return }
+    if (!address) { setWalletDeposits([]); setDepositsStatus('idle'); return }
+    setDepositsStatus('loading')
     fetch(`/api/vault/positions?address=${address}`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.ok && Array.isArray(d.positions)) setWalletDeposits(d.positions)
+      .then(async (r) => {
+        const d = await r.json().catch(() => null)
+        if (!r.ok || !d?.ok || !Array.isArray(d.positions)) {
+          throw new Error(d?.error ?? 'positions unavailable')
+        }
+        setWalletDeposits(d.positions)
+        setDepositsStatus('loaded')
       })
-      .catch(() => {})
+      .catch(() => {
+        // Fail-closed: we couldn't read this wallet's usage, so we can't prove
+        // it has allowance left. Clear any stale rows and mark the check failed
+        // — the button stays out of the "Earn" state until a read succeeds.
+        setWalletDeposits([])
+        setDepositsStatus('error')
+      })
   }, [address])
 
   useEffect(() => { loadWalletDeposits() }, [loadWalletDeposits])
@@ -204,6 +221,11 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
   // Epsilon so a floating-point collateral sum doesn't false-trip exactly at
   // the cap. Only meaningful once connected (we can't read allowance otherwise).
   const allowanceExceeded = connected && amount > remainingAllowance + 1e-6
+  // Fail-closed gate: a connected wallet whose usage hasn't been read yet has
+  // an UNKNOWN allowance, so it must not be able to deposit.
+  const allowanceVerified = depositsStatus === 'loaded'
+  const checkingAllowance = connected && depositsStatus === 'loading'
+  const allowanceUnknown = connected && !allowanceVerified && !checkingAllowance
 
   const epochUtil = useMemo(() => {
     if (!selectedBucket) return 0
@@ -223,6 +245,18 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
   const handleEarn = async () => {
     setError(null); setSuccess(null)
     if (!connected) { await connect(); return }
+    // Fail-closed: never send collateral while the wallet's per-expiry usage is
+    // unknown (positions read still pending or failed). Retry the read so a
+    // second press can succeed once it recovers.
+    if (checkingAllowance) {
+      setError('Checking your per-expiry allowance — try again in a moment.')
+      return
+    }
+    if (!allowanceVerified) {
+      setError("Couldn't verify your per-expiry allowance — deposits are paused until we can read it. Press again to retry.")
+      loadWalletDeposits()
+      return
+    }
     if (vaultFull) {
       setError(
         `This expiry's ${type === 'call' ? 'covered-call' : 'cash-secured-put'} epoch is full. Pick another expiry.`
@@ -565,18 +599,32 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
         </div>
       )}
 
+      {/* Fail-closed notice: allowance couldn't be read, so deposits are paused
+          rather than risk letting collateral in against an unknown allowance. */}
+      {allowanceUnknown && (
+        <div className="p-3 border border-[#f59e0b]/40 bg-[#f59e0b]/10 font-mono text-xs text-[#f59e0b] rounded-sm">
+          Couldn&apos;t verify your per-expiry allowance right now, so deposits are
+          paused — we never let collateral in without confirming you have room.
+          Press the button to retry.
+        </div>
+      )}
+
       <EarnButton
         onClick={handleEarn}
         loading={txLoading}
-        disabled={vaultFull || allowanceExceeded || amount <= 0 || amount < minAmount || amount > maxAmount}
+        disabled={vaultFull || allowanceExceeded || checkingAllowance || amount <= 0 || amount < minAmount || amount > maxAmount}
         label={
           vaultFull
             ? 'Vault full'
-            : allowanceExceeded
-              ? 'Expiry allowance used'
-              : connected
-                ? 'Earn upfront now'
-                : 'Connect wallet to earn'
+            : checkingAllowance
+              ? 'Checking allowance…'
+              : allowanceUnknown
+                ? 'Retry allowance check'
+                : allowanceExceeded
+                  ? 'Expiry allowance used'
+                  : connected
+                    ? 'Earn upfront now'
+                    : 'Connect wallet to earn'
         }
       />
     </div>
