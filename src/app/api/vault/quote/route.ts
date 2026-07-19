@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { quoteLadder, quoteOptionLive } from '@/lib/pricing-server'
+import { getSpotXlmUsd } from '@/lib/spot'
 import { rateLimit } from '@/lib/rate-limit'
 
 export const dynamic = 'force-dynamic'
@@ -36,8 +37,8 @@ export async function GET(req: Request) {
     let util = Number(utilRaw)
     util = isFinite(util) ? Math.max(0, Math.min(1, util)) : 0
 
-    // Cheap shared rate limit so a public endpoint can't be used to pummel
-    // Binance through us.
+    // Cheap shared rate limit so a public endpoint can't be used to pummel the
+    // upstream price feeds through us.
     const rl = rateLimit('vault-quote:global', 60_000, 240)
     if (!rl.ok) {
       return NextResponse.json(
@@ -46,7 +47,7 @@ export async function GET(req: Request) {
       )
     }
 
-    const spot = await fetchXlmUsd()
+    const { price: spot, source: spotSource } = await getSpotXlmUsd()
 
     const headers = {
       // Quote depends on live spot; never cache.
@@ -66,13 +67,16 @@ export async function GET(req: Request) {
         daysToExpiry: days,
         utilization: util,
       })
-      return NextResponse.json({ ok: true, spot, quote: slimQuote(quote) }, { headers })
+      return NextResponse.json(
+        { ok: true, spot, spotSource, quote: slimQuote(quote) },
+        { headers },
+      )
     }
 
     // Ladder mode
     const { rungs } = await quoteLadder(side, spot, days, util)
     return NextResponse.json(
-      { ok: true, spot, strikes: rungs.map(slimRung) },
+      { ok: true, spot, spotSource, strikes: rungs.map(slimRung) },
       { headers },
     )
   } catch (e: any) {
@@ -105,14 +109,3 @@ function slimQuote(q: any) {
   }
 }
 
-async function fetchXlmUsd(): Promise<number> {
-  const r = await fetch(
-    'https://api.binance.com/api/v3/ticker/price?symbol=XLMUSDT',
-    { cache: 'no-store' },
-  )
-  if (!r.ok) throw new Error('price feed unavailable')
-  const j = await r.json()
-  const n = parseFloat(j.price)
-  if (!isFinite(n) || n <= 0) throw new Error('invalid price from feed')
-  return n
-}

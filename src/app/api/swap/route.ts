@@ -17,6 +17,7 @@ import {
   confirmAction,
 } from '@/lib/idempotency'
 import { LUSD_CODE, LUSD_ISSUER, LUSD_DISTRIBUTOR } from '@/lib/lusd'
+import { fetchXlmUsd } from '@/lib/spot'
 
 const HORIZON =
   process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
@@ -294,14 +295,3 @@ export async function POST(req: Request) {
   }
 }
 
-async function fetchXlmUsd(): Promise<number> {
-  const r = await fetch(
-    'https://api.binance.com/api/v3/ticker/price?symbol=XLMUSDT',
-    { cache: 'no-store' }
-  )
-  if (!r.ok) throw new Error('price feed unavailable')
-  const j = await r.json()
-  const n = parseFloat(j.price)
-  if (!isFinite(n) || n <= 0) throw new Error('invalid price from feed')
-  return n
-}

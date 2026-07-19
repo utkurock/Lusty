@@ -15,6 +15,7 @@ import {
   Contract,
   Networks,
   SorobanRpc,
+  StrKey,
   TransactionBuilder,
   scValToNative,
   nativeToScVal,
@@ -35,13 +36,18 @@ const RESOLUTION_SECS = Number(process.env.REFLECTOR_RESOLUTION_SECS ?? 300)
 const MAX_STALENESS_SECS = 3600
 export const REFLECTOR_MAX_STALENESS_SECS = MAX_STALENESS_SECS
 
-// Any funded account works as the simulation source; it signs nothing.
+// Simulation source. It signs nothing, is never charged a fee, and does not
+// even have to EXIST on the network — `simulateTransaction` only needs a
+// syntactically valid account id. So when no distributor is configured we fall
+// back to the all-zero account rather than throwing: an unset env var must not
+// be able to take down the oracle and leave the price path with no source.
+const NULL_ACCOUNT = StrKey.encodeEd25519PublicKey(Buffer.alloc(32))
 const SIM_SOURCE =
-  process.env.NEXT_PUBLIC_LUSD_DISTRIBUTOR ??
-  process.env.LUSD_DISTRIBUTOR ??
-  ''
+  process.env.NEXT_PUBLIC_LUSD_DISTRIBUTOR ||
+  process.env.LUSD_DISTRIBUTOR ||
+  NULL_ACCOUNT
 
-interface ReflectorPrice {
+export interface ReflectorPrice {
   /** USD price as a float (descaled from the oracle's 14 decimals). */
   price: number
   /** Unix seconds of the oracle record. */
@@ -52,7 +58,6 @@ async function simulateOracleCall(
   fn: string,
   args: xdr.ScVal[]
 ): Promise<ReflectorPrice | null> {
-  if (!SIM_SOURCE) throw new Error('reflector: no simulation source account')
   const rpc = new SorobanRpc.Server(RPC_URL)
   const contract = new Contract(ORACLE_ID)
   // Sequence number is irrelevant for simulation — skip the getAccount round trip.
@@ -73,10 +78,12 @@ async function simulateOracleCall(
     | { price: bigint; timestamp: bigint }
     | null
   if (!native) return null
-  return {
-    price: Number(native.price) / 10 ** DECIMALS,
-    timestamp: Number(native.timestamp),
-  }
+  const price = Number(native.price) / 10 ** DECIMALS
+  const timestamp = Number(native.timestamp)
+  // A malformed record is indistinguishable from "no record" to every caller —
+  // both mean "do not price off this". Never hand back a NaN/0 price.
+  if (!isFinite(price) || price <= 0 || !isFinite(timestamp)) return null
+  return { price, timestamp }
 }
 
 function feedAsset(): xdr.ScVal {
@@ -115,8 +122,18 @@ export async function reflectorPriceAt(atMs: number): Promise<number | null> {
  * Callers must gate this on `now - expiry`, not just on `now - lastprice.ts`.
  * See settlementPinnedToExpiry() for the safe wrapper.
  */
+/**
+ * Raw latest feed record — price AND its oracle timestamp, with no staleness
+ * judgement applied. Callers decide their own freshness bound, because the
+ * right bound depends on the job: settlement tolerates up to an hour (it only
+ * ever runs near expiry), live quoting does not. See spot.ts.
+ */
+export async function reflectorLastPriceRecord(): Promise<ReflectorPrice | null> {
+  return simulateOracleCall('lastprice', [feedAsset()])
+}
+
 export async function reflectorLastPrice(): Promise<number | null> {
-  const rec = await simulateOracleCall('lastprice', [feedAsset()])
+  const rec = await reflectorLastPriceRecord()
   if (rec === null) return null
   const ageSecs = Math.floor(Date.now() / 1000) - rec.timestamp
   if (ageSecs > MAX_STALENESS_SECS) {

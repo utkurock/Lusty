@@ -1,15 +1,17 @@
 import { NextResponse } from 'next/server'
 import { Horizon } from '@stellar/stellar-sdk'
 import { LUSD_DISTRIBUTOR } from '@/lib/lusd'
+import { getSpotXlmUsd, resetSpotCache } from '@/lib/spot'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
 // Lightweight liveness probe for the three external dependencies the vault
-// touches on every deposit: Horizon (Stellar RPC), Postgres, and Binance
-// (spot price feed). Lets the UI show a "service degraded" banner instead
-// of letting users discover the outage by hitting a 503 on deposit, and
-// gives operations a single URL to point at for status checks.
+// touches on every deposit: Horizon (Stellar RPC), Postgres, and the spot
+// price feed (Reflector oracle, with Binance behind it). Lets the UI show a
+// "service degraded" banner instead of letting users discover the outage by
+// hitting a 503 on deposit, and gives operations a single URL to point at for
+// status checks.
 //
 // Returns 200 when all three are up, 503 when any are down. Each component
 // reports its own ok flag and latency so the UI can be specific about
@@ -61,19 +63,22 @@ async function checkDb(): Promise<ComponentStatus> {
   return { ok: r.ok, latencyMs: r.latencyMs, error: r.error }
 }
 
-async function checkPriceFeed(): Promise<ComponentStatus> {
+// Probes the same failover chain the money path uses, so a green health check
+// means "a quote can be priced", not "one particular vendor answered". Reports
+// which feed served it — with Reflector primary and Binance behind it, seeing
+// `source: 'binance'` here is the early warning that the oracle went quiet.
+async function checkPriceFeed(): Promise<ComponentStatus & { source?: string }> {
   const r = await timed(async () => {
-    const res = await fetch(
-      'https://api.binance.com/api/v3/ticker/price?symbol=XLMUSDT',
-      { cache: 'no-store' }
-    )
-    if (!res.ok) throw new Error(`binance ${res.status}`)
-    const j = await res.json()
-    const p = parseFloat(j.price)
-    if (!isFinite(p) || p <= 0) throw new Error('invalid price')
-    return p
+    // Bypass the memo so health reflects the feeds right now, not a cached hit.
+    resetSpotCache()
+    return getSpotXlmUsd()
   })
-  return { ok: r.ok, latencyMs: r.latencyMs, error: r.error }
+  return {
+    ok: r.ok,
+    latencyMs: r.latencyMs,
+    error: r.error,
+    ...(r.value ? { source: r.value.source } : {}),
+  }
 }
 
 export async function GET() {
