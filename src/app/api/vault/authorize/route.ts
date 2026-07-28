@@ -6,6 +6,7 @@ import { credentialAddress, describeMismatch } from '@/lib/vault-auth'
 import { quoteOptionLive } from '@/lib/pricing-server'
 import { fetchXlmUsd } from '@/lib/spot'
 import { expiryUtilizationFor } from '@/lib/vault-state'
+import { assertQuoteAllowed, PolicyRejection } from '@/lib/quote-policy'
 import { getBreakerState } from '@/lib/circuit-breaker'
 import {
   VAULT_ID,
@@ -45,6 +46,17 @@ const PREMIUM_TOLERANCE = 1e-6
 
 const MIN_DAYS_TO_EXPIRY = 2
 const MAX_DAYS_TO_EXPIRY = 365
+
+// Concentration policy. The contract's own caps bound vault risk; these bound
+// how much of it any one wallet or strike carries, and are enforced by
+// declining to sign rather than by holding anything.
+const MAX_USER_NOTIONAL_USD = Number(process.env.MAX_USER_NOTIONAL_USD ?? 50_000)
+const MAX_USER_EPOCH_CALL_XLM = Number(process.env.MAX_USER_EPOCH_CALL_XLM ?? 10_000)
+const MAX_USER_EPOCH_PUT_USD = Number(process.env.MAX_USER_EPOCH_PUT_USD ?? 10_000)
+const STRIKE_INVENTORY_LIMIT_USD = Number(process.env.STRIKE_INVENTORY_LIMIT_USD ?? 30_000)
+// Two deposits count against the same strike when their prices are within this
+// fraction of each other, so trivially-different strikes can't bypass the cap.
+const STRIKE_BUCKET_PCT = 0.01
 
 interface AuthorizeBody {
   address: string
@@ -150,7 +162,44 @@ export async function POST(req: Request) {
       )
     }
 
-    const utilization = await expiryUtilizationFor(body.side, new Date(expiryMs).toISOString())
+    // ---- concentration policy
+    //
+    // Checked here rather than at deposit time because this is the last point
+    // at which the protocol can still say no: once the quote is signed the
+    // position opens on chain, and no server has a say in it after that.
+    const expiryIso = new Date(expiryMs).toISOString()
+    const notionalUsd =
+      body.side === 'call' ? body.collateralAmount * spot : body.collateralAmount
+    try {
+      await assertQuoteAllowed({
+        address: body.address,
+        type: body.side,
+        collateralAmount: body.collateralAmount,
+        notionalUsd,
+        strikePrice: body.strikePrice,
+        strikeBucketPct: STRIKE_BUCKET_PCT,
+        expiryIso,
+        maxUserNotionalUsd: MAX_USER_NOTIONAL_USD,
+        strikeInventoryLimitUsd: STRIKE_INVENTORY_LIMIT_USD,
+        maxUserEpochCallXlm: MAX_USER_EPOCH_CALL_XLM,
+        maxUserEpochPutUsd: MAX_USER_EPOCH_PUT_USD,
+      })
+    } catch (policyErr) {
+      if (policyErr instanceof PolicyRejection) {
+        return NextResponse.json(
+          { error: policyErr.message, code: policyErr.code },
+          { status: 409 },
+        )
+      }
+      // An allowance we cannot read has not been satisfied — fail closed.
+      console.error('vault/authorize: policy check unavailable', policyErr)
+      return NextResponse.json(
+        { error: 'deposit limit check unavailable — please retry', code: 'limit_check_unavailable' },
+        { status: 503 },
+      )
+    }
+
+    const utilization = await expiryUtilizationFor(body.side, expiryIso)
     // Price on the time to the expiry the contract will settle against, so a
     // long-dated premium can never be bought for a short-dated lock.
     const pricingDays = Math.max(MIN_DAYS_TO_EXPIRY, Math.ceil(daysToExpiry))
