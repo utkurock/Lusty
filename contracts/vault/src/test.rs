@@ -26,6 +26,12 @@ impl MockOracle {
             .set(&symbol_short!("last"), &PriceData { price, timestamp });
     }
 
+    /// Empty the live feed — the harness seeds one so positions can be opened,
+    /// and the outage tests need it gone again.
+    pub fn clear_lastprice(env: Env) {
+        env.storage().instance().remove(&symbol_short!("last"));
+    }
+
     pub fn price(env: Env, _asset: Asset, timestamp: u64) -> Option<PriceData> {
         env.storage()
             .persistent()
@@ -70,6 +76,14 @@ fn limits_with_expiry(call: i128, put: i128, exp_call: i128, exp_put: i128) -> L
         max_position_put: put,
         max_expiry_call: exp_call,
         max_expiry_put: exp_put,
+        max_premium_bps: MAX_PREMIUM_BPS,
+    }
+}
+
+fn limits_with_premium_bps(bps: u32) -> Limits {
+    Limits {
+        max_premium_bps: bps,
+        ..limits(MAX_POSITION_CALL, MAX_POSITION_PUT)
     }
 }
 
@@ -78,6 +92,9 @@ const START: u64 = 1_750_000_200;
 const EXPIRY: u64 = START + 7 * 86400;
 // Strike at oracle scale (14 decimals): $0.25
 const STRIKE: i128 = 25_000_000_000_000;
+// Live price while positions are being opened — deliberately NOT the strike, so
+// a cap that mistakenly valued collateral at the strike would show up.
+const SPOT: i128 = 20_000_000_000_000; // $0.20
 const COLLATERAL: i128 = 100_0000000; // 100 XLM in stroops
 // Cash securing 100 XLM at the $0.25 strike — the put-side mirror of COLLATERAL.
 const PUT_COLLATERAL: i128 = 25_0000000;
@@ -90,6 +107,9 @@ const MAX_POSITION_CALL: i128 = 10_000_0000000;
 const MAX_POSITION_PUT: i128 = 10_000_0000000;
 const MAX_EXPIRY_CALL: i128 = 100_000_0000000;
 const MAX_EXPIRY_PUT: i128 = 100_000_0000000;
+// Same idea for the premium ceiling: PREMIUM is 25% of a call's collateral
+// value (100 XLM × $0.20) and 20% of a put's, so 50% leaves both clear.
+const MAX_PREMIUM_BPS: u32 = 5_000;
 
 fn setup() -> Setup<'static> {
     let env = Env::default();
@@ -128,6 +148,9 @@ fn setup() -> Setup<'static> {
     );
     let vault = LustyVaultClient::new(&env, &vault_id);
     vault.fund(&funder, &POOL);
+    // Opening a call values its collateral at the live price, so the feed has
+    // to be up before any position can be written.
+    oracle.set_lastprice(&SPOT, &START);
 
     Setup { env, vault, oracle, token, cash, writer, treasury, quoter, admin }
 }
@@ -279,8 +302,12 @@ fn deposit_rejects_negative_premium() {
 #[should_panic] // pool can't cover the premium → whole deposit fails
 fn deposit_fails_closed_when_pool_short() {
     let s = setup();
+    // Put the premium ceiling out of the way — 10,000 XLM at $0.20 backs a
+    // $2,000 premium at 100% — so the pool is the only thing left to fail on.
+    s.vault.set_limits(&limits_with_premium_bps(10_000));
+    token::StellarAssetClient::new(&s.env, &s.token.address).mint(&s.writer, &MAX_POSITION_CALL);
     s.vault
-        .deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &(POOL + 1));
+        .deposit(&s.writer, &MAX_POSITION_CALL, &STRIKE, &EXPIRY, &(POOL + 1));
 }
 
 // ── Settlement ──────────────────────────────────────────────────────
@@ -462,6 +489,9 @@ fn settle_blocks_on_stale_fallback() {
 fn settle_blocks_when_feed_is_empty() {
     let s = setup();
     let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    // The feed goes dark after the position is written: no record at expiry and
+    // nothing live to fall back to.
+    s.oracle.clear_lastprice();
     s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 60);
     s.vault.settle(&id);
 }
@@ -667,6 +697,130 @@ fn settlement_frees_the_expiry_budget() {
     s.vault.settle(&id);
 
     assert_eq!(s.vault.exposure(&Kind::Call, &EXPIRY), 0);
+}
+
+// ── Premium ceiling ─────────────────────────────────────────────────
+//
+// The quoter's signature is what sets the premium, so this ceiling is the only
+// thing standing between a compromised pricing key and the cash pool.
+
+#[test]
+#[should_panic(expected = "Error(Contract, #14)")] // PremiumTooHigh
+fn premium_ceiling_caps_a_call_against_collateral_value() {
+    let s = setup();
+    // 100 XLM at $0.20 is $20 of collateral; at 10% the vault will pay $2.
+    s.vault.set_limits(&limits_with_premium_bps(1_000));
+    s.vault
+        .deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &2_0000001);
+}
+
+#[test]
+fn a_premium_exactly_at_the_ceiling_is_accepted() {
+    let s = setup();
+    s.vault.set_limits(&limits_with_premium_bps(1_000));
+    let cap = COLLATERAL * SPOT / 10i128.pow(14) / 10; // $2.00
+    assert_eq!(cap, 2_0000000);
+
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &cap);
+    assert_eq!(s.cash.balance(&s.writer), cap);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #14)")] // PremiumTooHigh
+fn premium_ceiling_caps_a_put_against_its_cash_collateral() {
+    let s = setup();
+    // A put's collateral is already cash: $25 escrowed, 10% → $2.50.
+    s.vault.set_limits(&limits_with_premium_bps(1_000));
+    token::StellarAssetClient::new(&s.env, &s.cash.address).mint(&s.writer, &PUT_COLLATERAL);
+    let stock = Address::generate(&s.env);
+    token::StellarAssetClient::new(&s.env, &s.token.address).mint(&stock, &COLLATERAL);
+    s.vault.fund_underlying(&stock, &COLLATERAL);
+    s.vault
+        .open(&s.writer, &Kind::Put, &PUT_COLLATERAL, &STRIKE, &EXPIRY, &2_5000001);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #14)")] // PremiumTooHigh
+fn the_ceiling_is_priced_at_spot_not_at_the_quoters_strike() {
+    // The attack the ceiling exists to stop. A quoter that could value
+    // collateral at its own strike would escrow one stroop of XLM, name a
+    // strike of $10,000, and buy itself a premium off a $0.001 position. Spot
+    // pricing makes that stroop worth 0.00000002 dollars, and the premium with
+    // it — the quoter cannot inflate what it is not allowed to set.
+    let s = setup();
+    let absurd_strike = 10_000i128 * 10i128.pow(14);
+    s.vault.deposit(&s.writer, &1, &absurd_strike, &EXPIRY, &1_0000000);
+}
+
+#[test]
+fn admin_can_tighten_the_premium_ceiling() {
+    let s = setup();
+    // PREMIUM ($5 on $20 of collateral) clears the default ceiling…
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    // …and stops clearing it once the admin pulls the ceiling under it.
+    s.vault.set_limits(&limits_with_premium_bps(1_000));
+    assert_eq!(s.vault.limits().max_premium_bps, 1_000);
+
+    let refused = s
+        .vault
+        .try_deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    assert!(refused.is_err());
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #12)")] // InvalidLimit
+fn set_limits_rejects_a_ceiling_above_the_collateral() {
+    // Paying out more than was escrowed is a loss booked at the moment of
+    // writing, so 100% is as high as the ceiling itself may go.
+    let s = setup();
+    s.vault.set_limits(&limits_with_premium_bps(10_001));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #12)")] // InvalidLimit
+fn set_limits_rejects_a_zero_premium_ceiling() {
+    let s = setup();
+    s.vault.set_limits(&limits_with_premium_bps(0));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")] // StalePrice
+fn a_call_cannot_be_written_against_a_stale_feed() {
+    // Valuing collateral needs a current price. A stale feed blocks the write
+    // rather than size the ceiling off a price that no longer holds.
+    let s = setup();
+    s.env.ledger().with_mut(|l| l.timestamp = START + 7200);
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #7)")] // NoPrice
+fn a_call_cannot_be_written_against_an_empty_feed() {
+    let s = setup();
+    s.oracle.clear_lastprice();
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+}
+
+#[test]
+fn a_put_needs_no_price_to_value_its_cash_collateral() {
+    // The put leg keeps trading through a feed outage: its collateral is cash,
+    // already denominated in the token the premium is paid in.
+    let s = setup();
+    s.oracle.clear_lastprice();
+    let id = open_put(&s);
+    assert_eq!(s.vault.position(&id).premium, PREMIUM);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #14)")] // PremiumTooHigh
+fn the_ceiling_is_checked_before_any_collateral_moves() {
+    // A rejected quote must leave the writer's balances untouched, which the
+    // failed transaction guarantees; what this pins is that the check does not
+    // depend on the transfer having happened first.
+    let s = setup();
+    s.vault.set_limits(&limits_with_premium_bps(1_000));
+    s.vault
+        .deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &POOL);
 }
 
 #[test]

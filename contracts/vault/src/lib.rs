@@ -10,7 +10,9 @@
 //!      The premium amount is the protocol's signed offer: `deposit` requires
 //!      auth from both the writer AND the quoter (the pricing engine's key),
 //!      the on-chain equivalent of an RFQ. Custody and settlement never
-//!      depend on the quoter.
+//!      depend on the quoter, and `Limits::max_premium_bps` bounds what its
+//!      signature can be worth: a premium is capped at a share of the
+//!      collateral escrowed against it, valued at the oracle price.
 //!   3. SETTLEMENT: decided by the Reflector price AT EXPIRY, permissionless.
 //!      Assigned positions now follow real covered-call economics: the writer
 //!      receives the strike value in cash, the collateral goes to the
@@ -85,6 +87,7 @@ pub enum Error {
     PositionTooLarge = 11,
     InvalidLimit = 12,
     ExpiryFull = 13,
+    PremiumTooHigh = 14,
 }
 
 #[contracttype]
@@ -103,10 +106,14 @@ pub struct Config {
     /// Receives assigned collateral (T3: automated solvency management).
     pub treasury: Address,
     /// Pricing-engine key that must co-sign every deposit's premium (RFQ).
+    /// It prices within a band it cannot widen: `Limits::max_premium_bps`
+    /// caps the premium at a share of escrowed collateral, so losing this key
+    /// costs at most that share rather than the pool. Making it a multisig
+    /// account narrows the exposure further, and is an account-level change
+    /// this contract neither sees nor needs to.
     pub quoter: Address,
     /// Sets the risk limits. Custody and settlement never route through it:
     /// the admin cannot move collateral, price an option or settle a position.
-    /// T2 moves this key to a multisig account.
     pub admin: Address,
 }
 
@@ -125,7 +132,17 @@ pub struct Limits {
     /// single date, which position size alone does not bound.
     pub max_expiry_call: i128,
     pub max_expiry_put: i128,
+    /// Largest premium a position may pay, in basis points of the collateral
+    /// the writer escrowed. The one limit that binds the QUOTER rather than the
+    /// writer: without it a compromised pricing key could quote itself the
+    /// whole cash pool, since nothing else about `write` looks at the premium.
+    /// Above 10_000 (100% of collateral) the vault would pay out more than it
+    /// took in, so that is the hard ceiling on the ceiling.
+    pub max_premium_bps: u32,
 }
+
+/// Denominator for `max_premium_bps`.
+const BPS: i128 = 10_000;
 
 impl Limits {
     fn max_position(&self, kind: Kind) -> i128 {
@@ -277,13 +294,22 @@ impl LustyVault {
     /// Adjust the risk limits. Admin-only, and deliberately the admin's ONLY
     /// power: it can shrink what the vault accepts, never reach the collateral
     /// already escrowed under the old limits.
+    ///
+    /// `max_premium_bps` is the one limit that also widens something — the band
+    /// the quoter prices in. The admin still cannot pay a premium (only the
+    /// quoter signs one) and the quoter cannot raise its own band, so the two
+    /// keys bound each other. They must not be the same account.
     pub fn set_limits(env: Env, limits: Limits) {
         let cfg: Config = env.storage().instance().get(&DataKey::Config).unwrap();
         cfg.admin.require_auth();
         Self::store_limits(&env, &limits);
         env.events().publish(
             (symbol_short!("limits"),),
-            (limits.max_position_call, limits.max_position_put),
+            (
+                limits.max_position_call,
+                limits.max_position_put,
+                limits.max_premium_bps,
+            ),
         );
     }
 
@@ -522,6 +548,15 @@ impl LustyVault {
         if amount > limits.max_position(kind) {
             panic_with_error!(&env, Error::PositionTooLarge);
         }
+        // Premium ceiling: the one limit aimed at the QUOTER rather than the
+        // writer. Every other check bounds what the writer may bring; nothing
+        // else bounds what the protocol may pay them, so a compromised pricing
+        // key could otherwise quote a single writer the whole cash pool.
+        let oracle = ReflectorClient::new(&env, &cfg.oracle);
+        let scale = 10i128.pow(oracle.decimals());
+        if premium > Self::premium_cap(&env, &oracle, &cfg, &limits, kind, amount, scale) {
+            panic_with_error!(&env, Error::PremiumTooHigh);
+        }
         // Exposure cap: nor should many writers together, which the size cap
         // alone allows. Counted per expiry, so the book stays spread across
         // settlement dates instead of concentrating on one price print.
@@ -544,7 +579,6 @@ impl LustyVault {
         // option the vault cannot settle would leave the writer holding a
         // promise it cannot keep, so a short pool rejects the whole deposit
         // rather than take the position on.
-        let scale = 10i128.pow(ReflectorClient::new(&env, &cfg.oracle).decimals());
         Self::add_owed(
             &env,
             kind,
@@ -586,6 +620,10 @@ impl LustyVault {
             || limits.max_position_put <= 0
             || limits.max_expiry_call < limits.max_position_call
             || limits.max_expiry_put < limits.max_position_put
+            // A premium worth more than the collateral it is paid against is a
+            // loss taken at the moment of writing, so 100% bounds the bound.
+            || limits.max_premium_bps == 0
+            || limits.max_premium_bps as i128 > BPS
         {
             // An expiry cap below the position cap would make the larger of the
             // two unreachable — a limit set that can never be met as written.
@@ -623,10 +661,59 @@ impl LustyVault {
             Kind::Call => (strike, scale),
             Kind::Put => (scale, strike),
         };
-        amount
-            .checked_mul(num)
+        Self::mul(env, amount, num) / den
+    }
+
+    /// The most cash this position may be paid for being written: a share of
+    /// the collateral the writer actually escrowed, in cash terms.
+    ///
+    /// The collateral is valued at the ORACLE price, never at the strike. The
+    /// strike is the quoter's own number, so a strike-denominated ceiling
+    /// would rise with it — a dust position at an absurd strike could buy an
+    /// arbitrarily large premium, and a ceiling the quoter can move is not a
+    /// ceiling. Priced at spot, raising the ceiling costs real escrowed
+    /// collateral, which `Limits::max_position` already bounds.
+    fn premium_cap(
+        env: &Env,
+        oracle: &ReflectorClient,
+        cfg: &Config,
+        limits: &Limits,
+        kind: Kind,
+        amount: i128,
+        scale: i128,
+    ) -> i128 {
+        let value = match kind {
+            // A put's collateral IS cash — the same token the premium is paid
+            // in — so it needs no price, and the put leg keeps trading through
+            // a feed outage.
+            Kind::Put => amount,
+            Kind::Call => Self::mul(env, amount, Self::spot(env, oracle, cfg)) / scale,
+        };
+        Self::mul(env, value, limits.max_premium_bps as i128) / BPS
+    }
+
+    /// Live oracle price, for valuing collateral as it is escrowed. Settlement
+    /// wants the price AT expiry; this wants the price NOW, so `lastprice` is
+    /// the right read — but a stale one must block the write rather than value
+    /// today's collateral at a price that no longer holds.
+    fn spot(env: &Env, oracle: &ReflectorClient, cfg: &Config) -> i128 {
+        let lp = oracle
+            .lastprice(&reflector::Asset::Other(cfg.feed.clone()))
+            .unwrap_or_else(|| panic_with_error!(env, Error::NoPrice));
+        if env
+            .ledger()
+            .timestamp()
+            .saturating_sub(lp.timestamp)
+            > MAX_PRICE_STALENESS_SECS
+        {
+            panic_with_error!(env, Error::StalePrice);
+        }
+        lp.price
+    }
+
+    fn mul(env: &Env, a: i128, b: i128) -> i128 {
+        a.checked_mul(b)
             .unwrap_or_else(|| panic_with_error!(env, Error::InvalidAmount))
-            / den
     }
 
     /// Every open position of `kind` must be settleable out of the pool its
