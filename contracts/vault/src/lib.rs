@@ -27,7 +27,7 @@
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, token,
-    Address, Env, Symbol,
+    Address, Env, Symbol, Vec,
 };
 
 /// Reflector oracle interface (https://github.com/reflector-network/reflector-contract).
@@ -222,6 +222,32 @@ enum DataKey {
     /// than instance storage: expiries accumulate without bound, and a settled
     /// date's bucket must not weigh on every later deposit.
     Exposure(Kind, u64),
+    /// How many positions an owner has ever written.
+    OwnerCount(Address),
+    /// The owner's `n`-th position id. One small entry per slot instead of a
+    /// growing vector, so an active writer can never outgrow a single ledger
+    /// entry's size limit.
+    OwnerAt(Address, u32),
+}
+
+/// Vault-wide totals, in one read, for verifying solvency from outside. The
+/// contract's own guard is exactly `balance - escrowed(other) >= owed(kind)`.
+#[contracttype]
+#[derive(Clone)]
+pub struct Stats {
+    /// Underlying escrowed by call writers.
+    pub escrowed_call: i128,
+    /// Cash escrowed by put writers.
+    pub escrowed_put: i128,
+    /// Cash the vault owes if every open call assigns.
+    pub owed_call: i128,
+    /// Underlying the vault owes if every open put assigns.
+    pub owed_put: i128,
+    /// Raw token balances held by the contract.
+    pub cash_balance: i128,
+    pub underlying_balance: i128,
+    /// Ids issued so far — position ids run `0..next_id`.
+    pub next_id: u64,
 }
 
 #[contract]
@@ -413,6 +439,47 @@ impl LustyVault {
         outcome
     }
 
+    /// How many positions `owner` has written, settled ones included.
+    pub fn position_count(env: Env, owner: Address) -> u32 {
+        Self::owner_count(&env, &owner)
+    }
+
+    /// Page through an owner's position ids, oldest first. Paged because a
+    /// long-lived writer's history outgrows a single read budget; `limit` is
+    /// clamped to 100.
+    pub fn positions_of(env: Env, owner: Address, start: u32, limit: u32) -> Vec<u64> {
+        let count = Self::owner_count(&env, &owner);
+        let end = start.saturating_add(limit.min(100)).min(count);
+        let mut ids = Vec::new(&env);
+        let mut i = start;
+        while i < end {
+            if let Some(id) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, u64>(&DataKey::OwnerAt(owner.clone(), i))
+            {
+                ids.push_back(id);
+            }
+            i += 1;
+        }
+        ids
+    }
+
+    /// Vault-wide totals for an outside solvency check, in a single call.
+    pub fn stats(env: Env) -> Stats {
+        let cfg: Config = env.storage().instance().get(&DataKey::Config).unwrap();
+        let this = env.current_contract_address();
+        Stats {
+            escrowed_call: Self::escrow_of(&env, Kind::Call),
+            escrowed_put: Self::escrow_of(&env, Kind::Put),
+            owed_call: Self::owed_of(&env, Kind::Call),
+            owed_put: Self::owed_of(&env, Kind::Put),
+            cash_balance: token::Client::new(&env, &cfg.cash).balance(&this),
+            underlying_balance: token::Client::new(&env, &cfg.token).balance(&this),
+            next_id: env.storage().instance().get(&DataKey::NextId).unwrap(),
+        }
+    }
+
     pub fn position(env: Env, id: u64) -> Position {
         env.storage()
             .persistent()
@@ -490,6 +557,7 @@ impl LustyVault {
 
         let id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap();
         env.storage().instance().set(&DataKey::NextId, &(id + 1));
+        Self::index_for_owner(&env, &owner, id);
         env.storage().persistent().set(
             &DataKey::Position(id),
             &Position {
@@ -578,6 +646,26 @@ impl LustyVault {
             .instance()
             .get(&DataKey::Escrowed(kind))
             .unwrap_or(0)
+    }
+
+    fn owner_count(env: &Env, owner: &Address) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::OwnerCount(owner.clone()))
+            .unwrap_or(0)
+    }
+
+    /// Append `id` to the owner's index so their positions stay discoverable
+    /// from contract state alone, long after the RPC's event window has rolled
+    /// past the deposit.
+    fn index_for_owner(env: &Env, owner: &Address, id: u64) {
+        let n = Self::owner_count(env, owner);
+        env.storage()
+            .persistent()
+            .set(&DataKey::OwnerAt(owner.clone(), n), &id);
+        env.storage()
+            .persistent()
+            .set(&DataKey::OwnerCount(owner.clone()), &(n + 1));
     }
 
     /// Move this expiry's exposure by `delta` and return the new total.

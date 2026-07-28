@@ -4,7 +4,7 @@ use super::reflector::{Asset, PriceData};
 use super::{Kind, Limits, LustyVault, LustyVaultClient};
 use soroban_sdk::testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke};
 use soroban_sdk::{
-    contract, contractimpl, symbol_short, token, Address, Env, IntoVal, Symbol,
+    contract, contractimpl, symbol_short, token, vec, Address, Env, IntoVal, Symbol,
 };
 
 // ── Mock Reflector oracle ───────────────────────────────────────────
@@ -511,6 +511,57 @@ fn deposit_requires_writer_auth() {
     );
     let vault = LustyVaultClient::new(&env, &vault_id);
     vault.deposit(&writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+}
+
+// ── On-chain verifiability ──────────────────────────────────────────
+
+#[test]
+fn an_owners_positions_are_discoverable_from_state() {
+    let s = setup();
+    let other = Address::generate(&s.env);
+    token::StellarAssetClient::new(&s.env, &s.token.address).mint(&other, &COLLATERAL);
+
+    let a = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    let b = s.vault.deposit(&other, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    let c = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+
+    assert_eq!(s.vault.position_count(&s.writer), 2);
+    assert_eq!(s.vault.position_count(&other), 1);
+    // Oldest first, and never another writer's position.
+    assert_eq!(s.vault.positions_of(&s.writer, &0, &10), vec![&s.env, a, c]);
+    assert_eq!(s.vault.positions_of(&other, &0, &10), vec![&s.env, b]);
+    // Paging holds at the edges.
+    assert_eq!(s.vault.positions_of(&s.writer, &1, &10), vec![&s.env, c]);
+    assert_eq!(s.vault.positions_of(&s.writer, &9, &10).len(), 0);
+}
+
+#[test]
+fn settled_positions_stay_in_the_owners_history() {
+    let s = setup();
+    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    s.oracle.set_price(&EXPIRY, &23_000_000_000_000);
+    s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 60);
+    s.vault.settle(&id);
+
+    assert_eq!(s.vault.positions_of(&s.writer, &0, &10), vec![&s.env, id]);
+    assert!(s.vault.position(&id).settled);
+}
+
+#[test]
+fn stats_expose_the_solvency_the_contract_enforces() {
+    let s = setup();
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+
+    let st = s.vault.stats();
+    assert_eq!(st.escrowed_call, COLLATERAL);
+    assert_eq!(st.escrowed_put, 0);
+    assert_eq!(st.owed_call, COLLATERAL * STRIKE / 10i128.pow(14));
+    assert_eq!(st.owed_put, 0);
+    assert_eq!(st.underlying_balance, COLLATERAL);
+    assert_eq!(st.cash_balance, POOL - PREMIUM);
+    assert_eq!(st.next_id, 1);
+    // The guard, restated from the outside: free cash covers what calls owe.
+    assert!(st.cash_balance - st.escrowed_put >= st.owed_call);
 }
 
 // ── Limits ──────────────────────────────────────────────────────────
