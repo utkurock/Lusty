@@ -1,6 +1,7 @@
-// Local-first position storage. Until we have a real indexer, each user's
-// own deposits are persisted to localStorage keyed by wallet address so the
-// dashboard can show them across reloads on the same browser.
+// Local cache of a user's positions, keyed by wallet address, so the dashboard
+// renders instantly on reload. Contract state is the source of truth — see
+// lib/vault-contract's getPositionsOf — and this only holds what the browser
+// already saw at deposit time.
 
 export interface StoredPosition {
   id: string                  // deposit tx hash
@@ -14,6 +15,8 @@ export interface StoredPosition {
   premium: number             // LUSD actually received
   depositHash: string
   premiumHash: string
+  /** Contract-assigned position id, for reading it back from vault state. */
+  positionId?: number
   expiryIso: string           // ISO date string
   expiryLabel: string         // e.g. "Apr_17"
   daysToExpirySnapshot: number

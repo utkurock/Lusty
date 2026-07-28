@@ -17,6 +17,7 @@ import {
   Address,
   Contract,
   Networks,
+  Operation,
   TransactionBuilder,
   BASE_FEE,
   nativeToScVal,
@@ -296,4 +297,150 @@ export async function getPositionsOf(
     ids.map(async (id) => getPosition(Number(id))),
   )
   return positions.reverse()
+}
+
+// ── Writing a position ──────────────────────────────────────────────
+
+/** Co-signs the quoter's authorization entry; see /api/vault/authorize. */
+export type QuoterCosigner = (entries: string[]) => Promise<string[]>
+
+export interface OpenPositionParams extends OpenArgs {
+  /** Wallet callback: takes a transaction XDR, returns it signed. */
+  signTransaction: (xdr: string) => Promise<string>
+  cosignQuote: QuoterCosigner
+  /** Called as each step completes, for UI progress. */
+  onProgress?: (step: 'simulating' | 'quoting' | 'signing' | 'submitting') => void
+}
+
+export interface OpenPositionResult {
+  /** Contract-assigned position id. */
+  id: number
+  txHash: string
+}
+
+/**
+ * Open a position on the vault contract: escrow, premium and position record
+ * in a single transaction the user signs from their own wallet.
+ *
+ * The contract requires authorization from the writer AND the quoter, so this
+ * runs the round trip that produces both:
+ *
+ *   1. simulate the call to learn which entries need authorizing,
+ *   2. hand them to the quoter, which re-prices the option and signs its own
+ *      entry — and only its own,
+ *   3. rebuild the transaction carrying that signature and simulate again to
+ *      price the now-larger footprint,
+ *   4. the wallet signs the transaction, authorizing the writer's side.
+ *
+ * Collateral never leaves the user's control on a server's say-so: step 4 is
+ * the only signature that moves it, and the user makes it.
+ */
+export async function openPosition(
+  params: OpenPositionParams,
+): Promise<OpenPositionResult> {
+  const { signTransaction, cosignQuote, onProgress } = params
+  const server = vaultServer()
+  const contractId = requireVaultId()
+  const args = openArgs(params)
+
+  const build = async (auth?: xdr.SorobanAuthorizationEntry[]) => {
+    // Re-fetch the account each time: building a transaction consumes the
+    // sequence number held on the Account object.
+    const account = await server.getAccount(params.owner)
+    return new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: NETWORK_PASSPHRASE,
+    })
+      .addOperation(
+        auth
+          ? Operation.invokeContractFunction({ contract: contractId, function: 'open', args, auth })
+          : new Contract(contractId).call('open', ...args),
+      )
+      .setTimeout(180)
+      .build()
+  }
+
+  const simulate = async (tx: Awaited<ReturnType<typeof build>>) => {
+    const sim = await server.simulateTransaction(tx)
+    if (rpc.Api.isSimulationError(sim)) {
+      throw new Error(readableSimError(sim.error))
+    }
+    if (!rpc.Api.isSimulationSuccess(sim)) {
+      throw new Error('vault simulation returned no result')
+    }
+    return sim
+  }
+
+  onProgress?.('simulating')
+  const probe = await simulate(await build())
+
+  onProgress?.('quoting')
+  const unsigned = (probe.result?.auth ?? []).map((e) => e.toXDR('base64'))
+  const cosigned = await cosignQuote(unsigned)
+  const auth = cosigned.map((e) => xdr.SorobanAuthorizationEntry.fromXDR(e, 'base64'))
+
+  const authorized = await build(auth)
+  const sim = await simulate(authorized)
+  const prepared = rpc.assembleTransaction(authorized, sim).build()
+
+  onProgress?.('signing')
+  const signed = await signTransaction(prepared.toXDR())
+
+  onProgress?.('submitting')
+  const sent = await server.sendTransaction(
+    TransactionBuilder.fromXDR(signed, NETWORK_PASSPHRASE),
+  )
+  if (sent.status === 'ERROR') {
+    throw new Error(`vault deposit rejected: ${JSON.stringify(sent.errorResult)}`)
+  }
+
+  const result = await waitForTransaction(server, sent.hash)
+  const id = result.returnValue ? Number(scValToNative(result.returnValue)) : NaN
+  if (!isFinite(id)) {
+    throw new Error('vault deposit succeeded but returned no position id')
+  }
+  return { id, txHash: sent.hash }
+}
+
+async function waitForTransaction(
+  server: rpc.Server,
+  hash: string,
+  attempts = 30,
+): Promise<rpc.Api.GetSuccessfulTransactionResponse> {
+  for (let i = 0; i < attempts; i++) {
+    const got = await server.getTransaction(hash)
+    if (got.status === rpc.Api.GetTransactionStatus.SUCCESS) return got
+    if (got.status === rpc.Api.GetTransactionStatus.FAILED) {
+      throw new Error('vault deposit failed on chain')
+    }
+    await new Promise((r) => setTimeout(r, 1500))
+  }
+  throw new Error(`vault deposit not confirmed after ${attempts} checks — check ${hash}`)
+}
+
+/** Contract error codes, as the vault defines them (see contracts/vault). */
+const CONTRACT_ERRORS: Record<number, string> = {
+  1: 'Invalid amount',
+  2: 'Invalid strike',
+  3: 'Expiry must be in the future',
+  4: 'Position not found',
+  5: 'Position already settled',
+  6: 'Position has not expired yet',
+  7: 'No oracle price available',
+  8: 'Oracle price is stale — settlement is blocked',
+  9: 'Invalid premium',
+  10: 'The vault pool cannot cover this position',
+  11: 'Position is larger than the vault allows',
+  12: 'Invalid limit',
+  13: 'This expiry is full — pick another',
+}
+
+/** Turn `Error(Contract, #10)` into something a user can act on. */
+function readableSimError(error: string): string {
+  const code = error.match(/Error\(Contract, #(\d+)\)/)
+  if (code) {
+    const known = CONTRACT_ERRORS[Number(code[1])]
+    if (known) return known
+  }
+  return `Vault rejected the deposit: ${error}`
 }

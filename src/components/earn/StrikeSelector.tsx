@@ -17,11 +17,21 @@ import { useXlmPrice } from '@/hooks/useXlmPrice'
 import { useVaultStats } from '@/hooks/useVaultStats'
 import { getExpiryOptions, ExpiryOption } from '@/lib/expiries'
 import { StablePicker, Stable } from '@/components/shared/StablePicker'
-import { buildVaultDepositTx, submitUserTx } from '@/lib/vault'
 import { savePosition } from '@/lib/positions'
 import { buildTrustlineTx, hasLusdTrustline } from '@/lib/swap'
+import { openPosition } from '@/lib/vault-contract'
+import { cosignWithQuoter } from '@/lib/quoter'
 import { TransactionBuilder, Networks } from '@stellar/stellar-sdk'
 import { ChevronDown, TrendingUp, TrendingDown } from 'lucide-react'
+
+// Wallet-facing labels for each leg of the open. The user is signing one
+// transaction; these say what the app is doing while it prepares it.
+const PROGRESS = {
+  simulating: 'Preparing the position…',
+  quoting: 'Getting the protocol signature…',
+  signing: 'Opening position — confirm in wallet',
+  submitting: 'Submitting to the network…',
+} as const
 
 interface StrikeSelectorProps {
   assetSymbol: string
@@ -304,44 +314,57 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
         }
       }
 
-      // 2. Build + sign the collateral payment to the vault distributor.
-      setSuccess('Sending collateral — confirm in wallet')
-      const depositXdr = await buildVaultDepositTx({
-        user: address,
-        type,
-        amount: amount.toFixed(7),
+      // 2. Open the position on the vault contract. Escrow, premium and the
+      //    position record all land in the one transaction the user signs —
+      //    no server-held account touches the collateral at any point. The
+      //    quoter co-signs only the premium, after repricing it itself.
+      const opened = await openPosition({
+        owner: address,
+        side: type,
+        collateral: amount,
+        strike: selectedStrike!.strike,
+        expiry: expiry.date,
+        premium,
+        signTransaction,
+        cosignQuote: (authEntries) =>
+          cosignWithQuoter({
+            address,
+            side: type,
+            collateralAmount: amount,
+            strikePrice: selectedStrike!.strike,
+            expiryIso: expiry.date.toISOString(),
+            premium,
+            authEntries,
+          }),
+        onProgress: (step) => setSuccess(PROGRESS[step]),
       })
-      const signedDeposit = await signTransaction(depositXdr)
-      const depositHash = await submitUserTx(signedDeposit)
 
-      // 3. Ask the server to verify the deposit and drip the upfront.
-      setSuccess(`Deposit confirmed · claiming upfront…`)
-      // Server reprices the premium itself from (spot, strike, days, side)
-      // — it ignores any APR the client sends. We omit `apr` from the body
-      // so the wire matches what the server actually trusts.
-      const res = await fetch('/api/vault/deposit', {
+      // 3. Record the position the contract just wrote, for the leaderboard
+      //    and analytics. Best-effort: the position exists on chain either way.
+      const depositHash = opened.txHash
+      await fetch('/api/vault/deposit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           address,
           txHash: depositHash,
+          positionId: opened.id,
           type,
           collateralAmount: amount,
           strikePrice: selectedStrike!.strike,
           daysToExpiry: expiry.daysToExpiry,
           expiryIso: expiry.date.toISOString(),
         }),
+      }).catch((recordErr) => {
+        console.warn('vault deposit recorded on chain but not indexed', recordErr)
       })
-      const data = await res.json()
-      if (!res.ok) {
-        throw new Error(data.error ?? 'Vault deposit API failed')
-      }
 
-      setSuccess(`✓ ${data.premium} LUSD upfront received`)
+      setSuccess(`✓ ${formatUsdc(premium)} upfront received · position #${opened.id}`)
       setSuccessHash(depositHash)
       setAmountStr('')
 
-      // Persist the position so the dashboard can show it.
+      // Cache the position locally for an instant dashboard render. Contract
+      // state is the source of truth; this is only what we already know.
       savePosition({
         id: depositHash,
         address,
@@ -351,9 +374,12 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
         strikePrice: selectedStrike!.strike,
         strikeIndex: selectedIdx,
         apr,
-        premium: parseFloat(data.premium),
+        premium,
         depositHash,
-        premiumHash: data.premiumHash ?? '',
+        // Escrow and premium now settle in the same transaction, so there is
+        // no separate payout hash to record.
+        premiumHash: depositHash,
+        positionId: opened.id,
         expiryIso: expiry.date.toISOString(),
         expiryLabel: expiry.label,
         daysToExpirySnapshot: expiry.daysToExpiry,
