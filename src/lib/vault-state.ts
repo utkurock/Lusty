@@ -1,5 +1,5 @@
 import { getPool, ensureSchema } from './db'
-import { upcomingExpiryDates, expiryLabel } from './expiries'
+import { upcomingExpiryDates, expiryLabel, expiryUtilization } from './expiries'
 
 /**
  * Vault exposure, computed from the protocol's own record of open positions.
@@ -116,6 +116,34 @@ export async function computeOpenBuckets(
       putUsd: s.putUsd,
     }
   })
+}
+
+/**
+ * The utilization haircut input for one expiry: how full the pool is overall,
+ * skewed by where this expiry sits in the ladder. Shared by every path that
+ * prices an option so a quote, its co-signature and the recorded position all
+ * derive from the same number.
+ *
+ * Never throws. A DB blip assumes a nearly-full pool, which maximises the
+ * haircut — erring towards paying too little rather than too much.
+ */
+export async function expiryUtilizationFor(
+  side: 'call' | 'put',
+  expiryIso: string
+): Promise<number> {
+  try {
+    const buckets = await computeOpenBuckets()
+    const n = buckets.length || 1
+    const aggregate =
+      side === 'call'
+        ? buckets.reduce((a, b) => a + b.callXlm, 0) / (CALL_EPOCH_CAP_XLM * n)
+        : buckets.reduce((a, b) => a + b.putUsd, 0) / (PUT_EPOCH_CAP_USD * n)
+    const slot = buckets.findIndex((b) => b.dateKey === expiryDateKey(expiryIso))
+    return expiryUtilization(aggregate, slot >= 0 ? slot : 0)
+  } catch (err) {
+    console.warn('vault-state: util read failed, assuming full pool', err)
+    return 0.98
+  }
 }
 
 export interface OpenExposure {
