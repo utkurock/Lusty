@@ -23,11 +23,22 @@ const HORIZON =
   process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
 const DISTRIBUTOR_SECRET = process.env.LUSD_DISTRIBUTOR_SECRET ?? ''
 
-// Server-canonical claim. The client only needs to identify *which* deposit
-// to settle (address + depositHash). Every parameter that affects assignment
-// math — type, strike, expiry, collateral — is read from the deposit row the
-// server recorded at deposit time. Anything the client also sends in these
-// fields is logged for mismatch detection but otherwise ignored.
+// Legacy settlement, for positions written before the vault contract.
+// ===================================================================
+// Positions opened on the contract escrow their collateral there and settle
+// through its permissionless `settle(id)` — no server involvement, and no
+// server able to interfere. This route only settles what predates that: the
+// distributor-escrowed positions from the old rail, whose collateral sits in
+// an account only this server can spend from. It refuses contract positions
+// outright.
+//
+// It goes away entirely once the last legacy position has been claimed.
+//
+// Server-canonical claim: the client only identifies *which* deposit to settle
+// (address + depositHash). Every parameter that affects assignment math —
+// type, strike, expiry, collateral — is read from the deposit row the server
+// recorded at deposit time. Anything the client also sends in these fields is
+// logged for mismatch detection but otherwise ignored.
 interface ClaimBody {
   address: string
   depositHash: string
@@ -94,6 +105,24 @@ export async function POST(req: Request) {
     if (!record.expiryIso) {
       return NextResponse.json(
         { error: 'deposit has no expiry on record — manual review required' },
+        { status: 409 }
+      )
+    }
+
+    // Contract positions are not settleable here, and must never be. Their
+    // collateral is escrowed by the vault contract, which pays out through
+    // its own permissionless `settle(id)` against the oracle price at expiry.
+    // This route pays from the distributor — for a contract position it would
+    // be paying a second time, out of protocol funds, on a settlement it did
+    // not compute. Refuse and point at the contract.
+    if (record.positionId !== null) {
+      return NextResponse.json(
+        {
+          error:
+            'this position settles on chain — call settle() on the vault contract',
+          code: 'settles_on_chain',
+          positionId: record.positionId,
+        },
         { status: 409 }
       )
     }

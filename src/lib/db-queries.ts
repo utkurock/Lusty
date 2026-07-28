@@ -64,6 +64,12 @@ export interface DepositRecord {
   daysToExpiry: number | null
   premiumAmount: number | null
   createdAt: string
+  /**
+   * Contract-assigned id when the position lives in the vault contract. Non-null
+   * means the collateral is escrowed on chain and settles through `settle(id)`,
+   * so no server-side payout applies.
+   */
+  positionId: number | null
 }
 
 /**
@@ -137,6 +143,9 @@ export async function getDepositRecord(
     daysToExpiry,
     premiumAmount: r.premium_amount !== null ? parseFloat(r.premium_amount) : null,
     createdAt: r.created_at,
+    positionId: Number.isInteger(meta.positionId)
+      ? (meta.positionId as number)
+      : null,
   }
 }
 
