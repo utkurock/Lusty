@@ -9,7 +9,9 @@ export interface VaultEvent {
   contractId: string
   txHash?: string
   owner?: string
-  amountXlm?: number
+  /** Collateral escrowed — XLM for a call, cash for a put (see `side`). */
+  amount?: number
+  side?: 'call' | 'put'
   strikeUsd?: number
   expiry?: number
   premiumCash?: number

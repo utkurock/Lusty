@@ -14,10 +14,16 @@ function timeAgo(iso: string): string {
 
 function label(e: VaultEvent): { tag: string; tone: string; text: string } {
   if (e.kind === 'deposit') {
+    // A call escrows the underlying, a put escrows cash — label each in the
+    // unit it was actually posted in.
+    const put = e.side === 'put'
+    const collateral = put
+      ? `$${(e.amount ?? 0).toLocaleString()}`
+      : `${(e.amount ?? 0).toLocaleString()} XLM`
     return {
-      tag: 'deposit',
+      tag: put ? 'put' : 'call',
       tone: 'text-[#22c55e]',
-      text: `#${e.id} · ${(e.amountXlm ?? 0).toLocaleString()} XLM @ $${(e.strikeUsd ?? 0).toFixed(4)} · +$${(e.premiumCash ?? 0).toFixed(2)}`,
+      text: `#${e.id} · ${collateral} @ $${(e.strikeUsd ?? 0).toFixed(4)} · +$${(e.premiumCash ?? 0).toFixed(2)}`,
     }
   }
   if (e.kind === 'settle') {

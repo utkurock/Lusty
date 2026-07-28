@@ -65,6 +65,8 @@ const EXPIRY: u64 = START + 7 * 86400;
 // Strike at oracle scale (14 decimals): $0.25
 const STRIKE: i128 = 25_000_000_000_000;
 const COLLATERAL: i128 = 100_0000000; // 100 XLM in stroops
+// Cash securing 100 XLM at the $0.25 strike — the put-side mirror of COLLATERAL.
+const PUT_COLLATERAL: i128 = 25_0000000;
 const PREMIUM: i128 = 5_0000000; // $5 in cash units (7 decimals)
 const POOL: i128 = 1_000_0000000; // $1000 pool
 const WRITER_XLM: i128 = 1_000_0000000;
@@ -130,6 +132,52 @@ fn deposit_escrows_collateral_and_pays_premium_atomically() {
     assert_eq!(pos.expiry, EXPIRY);
     assert_eq!(pos.premium, PREMIUM);
     assert!(!pos.settled);
+}
+
+#[test]
+fn open_put_escrows_cash_collateral() {
+    let s = setup();
+    token::StellarAssetClient::new(&s.env, &s.cash.address).mint(&s.writer, &PUT_COLLATERAL);
+
+    let id = s
+        .vault
+        .open(&s.writer, &Kind::Put, &PUT_COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+
+    let pos = s.vault.position(&id);
+    assert_eq!(pos.kind, Kind::Put);
+    assert_eq!(pos.amount, PUT_COLLATERAL);
+    // Cash went in, premium came back out — the writer nets the premium.
+    assert_eq!(s.cash.balance(&s.writer), PREMIUM);
+    assert_eq!(s.cash.balance(&s.vault.address), POOL + PUT_COLLATERAL - PREMIUM);
+    // A put never touches the underlying at open.
+    assert_eq!(s.token.balance(&s.writer), WRITER_XLM);
+    // …and the escrow counter keeps it out of the free premium pool.
+    assert_eq!(s.vault.escrowed(&Kind::Put), PUT_COLLATERAL);
+    assert_eq!(s.vault.escrowed(&Kind::Call), 0);
+}
+
+#[test]
+fn open_matches_deposit_for_calls() {
+    let s = setup();
+    let a = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    let b = s
+        .vault
+        .open(&s.writer, &Kind::Call, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    assert_eq!(s.vault.position(&a).kind, s.vault.position(&b).kind);
+    assert_eq!(s.vault.escrowed(&Kind::Call), COLLATERAL * 2);
+}
+
+#[test]
+fn settlement_releases_the_escrow() {
+    let s = setup();
+    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    assert_eq!(s.vault.escrowed(&Kind::Call), COLLATERAL);
+
+    s.oracle.set_price(&EXPIRY, &23_000_000_000_000);
+    s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 60);
+    s.vault.settle(&id);
+
+    assert_eq!(s.vault.escrowed(&Kind::Call), 0);
 }
 
 #[test]

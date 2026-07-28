@@ -151,6 +151,10 @@ enum DataKey {
     Config,
     NextId,
     Position(u64),
+    /// Collateral currently escrowed for OPEN positions of this kind. Puts
+    /// escrow the same token the premium pool is denominated in, so the pool's
+    /// free balance is `balance - escrowed(Put)` — never the raw balance.
+    Escrowed(Kind),
 }
 
 #[contract]
@@ -191,12 +195,8 @@ impl LustyVault {
         env.events().publish((symbol_short!("fund"),), (from, amount));
     }
 
-    /// Write a covered call: escrow `amount` collateral at `strike` until
-    /// `expiry`, receiving `premium` cash instantly from the pool — one
-    /// atomic transaction. The writer authorizes the collateral transfer;
-    /// the quoter (pricing engine) co-signs the premium figure, so neither
-    /// side can set the price alone. If the pool cannot cover the premium
-    /// the deposit fails whole (fail-closed).
+    /// Write a covered call. Thin wrapper over [`Self::open`] kept so existing
+    /// clients and the deployed CLI recipes keep working unchanged.
     pub fn deposit(
         env: Env,
         owner: Address,
@@ -205,50 +205,37 @@ impl LustyVault {
         expiry: u64,
         premium: i128,
     ) -> u64 {
-        let cfg: Config = env.storage().instance().get(&DataKey::Config).unwrap();
-        owner.require_auth();
-        cfg.quoter.require_auth();
-        if amount <= 0 {
-            panic_with_error!(&env, Error::InvalidAmount);
-        }
-        if strike <= 0 {
-            panic_with_error!(&env, Error::InvalidStrike);
-        }
-        if expiry <= env.ledger().timestamp() {
-            panic_with_error!(&env, Error::InvalidExpiry);
-        }
-        if premium < 0 {
-            panic_with_error!(&env, Error::InvalidPremium);
-        }
+        Self::write(env, owner, Kind::Call, amount, strike, expiry, premium)
+    }
 
-        let kind = Kind::Call;
-        let this = env.current_contract_address();
-        token::Client::new(&env, kind.collateral(&cfg)).transfer(&owner, &this, &amount);
-        if premium > 0 {
-            token::Client::new(&env, &cfg.cash).transfer(&this, &owner, &premium);
-        }
+    /// Write an option of either kind: escrow `amount` collateral at `strike`
+    /// until `expiry`, receiving `premium` cash instantly from the pool — one
+    /// atomic transaction. The writer authorizes the collateral transfer; the
+    /// quoter (pricing engine) co-signs the premium figure, so neither side
+    /// can set the price alone. If the pool cannot cover the premium the
+    /// deposit fails whole (fail-closed).
+    ///
+    /// `amount` is always the COLLATERAL, in the escrowed token's units:
+    ///   Call → the underlying itself; the writer covers 1 unit per unit.
+    ///   Put  → cash; it secures `amount × 10^dec / strike` units of the
+    ///          underlying, the quantity the writer commits to buy at strike.
+    pub fn open(
+        env: Env,
+        owner: Address,
+        kind: Kind,
+        amount: i128,
+        strike: i128,
+        expiry: u64,
+        premium: i128,
+    ) -> u64 {
+        Self::write(env, owner, kind, amount, strike, expiry, premium)
+    }
 
-        let id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap();
-        env.storage().instance().set(&DataKey::NextId, &(id + 1));
-        env.storage().persistent().set(
-            &DataKey::Position(id),
-            &Position {
-                owner: owner.clone(),
-                kind,
-                amount,
-                strike,
-                expiry,
-                premium,
-                settled: false,
-                outcome: symbol_short!("open"),
-            },
-        );
-
-        env.events().publish(
-            (symbol_short!("deposit"), id),
-            (owner, amount, strike, expiry, premium),
-        );
-        id
+    /// Collateral currently escrowed for open positions of `kind`. Public so
+    /// the split between escrowed collateral and free pool is verifiable from
+    /// contract state rather than inferred from the raw token balance.
+    pub fn escrowed(env: Env, kind: Kind) -> i128 {
+        Self::escrow_of(&env, kind)
     }
 
     /// Settle an expired position against the oracle price AT EXPIRY.
@@ -303,6 +290,9 @@ impl LustyVault {
             token::Client::new(&env, &collateral).transfer(&this, &pos.owner, &pos.amount);
             symbol_short!("kept")
         };
+        // The collateral has left the vault either way — it is no longer
+        // escrowed against this position.
+        Self::add_escrow(&env, pos.kind, -pos.amount);
 
         pos.settled = true;
         pos.outcome = outcome.clone();
@@ -322,6 +312,84 @@ impl LustyVault {
 
     pub fn config(env: Env) -> Config {
         env.storage().instance().get(&DataKey::Config).unwrap()
+    }
+
+    /// Shared escrow-and-price path behind `deposit`/`open`.
+    fn write(
+        env: Env,
+        owner: Address,
+        kind: Kind,
+        amount: i128,
+        strike: i128,
+        expiry: u64,
+        premium: i128,
+    ) -> u64 {
+        let cfg: Config = env.storage().instance().get(&DataKey::Config).unwrap();
+        owner.require_auth();
+        cfg.quoter.require_auth();
+        if amount <= 0 {
+            panic_with_error!(&env, Error::InvalidAmount);
+        }
+        if strike <= 0 {
+            panic_with_error!(&env, Error::InvalidStrike);
+        }
+        if expiry <= env.ledger().timestamp() {
+            panic_with_error!(&env, Error::InvalidExpiry);
+        }
+        if premium < 0 {
+            panic_with_error!(&env, Error::InvalidPremium);
+        }
+
+        let this = env.current_contract_address();
+        token::Client::new(&env, kind.collateral(&cfg)).transfer(&owner, &this, &amount);
+        // Book the escrow BEFORE the premium leaves, so a put's own collateral
+        // can never be counted as pool liquidity paying for its own premium.
+        Self::add_escrow(&env, kind, amount);
+        if premium > 0 {
+            token::Client::new(&env, &cfg.cash).transfer(&this, &owner, &premium);
+        }
+
+        let id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap();
+        env.storage().instance().set(&DataKey::NextId, &(id + 1));
+        env.storage().persistent().set(
+            &DataKey::Position(id),
+            &Position {
+                owner: owner.clone(),
+                kind,
+                amount,
+                strike,
+                expiry,
+                premium,
+                settled: false,
+                outcome: symbol_short!("open"),
+            },
+        );
+
+        env.events().publish(
+            (symbol_short!("deposit"), id),
+            (owner, amount, strike, expiry, premium, kind),
+        );
+        id
+    }
+
+    fn escrow_of(env: &Env, kind: Kind) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::Escrowed(kind))
+            .unwrap_or(0)
+    }
+
+    /// Move the escrow counter for `kind` by `delta` (negative on release).
+    /// Overflow or a negative total means the books no longer match the
+    /// contract's balances, so it panics rather than continue on bad state.
+    fn add_escrow(env: &Env, kind: Kind, delta: i128) {
+        let next = Self::escrow_of(env, kind)
+            .checked_add(delta)
+            .unwrap_or_else(|| panic_with_error!(env, Error::InvalidAmount));
+        if next < 0 {
+            panic_with_error!(env, Error::InvalidAmount);
+        }
+        env.storage().instance().set(&DataKey::Escrowed(kind), &next);
     }
 
     /// Expiry-pinned settlement price, mirroring the off-chain vault's rule:

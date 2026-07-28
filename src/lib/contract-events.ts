@@ -33,6 +33,10 @@ const LOOKBACK_LEDGERS = 100_000
 const TOKEN_SCALE = 1e7
 const ORACLE_SCALE = 1e14
 
+/** Contract-side `Kind` discriminant, as emitted on the deposit event. */
+const SIDES = ['call', 'put'] as const
+export type OptionSide = (typeof SIDES)[number]
+
 export interface VaultEvent {
   kind: 'deposit' | 'settle' | 'fund'
   id: string | null
@@ -42,7 +46,9 @@ export interface VaultEvent {
   txHash?: string
   // deposit
   owner?: string
-  amountXlm?: number
+  /** Collateral escrowed — XLM for a call, cash for a put (see `side`). */
+  amount?: number
+  side?: OptionSide
   strikeUsd?: number
   expiry?: number
   premiumCash?: number
@@ -67,19 +73,23 @@ function parseEvent(e: SorobanRpc.Api.EventResponse): VaultEvent | null {
     }
 
     if (name === 'deposit') {
-      const [owner, amount, strike, expiry, premium] = data as [
+      // `side` is absent on events emitted by the call-only v2 contract, which
+      // is still within the RPC's retention window — default those to 'call'.
+      const [owner, amount, strike, expiry, premium, side] = data as [
         string,
         bigint,
         bigint,
         bigint,
         bigint,
+        number | undefined,
       ]
       return {
         ...base,
         kind: 'deposit',
         id: topics[1] != null ? String(topics[1]) : null,
         owner,
-        amountXlm: Number(amount) / TOKEN_SCALE,
+        amount: Number(amount) / TOKEN_SCALE,
+        side: SIDES[Number(side ?? 0)] ?? 'call',
         strikeUsd: Number(strike) / ORACLE_SCALE,
         expiry: Number(expiry),
         premiumCash: Number(premium) / TOKEN_SCALE,
