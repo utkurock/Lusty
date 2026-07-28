@@ -172,6 +172,8 @@ export interface DbPosition {
   createdAt: number
   settled: boolean
   payoutHash: string | null
+  /** Contract-assigned id, for rows indexed from vault state. */
+  positionId: number | null
 }
 
 export async function getPositionsForAddress(address: string): Promise<DbPosition[]> {
@@ -228,6 +230,9 @@ export async function getPositionsForAddress(address: string): Promise<DbPositio
       createdAt: new Date(r.created_at).getTime(),
       settled: r.settled === true,
       payoutHash: r.payout_hash ?? null,
+      positionId: Number.isInteger(meta.positionId)
+        ? (meta.positionId as number)
+        : null,
     }
   })
 }
