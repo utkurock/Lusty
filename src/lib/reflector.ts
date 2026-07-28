@@ -14,7 +14,7 @@ import {
   BASE_FEE,
   Contract,
   Networks,
-  SorobanRpc,
+  rpc as sorobanRpc,
   StrKey,
   TransactionBuilder,
   scValToNative,
@@ -58,7 +58,7 @@ async function simulateOracleCall(
   fn: string,
   args: xdr.ScVal[]
 ): Promise<ReflectorPrice | null> {
-  const rpc = new SorobanRpc.Server(RPC_URL)
+  const rpc = new sorobanRpc.Server(RPC_URL)
   const contract = new Contract(ORACLE_ID)
   // Sequence number is irrelevant for simulation — skip the getAccount round trip.
   const source = new Account(SIM_SOURCE, '0')
@@ -71,7 +71,7 @@ async function simulateOracleCall(
     .build()
 
   const sim = await rpc.simulateTransaction(tx)
-  if (!SorobanRpc.Api.isSimulationSuccess(sim) || !sim.result) {
+  if (!sorobanRpc.Api.isSimulationSuccess(sim) || !sim.result) {
     throw new Error(`reflector: ${fn} simulation failed`)
   }
   const native = scValToNative(sim.result.retval) as

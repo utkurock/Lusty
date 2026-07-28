@@ -8,7 +8,7 @@
 //
 // Reads only — getEvents submits nothing, signs nothing, costs nothing.
 
-import { SorobanRpc, scValToNative, xdr } from '@stellar/stellar-sdk'
+import { rpc as sorobanRpc, scValToNative, xdr } from '@stellar/stellar-sdk'
 
 const RPC_URL =
   process.env.SOROBAN_RPC_URL ?? 'https://soroban-testnet.stellar.org'
@@ -62,7 +62,7 @@ export interface VaultEvent {
   amountCash?: number
 }
 
-function parseEvent(e: SorobanRpc.Api.EventResponse): VaultEvent | null {
+function parseEvent(e: sorobanRpc.Api.EventResponse): VaultEvent | null {
   try {
     const topics = e.topic.map((t: xdr.ScVal) => scValToNative(t))
     const name = String(topics[0])
@@ -137,7 +137,7 @@ function parseEvent(e: SorobanRpc.Api.EventResponse): VaultEvent | null {
 export async function fetchVaultEvents(limit = 25): Promise<VaultEvent[]> {
   if (VAULT_IDS.length === 0) return []
   try {
-    const server = new SorobanRpc.Server(RPC_URL)
+    const server = new sorobanRpc.Server(RPC_URL)
     const { sequence } = await server.getLatestLedger()
     const startLedger = Math.max(sequence - LOOKBACK_LEDGERS, 1)
 
