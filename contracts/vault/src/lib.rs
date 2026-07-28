@@ -84,6 +84,7 @@ pub enum Error {
     InsufficientPool = 10,
     PositionTooLarge = 11,
     InvalidLimit = 12,
+    ExpiryFull = 13,
 }
 
 #[contracttype]
@@ -119,6 +120,11 @@ pub struct Limits {
     /// underlying for a call, cash for a put.
     pub max_position_call: i128,
     pub max_position_put: i128,
+    /// Most collateral the vault will hold against ONE expiry, per kind. Caps
+    /// how much of the book can come due — and be settled at one price — on a
+    /// single date, which position size alone does not bound.
+    pub max_expiry_call: i128,
+    pub max_expiry_put: i128,
 }
 
 impl Limits {
@@ -126,6 +132,13 @@ impl Limits {
         match kind {
             Kind::Call => self.max_position_call,
             Kind::Put => self.max_position_put,
+        }
+    }
+
+    fn max_expiry(&self, kind: Kind) -> i128 {
+        match kind {
+            Kind::Call => self.max_expiry_call,
+            Kind::Put => self.max_expiry_put,
         }
     }
 }
@@ -205,6 +218,10 @@ enum DataKey {
     /// calls owe cash, puts owe the underlying.
     Owed(Kind),
     Limits,
+    /// Collateral escrowed against one expiry, per kind. Persistent rather
+    /// than instance storage: expiries accumulate without bound, and a settled
+    /// date's bucket must not weigh on every later deposit.
+    Exposure(Kind, u64),
 }
 
 #[contract]
@@ -318,6 +335,16 @@ impl LustyVault {
         Self::owed_of(&env, kind)
     }
 
+    /// Collateral currently escrowed against `expiry` for `kind` — the figure
+    /// checked against `Limits::max_expiry`. Lets a client see how much room
+    /// an expiry has left before it quotes against it.
+    pub fn exposure(env: Env, kind: Kind, expiry: u64) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Exposure(kind, expiry))
+            .unwrap_or(0)
+    }
+
     /// Settle an expired position against the oracle price AT EXPIRY.
     /// Permissionless: anyone may trigger it (the outcome is deterministic),
     /// so the writer does not depend on the protocol being online.
@@ -375,6 +402,7 @@ impl LustyVault {
         // and its contingent payout is no longer owed.
         Self::add_escrow(&env, pos.kind, -pos.amount);
         Self::add_owed(&env, pos.kind, -owed);
+        Self::add_exposure(&env, pos.kind, pos.expiry, -pos.amount);
 
         pos.settled = true;
         pos.outcome = outcome.clone();
@@ -426,6 +454,13 @@ impl LustyVault {
         let limits: Limits = env.storage().instance().get(&DataKey::Limits).unwrap();
         if amount > limits.max_position(kind) {
             panic_with_error!(&env, Error::PositionTooLarge);
+        }
+        // Exposure cap: nor should many writers together, which the size cap
+        // alone allows. Counted per expiry, so the book stays spread across
+        // settlement dates instead of concentrating on one price print.
+        let exposure = Self::add_exposure(&env, kind, expiry, amount);
+        if exposure > limits.max_expiry(kind) {
+            panic_with_error!(&env, Error::ExpiryFull);
         }
 
         let this = env.current_contract_address();
@@ -479,7 +514,13 @@ impl LustyVault {
     /// `pool` rides along as a second topic so the two pools can be told apart
     /// — and filtered for — at the RPC level, without resolving token addresses.
     fn store_limits(env: &Env, limits: &Limits) {
-        if limits.max_position_call <= 0 || limits.max_position_put <= 0 {
+        if limits.max_position_call <= 0
+            || limits.max_position_put <= 0
+            || limits.max_expiry_call < limits.max_position_call
+            || limits.max_expiry_put < limits.max_position_put
+        {
+            // An expiry cap below the position cap would make the larger of the
+            // two unreachable — a limit set that can never be met as written.
             panic_with_error!(env, Error::InvalidLimit);
         }
         env.storage().instance().set(&DataKey::Limits, limits);
@@ -537,6 +578,15 @@ impl LustyVault {
             .instance()
             .get(&DataKey::Escrowed(kind))
             .unwrap_or(0)
+    }
+
+    /// Move this expiry's exposure by `delta` and return the new total.
+    fn add_exposure(env: &Env, kind: Kind, expiry: u64, delta: i128) -> i128 {
+        let key = DataKey::Exposure(kind, expiry);
+        let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+        let next = Self::bump(env, current, delta);
+        env.storage().persistent().set(&key, &next);
+        next
     }
 
     fn owed_of(env: &Env, kind: Kind) -> i128 {

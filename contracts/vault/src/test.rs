@@ -61,7 +61,16 @@ struct Setup<'a> {
 }
 
 fn limits(call: i128, put: i128) -> Limits {
-    Limits { max_position_call: call, max_position_put: put }
+    limits_with_expiry(call, put, MAX_EXPIRY_CALL, MAX_EXPIRY_PUT)
+}
+
+fn limits_with_expiry(call: i128, put: i128, exp_call: i128, exp_put: i128) -> Limits {
+    Limits {
+        max_position_call: call,
+        max_position_put: put,
+        max_expiry_call: exp_call,
+        max_expiry_put: exp_put,
+    }
 }
 
 // Aligned to the mock feed's 300s resolution so EXPIRY normalizes to itself.
@@ -79,6 +88,8 @@ const WRITER_XLM: i128 = 1_000_0000000;
 // target them ever trip them.
 const MAX_POSITION_CALL: i128 = 10_000_0000000;
 const MAX_POSITION_PUT: i128 = 10_000_0000000;
+const MAX_EXPIRY_CALL: i128 = 100_000_0000000;
+const MAX_EXPIRY_PUT: i128 = 100_000_0000000;
 
 fn setup() -> Setup<'static> {
     let env = Env::default();
@@ -548,6 +559,63 @@ fn set_limits_requires_the_admin() {
 fn set_limits_rejects_a_zero_cap() {
     let s = setup();
     s.vault.set_limits(&limits(0, MAX_POSITION_PUT));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #12)")] // InvalidLimit
+fn set_limits_rejects_an_expiry_cap_below_the_position_cap() {
+    let s = setup();
+    s.vault.set_limits(&limits_with_expiry(
+        COLLATERAL,
+        MAX_POSITION_PUT,
+        COLLATERAL - 1,
+        MAX_EXPIRY_PUT,
+    ));
+}
+
+#[test]
+fn exposure_accumulates_per_expiry_and_caps_the_book() {
+    // Room for two positions on this expiry, and no more — even though each
+    // one is comfortably inside the position cap.
+    let s = setup();
+    s.vault.set_limits(&limits_with_expiry(
+        COLLATERAL,
+        MAX_POSITION_PUT,
+        COLLATERAL * 2,
+        MAX_EXPIRY_PUT,
+    ));
+
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &0);
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &0);
+    assert_eq!(s.vault.exposure(&Kind::Call, &EXPIRY), COLLATERAL * 2);
+
+    let refused = s
+        .vault
+        .try_deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &0);
+    assert!(refused.is_err());
+
+    // A different expiry has its own budget, so the vault stays open for business.
+    let later = EXPIRY + 7 * 86400;
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &later, &0);
+    assert_eq!(s.vault.exposure(&Kind::Call, &later), COLLATERAL);
+}
+
+#[test]
+fn settlement_frees_the_expiry_budget() {
+    let s = setup();
+    s.vault.set_limits(&limits_with_expiry(
+        COLLATERAL,
+        MAX_POSITION_PUT,
+        COLLATERAL,
+        MAX_EXPIRY_PUT,
+    ));
+    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &0);
+
+    s.oracle.set_price(&EXPIRY, &23_000_000_000_000);
+    s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 60);
+    s.vault.settle(&id);
+
+    assert_eq!(s.vault.exposure(&Kind::Call, &EXPIRY), 0);
 }
 
 #[test]
