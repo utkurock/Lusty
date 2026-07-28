@@ -13,12 +13,13 @@ import { SorobanRpc, scValToNative, xdr } from '@stellar/stellar-sdk'
 const RPC_URL =
   process.env.SOROBAN_RPC_URL ?? 'https://soroban-testnet.stellar.org'
 
-// The deployed vault instances (see contracts/README.md). The LUSD instance is
-// the one the testnet web app uses; the USDC instance is the mainnet-framing
-// demo. We stream both so the feed reflects all on-chain activity.
+// The vault instances to stream. Normally just the live one; the plural form
+// exists so a superseded instance can be kept in the feed while its last
+// positions settle.
 const VAULT_IDS = (
   process.env.NEXT_PUBLIC_VAULT_CONTRACTS ??
-  'CAWDKJUH5WSXJVOOAUGULE4HY2TTYSXUSI5QXTDKUZ6J5L4UTXWPK2Y4,CASVHBJ7MOZ5YFSVAYXKZFWIYAR6Y3Q4JI2P6GGJMRFUJBZN6APTZEZD'
+  process.env.NEXT_PUBLIC_VAULT_CONTRACT ??
+  ''
 )
   .split(',')
   .map((s) => s.trim())
