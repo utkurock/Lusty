@@ -131,21 +131,74 @@ stellar contract deploy \
 Limits are in the kind's collateral units at 7 decimals — the values above are
 10,000 XLM and 10,000 cash per position, 500,000 per expiry.
 
-Both pools need funding before the vault can quote: `fund` for the cash that
-pays premiums and call assignments, `fund_underlying` for the asset a put
-assignment delivers. A put cannot be opened against an empty underlying pool —
-the contract refuses rather than promise a delivery it cannot make.
+Two things have to be set up before the vault can trade, and both fail late
+rather than at deploy:
+
+- **Fund both pools.** `fund` covers the cash that pays premiums and call
+  assignments; `fund_underlying` covers the asset a put assignment delivers. A
+  put cannot be opened against an empty underlying pool — the contract refuses
+  rather than promise a delivery it cannot make.
+- **Give the treasury a trustline for the cash token.** An assigned put sends
+  its cash collateral to the treasury, and a classic asset cannot be received
+  without a trustline. Miss this and puts open normally but revert at
+  settlement, from inside the token contract rather than the vault. Calls do
+  not hit it, since assigned calls route native XLM.
 
 The application reads the deployed instance from `NEXT_PUBLIC_VAULT_CONTRACT`
 and co-signs with `VAULT_QUOTER_SECRET`.
 
-## Reference addresses (testnet)
+### Verifying a deployment
+
+The Stellar CLI cannot open a position: `open` needs authorization from the
+writer and the quoter, and only one of them is the transaction source, so the
+quoter's entry has to be signed on its own. `scripts/verify-vault.mjs` does
+that round trip locally — the same one `/api/vault/authorize` performs in
+production — and exercises both legs on both sides of the strike:
+
+```sh
+node scripts/verify-vault.mjs open           # writes 4 positions, prints ids
+node scripts/verify-vault.mjs settle 0 1 2 3 # after expiry
+node scripts/verify-vault.mjs stats          # pools, escrow, exposure, solvency
+```
+
+## Testnet deployment
 
 | What | Address |
 | --- | --- |
+| **Vault v3** (calls + puts, LUSD cash) | `CDNES2LSMDPISV6W3PT3KHZXCLGBU6FG2EK6S3V422V6ZYIMVRGXTHKG` |
 | Reflector oracle (external CEX/DEX feed) | `CCYOZJCOPG34LLQQ7N24YXBM7LL62R7ONMZ3G6WZAAYPB5OYKOMJRN63` |
 | Feed asset | `Other("XLM")`, 14 decimals, 300 s resolution |
-| Native XLM SAC | `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC` |
+| Underlying — native XLM SAC | `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC` |
+| Cash — LUSD SAC | `CDTMNV7F7P3LUH6LLBTXY4EQYBUYGVGYRC7P73HMFV5PXLO5NE6A74QB` |
+| Treasury | `GCXVANOIFHM7IAAZTDEEOYW7WUDO7ETVJYVEO74LA23JSXQJP4TAJVUX` |
+| Quoter (pricing engine) | `GC7Z4LVQCUOU7FMRBX4WOGANARQGM4SZTACKMSQSMGIOO4KEAASHLOTX` |
+| Admin (limits only) | `GBDNJQDP4HJQH6WCJCYVYGTKDRYKZXQQSVEC4FOE24CVG4VRQU26IKEC` |
+
+Limits at deploy: 10,000 per position on both legs; 500,000 XLM and 50,000 cash
+per expiry. Pools seeded with 20,000 LUSD and 100,000 XLM.
+
+### Verified on testnet (2026-07-28)
+
+Five positions written and settled end to end against the live Reflector feed,
+covering both legs on both sides of the strike. Settlement price at expiry:
+$0.17284.
+
+| Position | Strike | Outcome | Payout |
+| --- | --- | --- | --- |
+| call, 100 XLM (×2) | $0.20 | kept | collateral returned whole |
+| call, 100 XLM | $0.15 | assigned | collateral to treasury, $15 cash to the writer |
+| put, 20 LUSD | $0.15 | kept | collateral returned whole |
+| put, 20 LUSD | $0.20 | assigned | cash to treasury, 100 XLM delivered to the writer |
+
+Every premium arrived in the writer's wallet inside the opening transaction.
+Escrow, outstanding obligations and per-expiry exposure all returned to zero
+after the last settlement, and the writer's balances reconcile exactly:
+100 → 100.5 LUSD (premiums +5.50, put collateral −40, kept put +20, call
+assignment +15) with XLM back where it started net of fees.
+
+The put assignment is where the treasury trustline requirement surfaced: the
+first attempt reverted inside the LUSD contract with "trustline entry is
+missing", not in the vault. Adding the trustline settled it unchanged.
 
 ### Superseded deployments
 
@@ -157,7 +210,6 @@ for provenance; testnet resets have since cleared their state.
 | Vault v2, LUSD cash | `CAWDKJUH5WSXJVOOAUGULE4HY2TTYSXUSI5QXTDKUZ6J5L4UTXWPK2Y4` |
 | Vault v2, USDC cash | `CASVHBJ7MOZ5YFSVAYXKZFWIYAR6Y3Q4JI2P6GGJMRFUJBZN6APTZEZD` |
 | Vault v1 (escrow-only PoC) | `CDUHKBXJCIQCU4PCHBJRN5BNFGNLXGKXKA74YAJHF3B7XABIFMGURB4B` |
-| LUSD SAC | `CDTMNV7F7P3LUH6LLBTXY4EQYBUYGVGYRC7P73HMFV5PXLO5NE6A74QB` |
 | Test USDC SAC | `CA7W4C26OTIHHFK3KMP7HGJH63ZD337534OPMGCKDZFNW62BCLRIQL6B` |
 
 Verified end to end on 2026-06-12: ITM and OTM covered calls were opened and
