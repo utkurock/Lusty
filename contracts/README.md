@@ -4,7 +4,7 @@ Trustless settlement layer for the Lusty options vault. The full money loop
 runs on-chain: escrow, premium payout and oracle settlement are all enforced by
 the contract. There is no custodial account and no server payout to trust.
 
-## `vault`, the options vault (v3)
+## `vault`, the options vault (v4)
 
 ```
 open(owner, kind, amount, strike, expiry, premium) → id
@@ -68,6 +68,7 @@ deposit:
 | Position above `Limits::max_position_{call,put}` | `PositionTooLarge` (11) |
 | Limits that cannot both be satisfied | `InvalidLimit` (12) |
 | Expiry at `Limits::max_expiry_{call,put}` | `ExpiryFull` (13) |
+| Premium above `Limits::max_premium_bps` of the collateral | `PremiumTooHigh` (14) |
 
 The solvency check and the settlement payout are computed by the same
 function, so the amount reserved at open is exactly the amount paid at
@@ -79,9 +80,31 @@ Pricing works like an RFQ. `open` requires auth from the writer and from the
 protocol's quoter key (the pricing engine), so neither side can set the premium
 alone. Custody and settlement never depend on the quoter.
 
+The quoter prices inside a band it cannot widen. `Limits::max_premium_bps` caps
+every premium at a share of the collateral escrowed against it, so the worst a
+stolen pricing key can do is overpay that share on positions it also has to
+collateralize — not empty the cash pool.
+
+The collateral is valued at the **oracle price, never at the strike**. That
+distinction is the whole guard: the strike is the quoter's own number, so a
+strike-denominated ceiling would rise with it, and one stroop of XLM written at
+a $10,000 strike could buy an arbitrarily large premium. Priced at spot,
+raising the ceiling means escrowing more real collateral, which
+`max_position_{call,put}` already bounds.
+
+A put's collateral is cash — the token the premium is paid in — so it needs no
+price, and the put leg keeps trading through a feed outage. A call cannot be
+written against a stale or empty feed: with no current price there is no
+honest way to value what is being escrowed, so the write fails closed.
+
 `admin` sets the risk limits, and that is its only power: it cannot move
 collateral, price an option, or settle a position, and tightening a limit does
 not reach collateral already escrowed under the old one.
+
+The premium ceiling is the one limit that also widens something — the band the
+quoter prices in. The admin cannot pay a premium and the quoter cannot raise
+its own ceiling, so the two keys bound each other and must be separate
+accounts, as they are on testnet.
 
 Units: strikes use the oracle's `decimals()` scale (Reflector: 14). Collateral
 and cash amounts are 7-decimal token units, so
@@ -89,10 +112,15 @@ and cash amounts are 7-decimal token units, so
 
 ### Known limitation, tracked for T2
 
-The quoter key bounds the premium, and nothing else does: a compromised quoter
-could quote itself the entire cash pool. The planned fix is an in-contract
-premium ceiling (a percentage of collateral value) plus a multi-sig quoter.
-Until then the pool should hold working capital only.
+The premium ceiling above closes the half of this the contract can close: a
+stolen quoter key can no longer reach the cash pool, only overpay a bounded
+share of collateral that is actually posted.
+
+What remains is account-level and deliberately outside the contract. The quoter
+is still a single key, so a compromise still costs that bounded share until it
+is rotated. Making it a multisig account, and putting quoter rotation behind
+that multisig, is a Stellar account change this contract neither sees nor needs
+to — it authorizes an address and does not care how that address is controlled.
 
 ### Out of scope (Tranche 3)
 
@@ -109,9 +137,10 @@ stellar contract build    # target/wasm32v1-none/release/lusty_vault.wasm
 
 ## Deploying
 
-v3 changes the constructor — it takes an `admin` and an initial `Limits` — so
-an existing v2 instance cannot be upgraded into it. A v3 instance is a new
-deployment.
+Every version so far has been a fresh instance, and has had to be: the contract
+has no `upgrade` entrypoint (that is Tranche 3), so its code is fixed once
+deployed. v3 added `admin` and `Limits` to the constructor; v4 adds
+`max_premium_bps` to `Limits`, which changes that constructor argument again.
 
 ```sh
 stellar contract deploy \
@@ -125,11 +154,20 @@ stellar contract deploy \
   --treasury <treasury account> \
   --quoter <pricing engine key> \
   --admin <admin account> \
-  --limits '{"max_position_call":"100000000000","max_position_put":"100000000000","max_expiry_call":"5000000000000","max_expiry_put":"5000000000000"}'
+  --limits '{"max_position_call":"100000000000","max_position_put":"100000000000","max_expiry_call":"5000000000000","max_expiry_put":"5000000000000","max_premium_bps":2000}'
 ```
 
-Limits are in the kind's collateral units at 7 decimals — the values above are
-10,000 XLM and 10,000 cash per position, 500,000 per expiry.
+Position and expiry limits are in the kind's collateral units at 7 decimals —
+the values above are 10,000 XLM and 10,000 cash per position, 500,000 per
+expiry.
+
+`max_premium_bps` is a share of collateral, not a token amount. 2000 (20%)
+sits about 3.5× above anything the pricing engine can quote: the engine's own
+ceiling is `MAX_APR` 120% scaled by tenor, so a 17-day position tops out near
+5.6% of capital and a 27-day one near 8.9%. The gap is headroom for the
+engine's knobs, not room the quoter is expected to use — tighten it toward the
+engine's real maximum once the expiry ladder settles. Raising `MAX_APR` or
+adding much longer expiries is what would push a legitimate quote into it.
 
 Two things have to be set up before the vault can trade, and both fail late
 rather than at deploy:
@@ -162,6 +200,11 @@ node scripts/verify-vault.mjs stats          # pools, escrow, exposure, solvency
 ```
 
 ## Testnet deployment
+
+The live instance runs **v3**. The premium ceiling described above is v4 source
+that has not been deployed yet, so on chain today the quoter is still bounded
+only by the pricing engine. Deploying it means a new instance and a new
+`NEXT_PUBLIC_VAULT_CONTRACT`, plus reseeding both pools.
 
 | What | Address |
 | --- | --- |
