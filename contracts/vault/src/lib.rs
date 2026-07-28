@@ -82,6 +82,8 @@ pub enum Error {
     StalePrice = 8,
     InvalidPremium = 9,
     InsufficientPool = 10,
+    PositionTooLarge = 11,
+    InvalidLimit = 12,
 }
 
 #[contracttype]
@@ -101,6 +103,31 @@ pub struct Config {
     pub treasury: Address,
     /// Pricing-engine key that must co-sign every deposit's premium (RFQ).
     pub quoter: Address,
+    /// Sets the risk limits. Custody and settlement never route through it:
+    /// the admin cannot move collateral, price an option or settle a position.
+    /// T2 moves this key to a multisig account.
+    pub admin: Address,
+}
+
+/// Risk limits the contract enforces itself, rather than trusting the caller
+/// to have checked them. Stored apart from `Config` because these are the only
+/// values the admin can change.
+#[contracttype]
+#[derive(Clone)]
+pub struct Limits {
+    /// Largest single position, in the kind's own collateral units:
+    /// underlying for a call, cash for a put.
+    pub max_position_call: i128,
+    pub max_position_put: i128,
+}
+
+impl Limits {
+    fn max_position(&self, kind: Kind) -> i128 {
+        match kind {
+            Kind::Call => self.max_position_call,
+            Kind::Put => self.max_position_put,
+        }
+    }
 }
 
 /// Which option the writer is selling. Both legs share the escrow, premium and
@@ -177,6 +204,7 @@ enum DataKey {
     /// Denominated in the payout token, which is the OTHER leg's collateral:
     /// calls owe cash, puts owe the underlying.
     Owed(Kind),
+    Limits,
 }
 
 #[contract]
@@ -192,12 +220,32 @@ impl LustyVault {
         cash: Address,
         treasury: Address,
         quoter: Address,
+        admin: Address,
+        limits: Limits,
     ) {
         env.storage().instance().set(
             &DataKey::Config,
-            &Config { oracle, feed, token, cash, treasury, quoter },
+            &Config { oracle, feed, token, cash, treasury, quoter, admin },
         );
+        Self::store_limits(&env, &limits);
         env.storage().instance().set(&DataKey::NextId, &0u64);
+    }
+
+    /// Adjust the risk limits. Admin-only, and deliberately the admin's ONLY
+    /// power: it can shrink what the vault accepts, never reach the collateral
+    /// already escrowed under the old limits.
+    pub fn set_limits(env: Env, limits: Limits) {
+        let cfg: Config = env.storage().instance().get(&DataKey::Config).unwrap();
+        cfg.admin.require_auth();
+        Self::store_limits(&env, &limits);
+        env.events().publish(
+            (symbol_short!("limits"),),
+            (limits.max_position_call, limits.max_position_put),
+        );
+    }
+
+    pub fn limits(env: Env) -> Limits {
+        env.storage().instance().get(&DataKey::Limits).unwrap()
     }
 
     /// Top up the cash pool: premiums for both legs, plus the strike value a
@@ -373,6 +421,12 @@ impl LustyVault {
         if premium < 0 {
             panic_with_error!(&env, Error::InvalidPremium);
         }
+        // Size cap: one writer must not be able to put the whole vault behind a
+        // single strike and expiry.
+        let limits: Limits = env.storage().instance().get(&DataKey::Limits).unwrap();
+        if amount > limits.max_position(kind) {
+            panic_with_error!(&env, Error::PositionTooLarge);
+        }
 
         let this = env.current_contract_address();
         token::Client::new(&env, kind.collateral(&cfg)).transfer(&owner, &this, &amount);
@@ -424,6 +478,13 @@ impl LustyVault {
 
     /// `pool` rides along as a second topic so the two pools can be told apart
     /// — and filtered for — at the RPC level, without resolving token addresses.
+    fn store_limits(env: &Env, limits: &Limits) {
+        if limits.max_position_call <= 0 || limits.max_position_put <= 0 {
+            panic_with_error!(env, Error::InvalidLimit);
+        }
+        env.storage().instance().set(&DataKey::Limits, limits);
+    }
+
     fn fund_pool(env: &Env, token_id: &Address, pool: Symbol, from: Address, amount: i128) {
         from.require_auth();
         if amount <= 0 {

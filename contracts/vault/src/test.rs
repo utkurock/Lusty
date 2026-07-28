@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use super::reflector::{Asset, PriceData};
-use super::{Kind, LustyVault, LustyVaultClient};
+use super::{Kind, Limits, LustyVault, LustyVaultClient};
 use soroban_sdk::testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke};
 use soroban_sdk::{
     contract, contractimpl, symbol_short, token, Address, Env, IntoVal, Symbol,
@@ -57,6 +57,11 @@ struct Setup<'a> {
     writer: Address,
     treasury: Address,
     quoter: Address,
+    admin: Address,
+}
+
+fn limits(call: i128, put: i128) -> Limits {
+    Limits { max_position_call: call, max_position_put: put }
 }
 
 // Aligned to the mock feed's 300s resolution so EXPIRY normalizes to itself.
@@ -70,6 +75,10 @@ const PUT_COLLATERAL: i128 = 25_0000000;
 const PREMIUM: i128 = 5_0000000; // $5 in cash units (7 decimals)
 const POOL: i128 = 1_000_0000000; // $1000 pool
 const WRITER_XLM: i128 = 1_000_0000000;
+// Position caps, set well clear of the fixtures above so only the tests that
+// target them ever trip them.
+const MAX_POSITION_CALL: i128 = 10_000_0000000;
+const MAX_POSITION_PUT: i128 = 10_000_0000000;
 
 fn setup() -> Setup<'static> {
     let env = Env::default();
@@ -102,12 +111,14 @@ fn setup() -> Setup<'static> {
             usdc.address(),
             treasury.clone(),
             quoter.clone(),
+            admin.clone(),
+            limits(MAX_POSITION_CALL, MAX_POSITION_PUT),
         ),
     );
     let vault = LustyVaultClient::new(&env, &vault_id);
     vault.fund(&funder, &POOL);
 
-    Setup { env, vault, oracle, token, cash, writer, treasury, quoter }
+    Setup { env, vault, oracle, token, cash, writer, treasury, quoter, admin }
 }
 
 // ── Deposit / premium ───────────────────────────────────────────────
@@ -482,11 +493,61 @@ fn deposit_requires_writer_auth() {
             sac.address(),
             usdc.address(),
             treasury,
+            quoter.clone(),
             quoter,
+            limits(MAX_POSITION_CALL, MAX_POSITION_PUT),
         ),
     );
     let vault = LustyVaultClient::new(&env, &vault_id);
     vault.deposit(&writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+}
+
+// ── Limits ──────────────────────────────────────────────────────────
+
+#[test]
+#[should_panic(expected = "Error(Contract, #11)")] // PositionTooLarge
+fn open_rejects_a_position_over_the_size_cap() {
+    let s = setup();
+    token::StellarAssetClient::new(&s.env, &s.token.address)
+        .mint(&s.writer, &(MAX_POSITION_CALL + 1));
+    s.vault
+        .deposit(&s.writer, &(MAX_POSITION_CALL + 1), &STRIKE, &EXPIRY, &0);
+}
+
+#[test]
+fn admin_can_tighten_the_size_cap() {
+    let s = setup();
+    s.vault.set_limits(&limits(COLLATERAL - 1, MAX_POSITION_PUT));
+    assert_eq!(s.vault.limits().max_position_call, COLLATERAL - 1);
+
+    let refused = s
+        .vault
+        .try_deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    assert!(refused.is_err());
+}
+
+#[test]
+#[should_panic] // admin did not sign
+fn set_limits_requires_the_admin() {
+    let s = setup();
+    // Re-arm auth mocking to cover the writer only — the admin is not signing.
+    s.env.mock_auths(&[MockAuth {
+        address: &s.writer,
+        invoke: &MockAuthInvoke {
+            contract: &s.vault.address,
+            fn_name: "set_limits",
+            args: (limits(1, 1),).into_val(&s.env),
+            sub_invokes: &[],
+        },
+    }]);
+    s.vault.set_limits(&limits(1, 1));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #12)")] // InvalidLimit
+fn set_limits_rejects_a_zero_cap() {
+    let s = setup();
+    s.vault.set_limits(&limits(0, MAX_POSITION_PUT));
 }
 
 #[test]
