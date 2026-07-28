@@ -82,6 +82,8 @@ export interface VaultLimits {
   maxPositionPut: number
   maxExpiryCall: number
   maxExpiryPut: number
+  /** Premium ceiling, in basis points of the collateral escrowed against it. */
+  maxPremiumBps: number
 }
 
 export interface VaultConfig {
@@ -241,6 +243,7 @@ export async function getVaultLimits(): Promise<VaultLimits> {
     maxPositionPut: fromTokenUnits(l.max_position_put),
     maxExpiryCall: fromTokenUnits(l.max_expiry_call),
     maxExpiryPut: fromTokenUnits(l.max_expiry_put),
+    maxPremiumBps: Number(l.max_premium_bps),
   }
 }
 
