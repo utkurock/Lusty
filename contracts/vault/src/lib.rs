@@ -16,8 +16,12 @@
 //!      receives the strike value in cash, the collateral goes to the
 //!      treasury. Kept positions return the collateral whole.
 //!
-//! Remaining for T3: cash-secured puts, position tokens, upgrade governance,
-//! automated pool solvency management (today: ops funds the pool via `fund`).
+//! Positions carry a `Kind` so the same escrow/settlement machinery can back
+//! cash-secured puts alongside covered calls: the two differ only in which
+//! token the writer escrows and which side of the strike assigns.
+//!
+//! Remaining: position tokens, upgrade governance, automated pool solvency
+//! management (today: ops funds the pool via `fund`).
 
 #![no_std]
 
@@ -86,9 +90,11 @@ pub struct Config {
     pub oracle: Address,
     /// Feed symbol queried as `Asset::Other(feed)` — e.g. "XLM".
     pub feed: Symbol,
-    /// Collateral token (SAC address; native XLM SAC for covered calls).
+    /// Underlying token (SAC address; native XLM SAC). Collateral for covered
+    /// calls, the asset a cash-secured put agrees to buy.
     pub token: Address,
-    /// Cash token (USDC SAC) — premiums out, assignment payouts out.
+    /// Cash token (USDC SAC) — premiums out, assignment payouts out, and the
+    /// collateral a cash-secured put escrows.
     pub cash: Address,
     /// Receives assigned collateral (T3: automated solvency management).
     pub treasury: Address,
@@ -96,11 +102,37 @@ pub struct Config {
     pub quoter: Address,
 }
 
+/// Which option the writer is selling. Both legs share the escrow, premium and
+/// oracle-settlement machinery; they differ only in the token escrowed and the
+/// side of the strike that assigns.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Kind {
+    /// Covered call: escrow the underlying, assign above the strike.
+    Call = 0,
+    /// Cash-secured put: escrow the strike value in cash, assign below it.
+    Put = 1,
+}
+
+impl Kind {
+    /// The token the writer escrows to back this option. A call writer already
+    /// holds the asset; a put writer sets aside the cash to buy it with.
+    fn collateral<'a>(&self, cfg: &'a Config) -> &'a Address {
+        match self {
+            Kind::Call => &cfg.token,
+            Kind::Put => &cfg.cash,
+        }
+    }
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub struct Position {
     pub owner: Address,
-    /// Collateral escrowed, in the token's stroops/units.
+    /// Covered call or cash-secured put — selects the collateral token and the
+    /// assignment direction at settlement.
+    pub kind: Kind,
+    /// Collateral escrowed, in the collateral token's stroops/units.
     pub amount: i128,
     /// Strike scaled by 10^oracle.decimals() — same scale as PriceData.price.
     pub strike: i128,
@@ -189,8 +221,9 @@ impl LustyVault {
             panic_with_error!(&env, Error::InvalidPremium);
         }
 
+        let kind = Kind::Call;
         let this = env.current_contract_address();
-        token::Client::new(&env, &cfg.token).transfer(&owner, &this, &amount);
+        token::Client::new(&env, kind.collateral(&cfg)).transfer(&owner, &this, &amount);
         if premium > 0 {
             token::Client::new(&env, &cfg.cash).transfer(&this, &owner, &premium);
         }
@@ -201,6 +234,7 @@ impl LustyVault {
             &DataKey::Position(id),
             &Position {
                 owner: owner.clone(),
+                kind,
                 amount,
                 strike,
                 expiry,
@@ -247,6 +281,7 @@ impl LustyVault {
         let price = Self::settlement_price(&env, &oracle, &cfg, pos.expiry, now);
 
         let this = env.current_contract_address();
+        let collateral = pos.kind.collateral(&cfg).clone();
         let outcome = if price > pos.strike {
             // Assigned: writer sells the collateral at the strike. Collateral
             // to treasury; strike value to the writer in cash.
@@ -259,13 +294,13 @@ impl LustyVault {
                 .checked_mul(pos.strike)
                 .unwrap_or_else(|| panic_with_error!(&env, Error::InvalidAmount))
                 / 10i128.pow(dec);
-            token::Client::new(&env, &cfg.token).transfer(&this, &cfg.treasury, &pos.amount);
+            token::Client::new(&env, &collateral).transfer(&this, &cfg.treasury, &pos.amount);
             if strike_value > 0 {
                 token::Client::new(&env, &cfg.cash).transfer(&this, &pos.owner, &strike_value);
             }
             symbol_short!("assigned")
         } else {
-            token::Client::new(&env, &cfg.token).transfer(&this, &pos.owner, &pos.amount);
+            token::Client::new(&env, &collateral).transfer(&this, &pos.owner, &pos.amount);
             symbol_short!("kept")
         };
 

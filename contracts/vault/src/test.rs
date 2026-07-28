@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use super::reflector::{Asset, PriceData};
-use super::{LustyVault, LustyVaultClient};
+use super::{Kind, LustyVault, LustyVaultClient};
 use soroban_sdk::testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke};
 use soroban_sdk::{
     contract, contractimpl, symbol_short, token, Address, Env, IntoVal, Symbol,
@@ -124,6 +124,7 @@ fn deposit_escrows_collateral_and_pays_premium_atomically() {
 
     let pos = s.vault.position(&id);
     assert_eq!(pos.owner, s.writer);
+    assert_eq!(pos.kind, Kind::Call);
     assert_eq!(pos.amount, COLLATERAL);
     assert_eq!(pos.strike, STRIKE);
     assert_eq!(pos.expiry, EXPIRY);
