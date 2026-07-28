@@ -8,15 +8,18 @@
 //
 //   σ_realized   ← XLM's own price history (vol.ts, EWMA realized vol)
 //   σ_offered    = σ_realized·(1+spread_rel) + spread_abs   (vol risk premium)
+//   σ_strike     = σ_offered · ψ(z)                          (smile.ts, borrowed
+//                  shape; z = ln(K/F)/(σ_offered·√T))
 //   F            ← forward from perp funding (forward.ts), F ≈ S for weeklies
-//   P_fair       = Black-76(side, F, K, T, σ_offered)       (per unit notional)
+//   P_fair       = Black-76(side, F, K, T, σ_strike)        (per unit notional)
 //   c_eff        = haircut_base + utilization_margin(u)     (one haircut, clamped)
 //   P_user       = P_fair · (1 − c_eff)                     (paid strictly < fair)
 //   capital      = side=='call' ? S : K                     (capital at risk)
 //   APR          = P_user / capital · 365/days · 100        (annualized prem yield)
 //
 // Notes:
-//   * No fabricated σ (was a hardcoded 80%) and no fabricated smile.
+//   * No fabricated σ (was a hardcoded 80%). The smile is no longer fabricated
+//     either: the old SMILE_K was invented, ψ(z) is fitted to a live surface.
 //   * No arbitrary risk-free rate (was r=0.05); carry lives in the forward.
 //   * Put APR denominator is the strike (cash locked), not spot — the old bug.
 //   * The utilization response is INSIDE the haircut, not a separate factor
@@ -34,6 +37,7 @@ import {
 } from './pricing'
 import { getRealizedVol } from './vol'
 import { getForward } from './forward'
+import { smileVol } from './smile'
 import { maxOpenExpiryDays } from './expiries'
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -141,8 +145,10 @@ export interface Quote {
   daysToExpiry: number
   /** Realized σ from XLM history (decimal). */
   sigmaRealized: number
-  /** σ actually used to price = realized + vol risk premium (decimal). */
+  /** At-the-money σ = realized + vol risk premium (decimal). */
   sigmaOffered: number
+  /** σ this strike actually priced at = sigmaOffered × smile factor. */
+  sigmaStrike: number
   /** Black-76 fair premium per unit notional (USD). */
   fairPremium: number
   /** Effective haircut applied (decimal, 0..1). */
@@ -166,6 +172,13 @@ export interface Quote {
 // Raw (un-normalized) Black-76 → haircut → annualized APR for a single strike.
 // The ladder normalization in quoteOption() scales these so the nearest strike
 // hits the time-scaled target and the gradient across strikes is preserved.
+//
+// `sigmaAtm` is the at-the-money level; each strike is priced at that level
+// times the smile (smile.ts), so moneyness moves the vol as well as the payoff.
+// MAX_PRICING_SIGMA deliberately bounds the LEVEL only — it exists to stop a
+// transient realized-vol spike from setting the price, and re-clamping after
+// the smile would flatten the wings, which is the one part of the curve the
+// smile is there to supply.
 function rawStrike(
   side: 'call' | 'put',
   forward: number,
@@ -173,17 +186,18 @@ function rawStrike(
   strike: number,
   timeYears: number,
   daysToExpiry: number,
-  sigmaOffered: number,
+  sigmaAtm: number,
   baseHaircut: number,
-): { fair: number; capital: number; apr: number } {
+): { fair: number; capital: number; apr: number; sigma: number } {
+  const sigma = smileVol(forward, strike, timeYears, sigmaAtm)
   const fair =
     side === 'call'
-      ? black76Call(forward, strike, timeYears, sigmaOffered)
-      : black76Put(forward, strike, timeYears, sigmaOffered)
+      ? black76Call(forward, strike, timeYears, sigma)
+      : black76Put(forward, strike, timeYears, sigma)
   const capital = side === 'call' ? spot : strike
   const user = Math.max(0, fair * (1 - baseHaircut))
   const apr = calculateAPR(user, capital, daysToExpiry)
-  return { fair, capital, apr }
+  return { fair, capital, apr, sigma }
 }
 
 /**
@@ -268,6 +282,7 @@ export function quoteOption(input: QuoteInput): Quote {
     daysToExpiry,
     sigmaRealized,
     sigmaOffered,
+    sigmaStrike: self.sigma,
     fairPremium,
     haircut,
     userPremium,
