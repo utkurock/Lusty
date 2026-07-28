@@ -258,6 +258,68 @@ fn settle_itm_pays_strike_value_and_routes_collateral() {
     assert_eq!(s.cash.balance(&s.vault.address), POOL - PREMIUM - strike_value);
 }
 
+// ── Put settlement ──────────────────────────────────────────────────
+
+/// Open a put and stock the vault with the underlying it may have to deliver.
+fn open_put(s: &Setup<'_>) -> u64 {
+    token::StellarAssetClient::new(&s.env, &s.cash.address).mint(&s.writer, &PUT_COLLATERAL);
+    let stock = Address::generate(&s.env);
+    token::StellarAssetClient::new(&s.env, &s.token.address).mint(&stock, &COLLATERAL);
+    s.vault.fund_underlying(&stock, &COLLATERAL);
+    s.vault
+        .open(&s.writer, &Kind::Put, &PUT_COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM)
+}
+
+#[test]
+fn settle_put_above_strike_returns_the_cash() {
+    let s = setup();
+    let id = open_put(&s);
+
+    // Price at expiry $0.30 > $0.25 strike → the put expires worthless.
+    s.oracle.set_price(&EXPIRY, &30_000_000_000_000);
+    s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 60);
+
+    assert_eq!(s.vault.settle(&id), symbol_short!("kept"));
+    // Cash collateral back, premium kept, no underlying delivered.
+    assert_eq!(s.cash.balance(&s.writer), PUT_COLLATERAL + PREMIUM);
+    assert_eq!(s.token.balance(&s.writer), WRITER_XLM);
+    assert_eq!(s.vault.escrowed(&Kind::Put), 0);
+}
+
+#[test]
+fn settle_put_below_strike_delivers_the_underlying() {
+    let s = setup();
+    let id = open_put(&s);
+
+    // Price at expiry $0.20 < $0.25 strike → assigned; the writer buys at $0.25.
+    s.oracle.set_price(&EXPIRY, &20_000_000_000_000);
+    s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 60);
+
+    assert_eq!(s.vault.settle(&id), symbol_short!("assigned"));
+    // $25 of cash bought 100 XLM at the strike.
+    let units = PUT_COLLATERAL * 10i128.pow(14) / STRIKE;
+    assert_eq!(units, COLLATERAL);
+    assert_eq!(s.token.balance(&s.writer), WRITER_XLM + units);
+    // The cash they committed went to the treasury; they keep only the premium.
+    assert_eq!(s.cash.balance(&s.treasury), PUT_COLLATERAL);
+    assert_eq!(s.cash.balance(&s.writer), PREMIUM);
+    assert_eq!(s.vault.escrowed(&Kind::Put), 0);
+}
+
+#[test]
+fn put_settlement_is_pinned_to_expiry_not_claim_time() {
+    // Mirror of the call-side guard: an assigned put writer must not be able to
+    // wait for a rally and claim their cash back instead of taking delivery.
+    let s = setup();
+    let id = open_put(&s);
+
+    s.oracle.set_price(&EXPIRY, &20_000_000_000_000); // ITM at expiry
+    s.oracle.set_lastprice(&40_000_000_000_000, &(EXPIRY + 1800)); // rallied since
+    s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 1800);
+
+    assert_eq!(s.vault.settle(&id), symbol_short!("assigned"));
+}
+
 #[test]
 fn settlement_is_pinned_to_expiry_not_claim_time() {
     // The off-chain vault's core rule, now on-chain: a writer waiting for a

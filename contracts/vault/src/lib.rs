@@ -178,21 +178,24 @@ impl LustyVault {
         env.storage().instance().set(&DataKey::NextId, &0u64);
     }
 
-    /// Top up the cash pool that pays premiums and assignment payouts.
-    /// Permissionless — anyone may add solvency, nobody can take it out
-    /// except through settlement.
+    /// Top up the cash pool: premiums for both legs, plus the strike value a
+    /// call assignment pays out. Permissionless — anyone may add solvency,
+    /// nobody can take it out except through settlement.
     pub fn fund(env: Env, from: Address, amount: i128) {
-        from.require_auth();
-        if amount <= 0 {
-            panic_with_error!(&env, Error::InvalidAmount);
-        }
         let cfg: Config = env.storage().instance().get(&DataKey::Config).unwrap();
-        token::Client::new(&env, &cfg.cash).transfer(
-            &from,
-            &env.current_contract_address(),
-            &amount,
-        );
-        env.events().publish((symbol_short!("fund"),), (from, amount));
+        Self::fund_pool(&env, &cfg.cash, symbol_short!("cash"), from, amount);
+    }
+
+    /// Top up the underlying pool, which delivers the asset a put assignment
+    /// buys at the strike. Distinct from `fund` because the two payouts draw
+    /// on different tokens.
+    ///
+    /// The vault's underlying balance also holds every open call's escrowed
+    /// collateral, so the deliverable inventory is `balance - escrowed(Call)`.
+    /// Opening a put reserves against that free balance; see `write`.
+    pub fn fund_underlying(env: Env, from: Address, amount: i128) {
+        let cfg: Config = env.storage().instance().get(&DataKey::Config).unwrap();
+        Self::fund_pool(&env, &cfg.token, symbol_short!("under"), from, amount);
     }
 
     /// Write a covered call. Thin wrapper over [`Self::open`] kept so existing
@@ -269,21 +272,45 @@ impl LustyVault {
 
         let this = env.current_contract_address();
         let collateral = pos.kind.collateral(&cfg).clone();
-        let outcome = if price > pos.strike {
-            // Assigned: writer sells the collateral at the strike. Collateral
-            // to treasury; strike value to the writer in cash.
-            //   cash = amount[token units] × strike[10^dec $/unit] / 10^dec
-            // (token stroops and cash units are both 7 decimals, so the
-            // scales cancel and only the oracle scaling remains.)
-            let dec = oracle.decimals();
-            let strike_value = pos
-                .amount
-                .checked_mul(pos.strike)
-                .unwrap_or_else(|| panic_with_error!(&env, Error::InvalidAmount))
-                / 10i128.pow(dec);
+        let scale = 10i128.pow(oracle.decimals());
+        // Assignment is the writer's obligation coming due: a call is exercised
+        // above the strike, a put below it. Equality is out-of-the-money for
+        // both, matching the off-chain vault's rule.
+        let assigned = match pos.kind {
+            Kind::Call => price > pos.strike,
+            Kind::Put => price < pos.strike,
+        };
+
+        let outcome = if assigned {
+            // The escrowed collateral is what the writer gives up; the other
+            // leg of the trade is paid out of the vault's pool.
             token::Client::new(&env, &collateral).transfer(&this, &cfg.treasury, &pos.amount);
-            if strike_value > 0 {
-                token::Client::new(&env, &cfg.cash).transfer(&this, &pos.owner, &strike_value);
+            let (payout_token, payout) = match pos.kind {
+                // Call: the writer sells the escrowed underlying at the strike
+                // and receives that value in cash.
+                //   cash = amount[token units] × strike[10^dec $/unit] / 10^dec
+                // (token stroops and cash units are both 7 decimals, so the
+                // scales cancel and only the oracle scaling remains.)
+                Kind::Call => (
+                    cfg.cash.clone(),
+                    pos.amount
+                        .checked_mul(pos.strike)
+                        .unwrap_or_else(|| panic_with_error!(&env, Error::InvalidAmount))
+                        / scale,
+                ),
+                // Put: the writer buys at the strike with the cash they set
+                // aside, and takes delivery of the underlying it secured.
+                //   units = amount[cash units] × 10^dec / strike[10^dec $/unit]
+                Kind::Put => (
+                    cfg.token.clone(),
+                    pos.amount
+                        .checked_mul(scale)
+                        .unwrap_or_else(|| panic_with_error!(&env, Error::InvalidAmount))
+                        / pos.strike,
+                ),
+            };
+            if payout > 0 {
+                token::Client::new(&env, &payout_token).transfer(&this, &pos.owner, &payout);
             }
             symbol_short!("assigned")
         } else {
@@ -370,6 +397,22 @@ impl LustyVault {
             (owner, amount, strike, expiry, premium, kind),
         );
         id
+    }
+
+    /// `pool` rides along as a second topic so the two pools can be told apart
+    /// — and filtered for — at the RPC level, without resolving token addresses.
+    fn fund_pool(env: &Env, token_id: &Address, pool: Symbol, from: Address, amount: i128) {
+        from.require_auth();
+        if amount <= 0 {
+            panic_with_error!(env, Error::InvalidAmount);
+        }
+        token::Client::new(env, token_id).transfer(
+            &from,
+            &env.current_contract_address(),
+            &amount,
+        );
+        env.events()
+            .publish((symbol_short!("fund"), pool), (from, amount));
     }
 
     fn escrow_of(env: &Env, kind: Kind) -> i128 {

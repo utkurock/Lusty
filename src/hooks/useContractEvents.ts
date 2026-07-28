@@ -18,6 +18,7 @@ export interface VaultEvent {
   outcome?: string
   priceUsd?: number
   from?: string
+  pool?: 'cash' | 'underlying'
   amountCash?: number
 }
 

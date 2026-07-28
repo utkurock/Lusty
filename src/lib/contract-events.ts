@@ -57,6 +57,7 @@ export interface VaultEvent {
   priceUsd?: number
   // fund
   from?: string
+  pool?: 'cash' | 'underlying'
   amountCash?: number
 }
 
@@ -114,6 +115,9 @@ function parseEvent(e: SorobanRpc.Api.EventResponse): VaultEvent | null {
         kind: 'fund',
         id: null,
         from,
+        // Second topic names the pool: 'cash' backs premiums and call
+        // assignments, 'under' the underlying a put assignment delivers.
+        pool: topics[1] === 'under' ? 'underlying' : 'cash',
         amountCash: Number(amount) / TOKEN_SCALE,
       }
     }

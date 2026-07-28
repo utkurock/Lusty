@@ -34,10 +34,13 @@ function label(e: VaultEvent): { tag: string; tone: string; text: string } {
       text: `#${e.id} · ${e.outcome} @ $${(e.priceUsd ?? 0).toFixed(4)}`,
     }
   }
+  const underlying = e.pool === 'underlying'
   return {
     tag: 'fund',
     tone: 'text-ink-2',
-    text: `pool +$${(e.amountCash ?? 0).toLocaleString()}`,
+    text: underlying
+      ? `inventory +${(e.amountCash ?? 0).toLocaleString()} XLM`
+      : `pool +$${(e.amountCash ?? 0).toLocaleString()}`,
   }
 }
 
