@@ -81,6 +81,7 @@ pub enum Error {
     NoPrice = 7,
     StalePrice = 8,
     InvalidPremium = 9,
+    InsufficientPool = 10,
 }
 
 #[contracttype]
@@ -123,6 +124,23 @@ impl Kind {
             Kind::Put => &cfg.cash,
         }
     }
+
+    /// The token the vault pays out when this option assigns — always the leg
+    /// the writer did not escrow, and so always the token the OTHER kind
+    /// escrows. That symmetry is what makes the two pools separable.
+    fn payout<'a>(&self, cfg: &'a Config) -> &'a Address {
+        match self {
+            Kind::Call => &cfg.cash,
+            Kind::Put => &cfg.token,
+        }
+    }
+
+    fn opposite(&self) -> Kind {
+        match self {
+            Kind::Call => Kind::Put,
+            Kind::Put => Kind::Call,
+        }
+    }
 }
 
 #[contracttype]
@@ -155,6 +173,10 @@ enum DataKey {
     /// escrow the same token the premium pool is denominated in, so the pool's
     /// free balance is `balance - escrowed(Put)` — never the raw balance.
     Escrowed(Kind),
+    /// What the vault would owe if every open position of this kind assigned.
+    /// Denominated in the payout token, which is the OTHER leg's collateral:
+    /// calls owe cash, puts owe the underlying.
+    Owed(Kind),
 }
 
 #[contract]
@@ -241,6 +263,13 @@ impl LustyVault {
         Self::escrow_of(&env, kind)
     }
 
+    /// What the vault would pay out if every open position of `kind` assigned,
+    /// in that kind's payout token. Read alongside `escrowed` to check the
+    /// vault's solvency from outside, exactly as the contract checks it.
+    pub fn owed(env: Env, kind: Kind) -> i128 {
+        Self::owed_of(&env, kind)
+    }
+
     /// Settle an expired position against the oracle price AT EXPIRY.
     /// Permissionless: anyone may trigger it (the outcome is deterministic),
     /// so the writer does not depend on the protocol being online.
@@ -281,45 +310,23 @@ impl LustyVault {
             Kind::Put => price < pos.strike,
         };
 
+        let owed = Self::obligation(&env, pos.kind, pos.amount, pos.strike, scale);
         let outcome = if assigned {
             // The escrowed collateral is what the writer gives up; the other
             // leg of the trade is paid out of the vault's pool.
             token::Client::new(&env, &collateral).transfer(&this, &cfg.treasury, &pos.amount);
-            let (payout_token, payout) = match pos.kind {
-                // Call: the writer sells the escrowed underlying at the strike
-                // and receives that value in cash.
-                //   cash = amount[token units] × strike[10^dec $/unit] / 10^dec
-                // (token stroops and cash units are both 7 decimals, so the
-                // scales cancel and only the oracle scaling remains.)
-                Kind::Call => (
-                    cfg.cash.clone(),
-                    pos.amount
-                        .checked_mul(pos.strike)
-                        .unwrap_or_else(|| panic_with_error!(&env, Error::InvalidAmount))
-                        / scale,
-                ),
-                // Put: the writer buys at the strike with the cash they set
-                // aside, and takes delivery of the underlying it secured.
-                //   units = amount[cash units] × 10^dec / strike[10^dec $/unit]
-                Kind::Put => (
-                    cfg.token.clone(),
-                    pos.amount
-                        .checked_mul(scale)
-                        .unwrap_or_else(|| panic_with_error!(&env, Error::InvalidAmount))
-                        / pos.strike,
-                ),
-            };
-            if payout > 0 {
-                token::Client::new(&env, &payout_token).transfer(&this, &pos.owner, &payout);
+            if owed > 0 {
+                token::Client::new(&env, pos.kind.payout(&cfg)).transfer(&this, &pos.owner, &owed);
             }
             symbol_short!("assigned")
         } else {
             token::Client::new(&env, &collateral).transfer(&this, &pos.owner, &pos.amount);
             symbol_short!("kept")
         };
-        // The collateral has left the vault either way — it is no longer
-        // escrowed against this position.
+        // The position is closed either way: its collateral has left the vault
+        // and its contingent payout is no longer owed.
         Self::add_escrow(&env, pos.kind, -pos.amount);
+        Self::add_owed(&env, pos.kind, -owed);
 
         pos.settled = true;
         pos.outcome = outcome.clone();
@@ -376,6 +383,22 @@ impl LustyVault {
             token::Client::new(&env, &cfg.cash).transfer(&this, &owner, &premium);
         }
 
+        // Reserve the assignment payout this position may cost the vault, then
+        // prove both pools still cover everything outstanding. Writing an
+        // option the vault cannot settle would leave the writer holding a
+        // promise it cannot keep, so a short pool rejects the whole deposit
+        // rather than take the position on.
+        let scale = 10i128.pow(ReflectorClient::new(&env, &cfg.oracle).decimals());
+        Self::add_owed(
+            &env,
+            kind,
+            Self::obligation(&env, kind, amount, strike, scale),
+        );
+        // Both sides are checked on every open: the premium always leaves the
+        // cash pool, so even writing a put can push the call side short.
+        Self::require_solvent(&env, &cfg, Kind::Call);
+        Self::require_solvent(&env, &cfg, Kind::Put);
+
         let id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap();
         env.storage().instance().set(&DataKey::NextId, &(id + 1));
         env.storage().persistent().set(
@@ -415,6 +438,39 @@ impl LustyVault {
             .publish((symbol_short!("fund"), pool), (from, amount));
     }
 
+    /// What the vault pays the writer if a position of this shape assigns, in
+    /// the payout token's units. `settle` pays exactly this and `write`
+    /// reserves exactly this, so the solvency guard can never drift from the
+    /// payout it is guarding.
+    ///
+    ///   Call → cash  = amount[underlying] × strike[10^dec $/unit] / 10^dec
+    ///   Put  → units = amount[cash] × 10^dec / strike[10^dec $/unit]
+    ///
+    /// Collateral and cash are both 7-decimal token units, so their scales
+    /// cancel and only the oracle scaling remains.
+    fn obligation(env: &Env, kind: Kind, amount: i128, strike: i128, scale: i128) -> i128 {
+        let (num, den) = match kind {
+            Kind::Call => (strike, scale),
+            Kind::Put => (scale, strike),
+        };
+        amount
+            .checked_mul(num)
+            .unwrap_or_else(|| panic_with_error!(env, Error::InvalidAmount))
+            / den
+    }
+
+    /// Every open position of `kind` must be settleable out of the pool its
+    /// payouts draw on. That pool's token doubles as the OPPOSITE kind's
+    /// collateral, which is held for its writers and must not be lent against
+    /// — hence `balance - escrowed(opposite)` rather than the raw balance.
+    fn require_solvent(env: &Env, cfg: &Config, kind: Kind) {
+        let balance = token::Client::new(env, kind.payout(cfg)).balance(&env.current_contract_address());
+        let free = balance - Self::escrow_of(env, kind.opposite());
+        if free < Self::owed_of(env, kind) {
+            panic_with_error!(env, Error::InsufficientPool);
+        }
+    }
+
     fn escrow_of(env: &Env, kind: Kind) -> i128 {
         env.storage()
             .instance()
@@ -422,17 +478,35 @@ impl LustyVault {
             .unwrap_or(0)
     }
 
+    fn owed_of(env: &Env, kind: Kind) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::Owed(kind))
+            .unwrap_or(0)
+    }
+
     /// Move the escrow counter for `kind` by `delta` (negative on release).
+    fn add_escrow(env: &Env, kind: Kind, delta: i128) {
+        let next = Self::bump(env, Self::escrow_of(env, kind), delta);
+        env.storage().instance().set(&DataKey::Escrowed(kind), &next);
+    }
+
+    /// Move the outstanding-payout counter for `kind` by `delta`.
+    fn add_owed(env: &Env, kind: Kind, delta: i128) {
+        let next = Self::bump(env, Self::owed_of(env, kind), delta);
+        env.storage().instance().set(&DataKey::Owed(kind), &next);
+    }
+
     /// Overflow or a negative total means the books no longer match the
     /// contract's balances, so it panics rather than continue on bad state.
-    fn add_escrow(env: &Env, kind: Kind, delta: i128) {
-        let next = Self::escrow_of(env, kind)
+    fn bump(env: &Env, current: i128, delta: i128) -> i128 {
+        let next = current
             .checked_add(delta)
             .unwrap_or_else(|| panic_with_error!(env, Error::InvalidAmount));
         if next < 0 {
             panic_with_error!(env, Error::InvalidAmount);
         }
-        env.storage().instance().set(&DataKey::Escrowed(kind), &next);
+        next
     }
 
     /// Expiry-pinned settlement price, mirroring the off-chain vault's rule:

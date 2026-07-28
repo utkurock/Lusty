@@ -137,11 +137,7 @@ fn deposit_escrows_collateral_and_pays_premium_atomically() {
 #[test]
 fn open_put_escrows_cash_collateral() {
     let s = setup();
-    token::StellarAssetClient::new(&s.env, &s.cash.address).mint(&s.writer, &PUT_COLLATERAL);
-
-    let id = s
-        .vault
-        .open(&s.writer, &Kind::Put, &PUT_COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    let id = open_put(&s);
 
     let pos = s.vault.position(&id);
     assert_eq!(pos.kind, Kind::Put);
@@ -154,6 +150,54 @@ fn open_put_escrows_cash_collateral() {
     // …and the escrow counter keeps it out of the free premium pool.
     assert_eq!(s.vault.escrowed(&Kind::Put), PUT_COLLATERAL);
     assert_eq!(s.vault.escrowed(&Kind::Call), 0);
+    // Assignment would deliver 100 XLM, reserved against the underlying pool.
+    assert_eq!(s.vault.owed(&Kind::Put), COLLATERAL);
+    assert_eq!(s.vault.owed(&Kind::Call), 0);
+}
+
+// ── Pool solvency ───────────────────────────────────────────────────
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")] // InsufficientPool
+fn open_put_rejected_without_deliverable_inventory() {
+    // The vault holds no underlying, so it could not honour the delivery this
+    // put commits it to. Fail at open rather than strand the writer at expiry.
+    let s = setup();
+    token::StellarAssetClient::new(&s.env, &s.cash.address).mint(&s.writer, &PUT_COLLATERAL);
+    s.vault
+        .open(&s.writer, &Kind::Put, &PUT_COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")] // InsufficientPool
+fn open_call_rejected_when_pool_cannot_cover_assignment() {
+    // One call for 100 XLM at $0.25 owes $25 on assignment; the pool covers
+    // forty of those. The forty-first is refused.
+    let s = setup();
+    token::StellarAssetClient::new(&s.env, &s.token.address).mint(&s.writer, &(COLLATERAL * 41));
+    for _ in 0..41 {
+        s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &0);
+    }
+}
+
+#[test]
+fn a_calls_escrow_is_not_lent_to_a_put() {
+    // The call writer's 100 XLM sits in the same token the put would be paid
+    // in. It backs their position only — a put must bring its own inventory.
+    let s = setup();
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    assert_eq!(s.token.balance(&s.vault.address), COLLATERAL);
+
+    token::StellarAssetClient::new(&s.env, &s.cash.address).mint(&s.writer, &PUT_COLLATERAL);
+    let refused = s.vault.try_open(
+        &s.writer,
+        &Kind::Put,
+        &PUT_COLLATERAL,
+        &STRIKE,
+        &EXPIRY,
+        &PREMIUM,
+    );
+    assert!(refused.is_err());
 }
 
 #[test]
