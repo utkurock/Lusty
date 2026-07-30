@@ -1,10 +1,10 @@
 #![cfg(test)]
 
 use super::reflector::{Asset, PriceData};
-use super::{Kind, Limits, LustyVault, LustyVaultClient};
+use super::{Kind, Limits, LustyVault, LustyVaultClient, MAX_QUOTERS};
 use soroban_sdk::testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke};
 use soroban_sdk::{
-    contract, contractimpl, symbol_short, token, vec, Address, Env, IntoVal, Symbol,
+    contract, contractimpl, symbol_short, token, vec, Address, Env, IntoVal, Symbol, Vec,
 };
 
 // ── Mock Reflector oracle ───────────────────────────────────────────
@@ -141,7 +141,7 @@ fn setup() -> Setup<'static> {
             sac.address(),
             usdc.address(),
             treasury.clone(),
-            quoter.clone(),
+            vec![&env, quoter.clone()],
             admin.clone(),
             limits(MAX_POSITION_CALL, MAX_POSITION_PUT),
         ),
@@ -160,7 +160,7 @@ fn setup() -> Setup<'static> {
 #[test]
 fn deposit_escrows_collateral_and_pays_premium_atomically() {
     let s = setup();
-    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
     assert_eq!(id, 0);
     // Collateral escrowed by the contract…
     assert_eq!(s.token.balance(&s.writer), WRITER_XLM - COLLATERAL);
@@ -210,7 +210,7 @@ fn open_put_rejected_without_deliverable_inventory() {
     let s = setup();
     token::StellarAssetClient::new(&s.env, &s.cash.address).mint(&s.writer, &PUT_COLLATERAL);
     s.vault
-        .open(&s.writer, &Kind::Put, &PUT_COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+        .open(&s.writer, &Kind::Put, &PUT_COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
 }
 
 #[test]
@@ -221,7 +221,7 @@ fn open_call_rejected_when_pool_cannot_cover_assignment() {
     let s = setup();
     token::StellarAssetClient::new(&s.env, &s.token.address).mint(&s.writer, &(COLLATERAL * 41));
     for _ in 0..41 {
-        s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &0);
+        s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &0, &s.quoter);
     }
 }
 
@@ -230,7 +230,7 @@ fn a_calls_escrow_is_not_lent_to_a_put() {
     // The call writer's 100 XLM sits in the same token the put would be paid
     // in. It backs their position only — a put must bring its own inventory.
     let s = setup();
-    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
     assert_eq!(s.token.balance(&s.vault.address), COLLATERAL);
 
     token::StellarAssetClient::new(&s.env, &s.cash.address).mint(&s.writer, &PUT_COLLATERAL);
@@ -241,6 +241,7 @@ fn a_calls_escrow_is_not_lent_to_a_put() {
         &STRIKE,
         &EXPIRY,
         &PREMIUM,
+        &s.quoter,
     );
     assert!(refused.is_err());
 }
@@ -248,10 +249,10 @@ fn a_calls_escrow_is_not_lent_to_a_put() {
 #[test]
 fn open_matches_deposit_for_calls() {
     let s = setup();
-    let a = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    let a = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
     let b = s
         .vault
-        .open(&s.writer, &Kind::Call, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+        .open(&s.writer, &Kind::Call, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
     assert_eq!(s.vault.position(&a).kind, s.vault.position(&b).kind);
     assert_eq!(s.vault.escrowed(&Kind::Call), COLLATERAL * 2);
 }
@@ -259,7 +260,7 @@ fn open_matches_deposit_for_calls() {
 #[test]
 fn settlement_releases_the_escrow() {
     let s = setup();
-    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
     assert_eq!(s.vault.escrowed(&Kind::Call), COLLATERAL);
 
     s.oracle.set_price(&EXPIRY, &23_000_000_000_000);
@@ -272,8 +273,8 @@ fn settlement_releases_the_escrow() {
 #[test]
 fn ids_increment() {
     let s = setup();
-    let a = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
-    let b = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    let a = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
+    let b = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
     assert_eq!((a, b), (0, 1));
 }
 
@@ -281,21 +282,21 @@ fn ids_increment() {
 #[should_panic(expected = "Error(Contract, #1)")] // InvalidAmount
 fn deposit_rejects_zero_amount() {
     let s = setup();
-    s.vault.deposit(&s.writer, &0, &STRIKE, &EXPIRY, &PREMIUM);
+    s.vault.deposit(&s.writer, &0, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
 }
 
 #[test]
 #[should_panic(expected = "Error(Contract, #3)")] // InvalidExpiry
 fn deposit_rejects_past_expiry() {
     let s = setup();
-    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &(START - 1), &PREMIUM);
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &(START - 1), &PREMIUM, &s.quoter);
 }
 
 #[test]
 #[should_panic(expected = "Error(Contract, #9)")] // InvalidPremium
 fn deposit_rejects_negative_premium() {
     let s = setup();
-    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &-1);
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &-1, &s.quoter);
 }
 
 #[test]
@@ -307,7 +308,7 @@ fn deposit_fails_closed_when_pool_short() {
     s.vault.set_limits(&limits_with_premium_bps(10_000));
     token::StellarAssetClient::new(&s.env, &s.token.address).mint(&s.writer, &MAX_POSITION_CALL);
     s.vault
-        .deposit(&s.writer, &MAX_POSITION_CALL, &STRIKE, &EXPIRY, &(POOL + 1));
+        .deposit(&s.writer, &MAX_POSITION_CALL, &STRIKE, &EXPIRY, &(POOL + 1), &s.quoter);
 }
 
 // ── Settlement ──────────────────────────────────────────────────────
@@ -315,7 +316,7 @@ fn deposit_fails_closed_when_pool_short() {
 #[test]
 fn settle_otm_returns_collateral_no_cash() {
     let s = setup();
-    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
 
     // Price at expiry $0.23 < $0.25 strike → kept.
     s.oracle.set_price(&EXPIRY, &23_000_000_000_000);
@@ -333,7 +334,7 @@ fn settle_otm_returns_collateral_no_cash() {
 #[test]
 fn settle_itm_pays_strike_value_and_routes_collateral() {
     let s = setup();
-    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
 
     // Price at expiry $0.30 > $0.25 strike → assigned.
     s.oracle.set_price(&EXPIRY, &30_000_000_000_000);
@@ -360,7 +361,7 @@ fn open_put(s: &Setup<'_>) -> u64 {
     token::StellarAssetClient::new(&s.env, &s.token.address).mint(&stock, &COLLATERAL);
     s.vault.fund_underlying(&stock, &COLLATERAL);
     s.vault
-        .open(&s.writer, &Kind::Put, &PUT_COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM)
+        .open(&s.writer, &Kind::Put, &PUT_COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter)
 }
 
 #[test]
@@ -418,7 +419,7 @@ fn settlement_is_pinned_to_expiry_not_claim_time() {
     // The off-chain vault's core rule, now on-chain: a writer waiting for a
     // dip after expiry must NOT be able to dodge assignment.
     let s = setup();
-    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
 
     // ITM at expiry ($0.30), crashed later ($0.10). Settles at expiry price.
     s.oracle.set_price(&EXPIRY, &30_000_000_000_000);
@@ -433,7 +434,7 @@ fn settle_normalizes_expiry_to_feed_resolution() {
     let s = setup();
     // Expiry 100s into a 300s period → price recorded at the period start.
     let expiry = EXPIRY + 100;
-    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &expiry, &PREMIUM);
+    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &expiry, &PREMIUM, &s.quoter);
     s.oracle.set_price(&EXPIRY, &30_000_000_000_000); // EXPIRY % 300 == 0
     s.env.ledger().with_mut(|l| l.timestamp = expiry + 60);
 
@@ -444,7 +445,7 @@ fn settle_normalizes_expiry_to_feed_resolution() {
 #[should_panic(expected = "Error(Contract, #6)")] // NotExpired
 fn settle_rejects_before_expiry() {
     let s = setup();
-    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
     s.env.ledger().with_mut(|l| l.timestamp = EXPIRY - 1);
     s.vault.settle(&id);
 }
@@ -453,7 +454,7 @@ fn settle_rejects_before_expiry() {
 #[should_panic(expected = "Error(Contract, #5)")] // AlreadySettled
 fn settle_rejects_double_settlement() {
     let s = setup();
-    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
     s.oracle.set_price(&EXPIRY, &23_000_000_000_000);
     s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 60);
     s.vault.settle(&id);
@@ -463,7 +464,7 @@ fn settle_rejects_double_settlement() {
 #[test]
 fn settle_falls_back_to_fresh_lastprice() {
     let s = setup();
-    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
     // No historical record; lastprice is 10 min old → accepted.
     let now = EXPIRY + 60;
     s.oracle.set_lastprice(&23_000_000_000_000, &(now - 600));
@@ -476,7 +477,7 @@ fn settle_falls_back_to_fresh_lastprice() {
 #[should_panic(expected = "Error(Contract, #8)")] // StalePrice
 fn settle_blocks_on_stale_fallback() {
     let s = setup();
-    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
     // No historical record; lastprice is 2h old → fail closed.
     let now = EXPIRY + 60;
     s.oracle.set_lastprice(&23_000_000_000_000, &(now - 7200));
@@ -488,7 +489,7 @@ fn settle_blocks_on_stale_fallback() {
 #[should_panic(expected = "Error(Contract, #7)")] // NoPrice
 fn settle_blocks_when_feed_is_empty() {
     let s = setup();
-    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
     // The feed goes dark after the position is written: no record at expiry and
     // nothing live to fall back to.
     s.oracle.clear_lastprice();
@@ -505,7 +506,7 @@ fn settle_blocks_late_claim_with_pruned_history() {
     // and below strike (would settle "kept" and dodge assignment) — but the
     // claim is 2h after expiry, so the contract refuses rather than mis-settle.
     let s = setup();
-    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
     let now = EXPIRY + 7200; // 2h late, > 1h staleness window
     s.oracle.set_lastprice(&23_000_000_000_000, &(now - 60)); // fresh, < strike
     s.env.ledger().with_mut(|l| l.timestamp = now);
@@ -534,13 +535,13 @@ fn deposit_requires_writer_auth() {
             sac.address(),
             usdc.address(),
             treasury,
+            vec![&env, quoter.clone()],
             quoter.clone(),
-            quoter,
             limits(MAX_POSITION_CALL, MAX_POSITION_PUT),
         ),
     );
     let vault = LustyVaultClient::new(&env, &vault_id);
-    vault.deposit(&writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    vault.deposit(&writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &quoter);
 }
 
 // ── On-chain verifiability ──────────────────────────────────────────
@@ -551,9 +552,9 @@ fn an_owners_positions_are_discoverable_from_state() {
     let other = Address::generate(&s.env);
     token::StellarAssetClient::new(&s.env, &s.token.address).mint(&other, &COLLATERAL);
 
-    let a = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
-    let b = s.vault.deposit(&other, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
-    let c = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    let a = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
+    let b = s.vault.deposit(&other, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
+    let c = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
 
     assert_eq!(s.vault.position_count(&s.writer), 2);
     assert_eq!(s.vault.position_count(&other), 1);
@@ -568,7 +569,7 @@ fn an_owners_positions_are_discoverable_from_state() {
 #[test]
 fn settled_positions_stay_in_the_owners_history() {
     let s = setup();
-    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
     s.oracle.set_price(&EXPIRY, &23_000_000_000_000);
     s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 60);
     s.vault.settle(&id);
@@ -580,7 +581,7 @@ fn settled_positions_stay_in_the_owners_history() {
 #[test]
 fn stats_expose_the_solvency_the_contract_enforces() {
     let s = setup();
-    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
 
     let st = s.vault.stats();
     assert_eq!(st.escrowed_call, COLLATERAL);
@@ -603,7 +604,7 @@ fn open_rejects_a_position_over_the_size_cap() {
     token::StellarAssetClient::new(&s.env, &s.token.address)
         .mint(&s.writer, &(MAX_POSITION_CALL + 1));
     s.vault
-        .deposit(&s.writer, &(MAX_POSITION_CALL + 1), &STRIKE, &EXPIRY, &0);
+        .deposit(&s.writer, &(MAX_POSITION_CALL + 1), &STRIKE, &EXPIRY, &0, &s.quoter);
 }
 
 #[test]
@@ -614,7 +615,7 @@ fn admin_can_tighten_the_size_cap() {
 
     let refused = s
         .vault
-        .try_deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+        .try_deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
     assert!(refused.is_err());
 }
 
@@ -666,18 +667,18 @@ fn exposure_accumulates_per_expiry_and_caps_the_book() {
         MAX_EXPIRY_PUT,
     ));
 
-    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &0);
-    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &0);
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &0, &s.quoter);
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &0, &s.quoter);
     assert_eq!(s.vault.exposure(&Kind::Call, &EXPIRY), COLLATERAL * 2);
 
     let refused = s
         .vault
-        .try_deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &0);
+        .try_deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &0, &s.quoter);
     assert!(refused.is_err());
 
     // A different expiry has its own budget, so the vault stays open for business.
     let later = EXPIRY + 7 * 86400;
-    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &later, &0);
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &later, &0, &s.quoter);
     assert_eq!(s.vault.exposure(&Kind::Call, &later), COLLATERAL);
 }
 
@@ -690,7 +691,7 @@ fn settlement_frees_the_expiry_budget() {
         COLLATERAL,
         MAX_EXPIRY_PUT,
     ));
-    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &0);
+    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &0, &s.quoter);
 
     s.oracle.set_price(&EXPIRY, &23_000_000_000_000);
     s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 60);
@@ -711,7 +712,7 @@ fn premium_ceiling_caps_a_call_against_collateral_value() {
     // 100 XLM at $0.20 is $20 of collateral; at 10% the vault will pay $2.
     s.vault.set_limits(&limits_with_premium_bps(1_000));
     s.vault
-        .deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &2_0000001);
+        .deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &2_0000001, &s.quoter);
 }
 
 #[test]
@@ -721,7 +722,7 @@ fn a_premium_exactly_at_the_ceiling_is_accepted() {
     let cap = COLLATERAL * SPOT / 10i128.pow(14) / 10; // $2.00
     assert_eq!(cap, 2_0000000);
 
-    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &cap);
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &cap, &s.quoter);
     assert_eq!(s.cash.balance(&s.writer), cap);
 }
 
@@ -736,7 +737,7 @@ fn premium_ceiling_caps_a_put_against_its_cash_collateral() {
     token::StellarAssetClient::new(&s.env, &s.token.address).mint(&stock, &COLLATERAL);
     s.vault.fund_underlying(&stock, &COLLATERAL);
     s.vault
-        .open(&s.writer, &Kind::Put, &PUT_COLLATERAL, &STRIKE, &EXPIRY, &2_5000001);
+        .open(&s.writer, &Kind::Put, &PUT_COLLATERAL, &STRIKE, &EXPIRY, &2_5000001, &s.quoter);
 }
 
 #[test]
@@ -749,21 +750,21 @@ fn the_ceiling_is_priced_at_spot_not_at_the_quoters_strike() {
     // it — the quoter cannot inflate what it is not allowed to set.
     let s = setup();
     let absurd_strike = 10_000i128 * 10i128.pow(14);
-    s.vault.deposit(&s.writer, &1, &absurd_strike, &EXPIRY, &1_0000000);
+    s.vault.deposit(&s.writer, &1, &absurd_strike, &EXPIRY, &1_0000000, &s.quoter);
 }
 
 #[test]
 fn admin_can_tighten_the_premium_ceiling() {
     let s = setup();
     // PREMIUM ($5 on $20 of collateral) clears the default ceiling…
-    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
     // …and stops clearing it once the admin pulls the ceiling under it.
     s.vault.set_limits(&limits_with_premium_bps(1_000));
     assert_eq!(s.vault.limits().max_premium_bps, 1_000);
 
     let refused = s
         .vault
-        .try_deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+        .try_deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
     assert!(refused.is_err());
 }
 
@@ -790,7 +791,7 @@ fn a_call_cannot_be_written_against_a_stale_feed() {
     // rather than size the ceiling off a price that no longer holds.
     let s = setup();
     s.env.ledger().with_mut(|l| l.timestamp = START + 7200);
-    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
 }
 
 #[test]
@@ -798,7 +799,7 @@ fn a_call_cannot_be_written_against_a_stale_feed() {
 fn a_call_cannot_be_written_against_an_empty_feed() {
     let s = setup();
     s.oracle.clear_lastprice();
-    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
 }
 
 #[test]
@@ -820,7 +821,7 @@ fn the_ceiling_is_checked_before_any_collateral_moves() {
     let s = setup();
     s.vault.set_limits(&limits_with_premium_bps(1_000));
     s.vault
-        .deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &POOL);
+        .deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &POOL, &s.quoter);
 }
 
 #[test]
@@ -839,11 +840,186 @@ fn deposit_requires_quoter_cosignature() {
                 STRIKE,
                 EXPIRY,
                 PREMIUM,
+                s.quoter.clone(),
             )
                 .into_val(&s.env),
             sub_invokes: &[],
         },
     }]);
     s.vault
-        .deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM);
+        .deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
+}
+
+// ── Quoter set ──────────────────────────────────────────────────────
+// The premium is the only number a writer cannot set alone, so the set of keys
+// allowed to sign one is the vault's day-to-day trust boundary. What matters:
+// it is enforced on every write, only the admin can change it, and changing it
+// never reaches backwards into positions already written.
+
+#[test]
+#[should_panic(expected = "Error(Contract, #15)")] // UnknownQuoter
+fn a_key_outside_the_set_cannot_price_a_position() {
+    let s = setup();
+    let impostor = Address::generate(&s.env);
+    // Auth is mocked for everyone, so the only thing standing between this
+    // address and a signed premium is membership of the set.
+    s.vault
+        .deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &impostor);
+}
+
+#[test]
+fn an_added_quoter_can_price_immediately() {
+    let s = setup();
+    let second = Address::generate(&s.env);
+    s.vault.add_quoter(&second);
+
+    assert!(s.vault.is_quoter(&second));
+    assert_eq!(s.vault.quoters().len(), 2);
+    let id = s
+        .vault
+        .deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &second);
+    assert_eq!(s.vault.position(&id).premium, PREMIUM);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #15)")] // UnknownQuoter
+fn a_removed_quoter_can_no_longer_price() {
+    let s = setup();
+    let second = Address::generate(&s.env);
+    s.vault.add_quoter(&second);
+    s.vault.remove_quoter(&second);
+    assert!(!s.vault.is_quoter(&second));
+
+    s.vault
+        .deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &second);
+}
+
+#[test]
+fn revoking_a_quoter_leaves_the_positions_it_priced_untouched() {
+    // The compromise response has to be safe to reach for. Revocation closes
+    // the door to new quotes; it must not strand collateral already escrowed
+    // behind a key that is now untrusted — settlement never consults a quoter.
+    let s = setup();
+    let compromised = Address::generate(&s.env);
+    s.vault.add_quoter(&compromised);
+    let id = s
+        .vault
+        .deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &compromised);
+
+    s.vault.remove_quoter(&compromised);
+
+    s.oracle.set_price(&EXPIRY, &23_000_000_000_000); // below strike → kept
+    s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 60);
+    assert_eq!(s.vault.settle(&id), symbol_short!("kept"));
+    assert_eq!(s.token.balance(&s.writer), WRITER_XLM);
+    assert_eq!(s.cash.balance(&s.writer), PREMIUM);
+}
+
+#[test]
+fn rotation_never_leaves_the_vault_unable_to_quote() {
+    // Add-then-remove, the order the contract forces by refusing to empty the
+    // set: there is no ledger in between where a writer would be turned away.
+    let s = setup();
+    let incoming = Address::generate(&s.env);
+
+    s.vault.add_quoter(&incoming);
+    s.vault.remove_quoter(&s.quoter);
+
+    assert_eq!(s.vault.quoters(), vec![&s.env, incoming.clone()]);
+    assert!(!s.vault.is_quoter(&s.quoter));
+    s.vault
+        .deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &incoming);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #17)")] // LastQuoter
+fn the_last_quoter_cannot_be_removed() {
+    // Emptying the set would close the vault to new writers with no way back
+    // in that does not go through the admin again.
+    let s = setup();
+    s.vault.remove_quoter(&s.quoter);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #16)")] // QuoterExists
+fn a_quoter_cannot_be_added_twice() {
+    // A duplicate would survive its own removal — one `remove_quoter` would
+    // look like a revocation while leaving the key able to price.
+    let s = setup();
+    s.vault.add_quoter(&s.quoter);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #15)")] // UnknownQuoter
+fn removing_a_key_that_was_never_a_quoter_is_refused() {
+    let s = setup();
+    s.vault.remove_quoter(&Address::generate(&s.env));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #18)")] // TooManyQuoters
+fn the_set_is_bounded() {
+    // Every member can price up to the premium ceiling, so an unbounded set is
+    // an unbounded trust surface — and eventually an oversized ledger entry.
+    let s = setup();
+    for _ in 1..MAX_QUOTERS {
+        s.vault.add_quoter(&Address::generate(&s.env));
+    }
+    assert_eq!(s.vault.quoters().len(), MAX_QUOTERS);
+    s.vault.add_quoter(&Address::generate(&s.env));
+}
+
+#[test]
+#[should_panic] // only the writer's auth is mocked → admin auth missing
+fn only_the_admin_can_change_the_quoter_set() {
+    let s = setup();
+    let outsider = Address::generate(&s.env);
+    s.env.mock_auths(&[MockAuth {
+        address: &s.writer,
+        invoke: &MockAuthInvoke {
+            contract: &s.vault.address,
+            fn_name: "add_quoter",
+            args: (outsider.clone(),).into_val(&s.env),
+            sub_invokes: &[],
+        },
+    }]);
+    s.vault.add_quoter(&outsider);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #17)")] // LastQuoter
+fn the_constructor_refuses_an_empty_set() {
+    register_vault_with_quoters(Vec::new(&Env::default()));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #16)")] // QuoterExists
+fn the_constructor_refuses_a_duplicate_set() {
+    let env = Env::default();
+    let quoter = Address::generate(&env);
+    register_vault_with_quoters(vec![&env, quoter.clone(), quoter]);
+}
+
+/// Deploy a bare vault with a given quoter set, for the constructor's own
+/// validation — `setup()` cannot express a set it would refuse to store.
+fn register_vault_with_quoters(quoters: Vec<Address>) {
+    let env = quoters.env().clone();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(admin.clone());
+    let usdc = env.register_stellar_asset_contract_v2(admin.clone());
+    let oracle_id = env.register(MockOracle, ());
+    env.register(
+        LustyVault,
+        (
+            oracle_id,
+            Symbol::new(&env, "XLM"),
+            sac.address(),
+            usdc.address(),
+            Address::generate(&env),
+            quoters,
+            admin,
+            limits(MAX_POSITION_CALL, MAX_POSITION_PUT),
+        ),
+    );
 }

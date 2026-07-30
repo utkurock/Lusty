@@ -1,18 +1,19 @@
-//! Lusty Vault — trustless covered-call vault (Soroban, v2).
+//! Lusty Vault — trustless options vault (Soroban, v4).
 //!
-//! v2 closes the full money loop on-chain. All three legs of a covered call
-//! are now contract-enforced:
+//! The full money loop is on-chain. All three legs of a written option are
+//! contract-enforced:
 //!
 //!   1. ESCROW: collateral (XLM) is held by this contract — nobody, including
 //!      the protocol, can move it except through `settle()`.
 //!   2. PREMIUM: paid to the writer in cash (USDC) from the contract's pool
 //!      ATOMICALLY inside `deposit()` — no separate server payout to trust.
-//!      The premium amount is the protocol's signed offer: `deposit` requires
-//!      auth from both the writer AND the quoter (the pricing engine's key),
-//!      the on-chain equivalent of an RFQ. Custody and settlement never
-//!      depend on the quoter, and `Limits::max_premium_bps` bounds what its
-//!      signature can be worth: a premium is capped at a share of the
-//!      collateral escrowed against it, valued at the oracle price.
+//!      The premium amount is the protocol's signed offer: `open` requires
+//!      auth from both the writer AND an authorised quoter (a pricing-engine
+//!      key), the on-chain equivalent of an RFQ. Custody and settlement never
+//!      depend on a quoter, `Limits::max_premium_bps` bounds what one
+//!      signature can be worth — a premium is capped at a share of the
+//!      collateral escrowed against it, valued at the oracle price — and the
+//!      admin can revoke a key without touching anything it already priced.
 //!   3. SETTLEMENT: decided by the Reflector price AT EXPIRY, permissionless.
 //!      Assigned positions now follow real covered-call economics: the writer
 //!      receives the strike value in cash, the collateral goes to the
@@ -88,6 +89,13 @@ pub enum Error {
     InvalidLimit = 12,
     ExpiryFull = 13,
     PremiumTooHigh = 14,
+    /// The address offered as the quote's signer is not an authorised quoter.
+    UnknownQuoter = 15,
+    QuoterExists = 16,
+    /// Removing the last quoter would leave no key able to price a position,
+    /// closing the vault to new writers. Rotate by adding first, then removing.
+    LastQuoter = 17,
+    TooManyQuoters = 18,
 }
 
 #[contracttype]
@@ -105,17 +113,17 @@ pub struct Config {
     pub cash: Address,
     /// Receives assigned collateral (T3: automated solvency management).
     pub treasury: Address,
-    /// Pricing-engine key that must co-sign every deposit's premium (RFQ).
-    /// It prices within a band it cannot widen: `Limits::max_premium_bps`
-    /// caps the premium at a share of escrowed collateral, so losing this key
-    /// costs at most that share rather than the pool. Making it a multisig
-    /// account narrows the exposure further, and is an account-level change
-    /// this contract neither sees nor needs to.
-    pub quoter: Address,
-    /// Sets the risk limits. Custody and settlement never route through it:
-    /// the admin cannot move collateral, price an option or settle a position.
+    /// Sets the risk limits and maintains the quoter set. Custody and
+    /// settlement never route through it: the admin cannot move collateral,
+    /// price an option or settle a position.
     pub admin: Address,
 }
+
+/// Most pricing keys the vault will hold at once. The set exists for rotation
+/// and redundancy, not for scale — every member can price up to
+/// `Limits::max_premium_bps`, so a larger set is a wider trust surface, and
+/// the bound keeps it from growing there by accident.
+pub const MAX_QUOTERS: u32 = 8;
 
 /// Risk limits the contract enforces itself, rather than trusting the caller
 /// to have checked them. Stored apart from `Config` because these are the only
@@ -224,6 +232,10 @@ pub struct Position {
 #[derive(Clone)]
 enum DataKey {
     Config,
+    /// Pricing keys allowed to co-sign a premium. Held apart from `Config`
+    /// because, like `Limits`, this is a value the admin can change — and
+    /// unlike `Config`, it is the one the vault's day-to-day safety rests on.
+    Quoters,
     NextId,
     Position(u64),
     /// Collateral currently escrowed for OPEN positions of this kind. Puts
@@ -279,21 +291,74 @@ impl LustyVault {
         token: Address,
         cash: Address,
         treasury: Address,
-        quoter: Address,
+        quoters: Vec<Address>,
         admin: Address,
         limits: Limits,
     ) {
         env.storage().instance().set(
             &DataKey::Config,
-            &Config { oracle, feed, token, cash, treasury, quoter, admin },
+            &Config { oracle, feed, token, cash, treasury, admin },
         );
+        Self::store_quoters(&env, &quoters);
         Self::store_limits(&env, &limits);
         env.storage().instance().set(&DataKey::NextId, &0u64);
     }
 
-    /// Adjust the risk limits. Admin-only, and deliberately the admin's ONLY
-    /// power: it can shrink what the vault accepts, never reach the collateral
-    /// already escrowed under the old limits.
+    /// Authorise another pricing key. Admin-only, and the reason the admin
+    /// account is worth putting behind a multisig: this is the one call that
+    /// can widen who may set a premium.
+    ///
+    /// Rotation is add-then-remove, so the vault never passes through a state
+    /// with no quoter and no new writers can be opened in the gap.
+    pub fn add_quoter(env: Env, quoter: Address) {
+        let cfg: Config = env.storage().instance().get(&DataKey::Config).unwrap();
+        cfg.admin.require_auth();
+        let mut quoters = Self::quoter_set(&env);
+        if quoters.contains(&quoter) {
+            panic_with_error!(&env, Error::QuoterExists);
+        }
+        quoters.push_back(quoter.clone());
+        Self::store_quoters(&env, &quoters);
+        env.events()
+            .publish((symbol_short!("quoter"), symbol_short!("add")), quoter);
+    }
+
+    /// Revoke a pricing key — the response to a compromised quoter, and the
+    /// half of rotation that matters. Positions it already priced are
+    /// untouched: their premium is paid and their collateral is escrowed, and
+    /// settlement never consults a quoter.
+    pub fn remove_quoter(env: Env, quoter: Address) {
+        let cfg: Config = env.storage().instance().get(&DataKey::Config).unwrap();
+        cfg.admin.require_auth();
+        let quoters = Self::quoter_set(&env);
+        let index = quoters
+            .first_index_of(&quoter)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::UnknownQuoter));
+        if quoters.len() == 1 {
+            panic_with_error!(&env, Error::LastQuoter);
+        }
+        let mut remaining = quoters;
+        remaining.remove(index);
+        Self::store_quoters(&env, &remaining);
+        env.events()
+            .publish((symbol_short!("quoter"), symbol_short!("remove")), quoter);
+    }
+
+    /// Every key currently allowed to price a position. Public so the set the
+    /// vault actually enforces can be read from state and compared against
+    /// whatever the operator says it is.
+    pub fn quoters(env: Env) -> Vec<Address> {
+        Self::quoter_set(&env)
+    }
+
+    pub fn is_quoter(env: Env, quoter: Address) -> bool {
+        Self::quoter_set(&env).contains(&quoter)
+    }
+
+    /// Adjust the risk limits. Admin-only: it can shrink what the vault
+    /// accepts, never reach the collateral already escrowed under the old
+    /// limits. Together with the quoter set, this is the whole of what the
+    /// admin can do — it prices nothing, holds nothing and settles nothing.
     ///
     /// `max_premium_bps` is the one limit that also widens something — the band
     /// the quoter prices in. The admin still cannot pay a premium (only the
@@ -337,8 +402,8 @@ impl LustyVault {
         Self::fund_pool(&env, &cfg.token, symbol_short!("under"), from, amount);
     }
 
-    /// Write a covered call. Thin wrapper over [`Self::open`] kept so existing
-    /// clients and the deployed CLI recipes keep working unchanged.
+    /// Write a covered call — a thin wrapper over [`Self::open`] for the leg
+    /// that has one by default.
     pub fn deposit(
         env: Env,
         owner: Address,
@@ -346,8 +411,9 @@ impl LustyVault {
         strike: i128,
         expiry: u64,
         premium: i128,
+        quoter: Address,
     ) -> u64 {
-        Self::write(env, owner, Kind::Call, amount, strike, expiry, premium)
+        Self::write(env, owner, Kind::Call, amount, strike, expiry, premium, quoter)
     }
 
     /// Write an option of either kind: escrow `amount` collateral at `strike`
@@ -361,6 +427,14 @@ impl LustyVault {
     ///   Call → the underlying itself; the writer covers 1 unit per unit.
     ///   Put  → cash; it secures `amount × 10^dec / strike` units of the
     ///          underlying, the quantity the writer commits to buy at strike.
+    ///
+    /// `quoter` names which authorised pricing key is co-signing this premium.
+    /// It is an argument rather than something the contract looks up because
+    /// authorization has to be demanded of one specific address: with a set,
+    /// requiring every member to sign would need all of them online, and the
+    /// contract cannot ask "did any of you sign?" after the fact. Naming the
+    /// signer keeps the check exact — the address must be in the set AND must
+    /// have authorized this exact call.
     pub fn open(
         env: Env,
         owner: Address,
@@ -369,8 +443,9 @@ impl LustyVault {
         strike: i128,
         expiry: u64,
         premium: i128,
+        quoter: Address,
     ) -> u64 {
-        Self::write(env, owner, kind, amount, strike, expiry, premium)
+        Self::write(env, owner, kind, amount, strike, expiry, premium, quoter)
     }
 
     /// Collateral currently escrowed for open positions of `kind`. Public so
@@ -526,10 +601,17 @@ impl LustyVault {
         strike: i128,
         expiry: u64,
         premium: i128,
+        quoter: Address,
     ) -> u64 {
         let cfg: Config = env.storage().instance().get(&DataKey::Config).unwrap();
         owner.require_auth();
-        cfg.quoter.require_auth();
+        // Membership before authorization, so an unauthorised address is
+        // rejected for what it is rather than for a signature nobody would
+        // have accepted anyway.
+        if !Self::quoter_set(&env).contains(&quoter) {
+            panic_with_error!(&env, Error::UnknownQuoter);
+        }
+        quoter.require_auth();
         if amount <= 0 {
             panic_with_error!(&env, Error::InvalidAmount);
         }
@@ -611,6 +693,29 @@ impl LustyVault {
             (owner, amount, strike, expiry, premium, kind),
         );
         id
+    }
+
+    fn quoter_set(env: &Env) -> Vec<Address> {
+        env.storage().instance().get(&DataKey::Quoters).unwrap()
+    }
+
+    /// Reject a set that would brick the vault or quietly widen it: empty
+    /// leaves nobody able to price, duplicates make `remove_quoter` look like
+    /// it revoked a key it did not, and an unbounded set outgrows what one
+    /// instance entry can hold.
+    fn store_quoters(env: &Env, quoters: &Vec<Address>) {
+        if quoters.is_empty() {
+            panic_with_error!(env, Error::LastQuoter);
+        }
+        if quoters.len() > MAX_QUOTERS {
+            panic_with_error!(env, Error::TooManyQuoters);
+        }
+        for (i, quoter) in quoters.iter().enumerate() {
+            if quoters.first_index_of(&quoter).unwrap() != i as u32 {
+                panic_with_error!(env, Error::QuoterExists);
+            }
+        }
+        env.storage().instance().set(&DataKey::Quoters, quoters);
     }
 
     /// `pool` rides along as a second topic so the two pools can be told apart

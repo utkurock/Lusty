@@ -76,9 +76,16 @@ settlement — the guard cannot drift from what it guards.
 
 ### Roles
 
-Pricing works like an RFQ. `open` requires auth from the writer and from the
-protocol's quoter key (the pricing engine), so neither side can set the premium
-alone. Custody and settlement never depend on the quoter.
+Pricing works like an RFQ. `open` requires auth from the writer and from one of
+the protocol's quoter keys (the pricing engine), so neither side can set the
+premium alone. Custody and settlement never depend on a quoter.
+
+Which quoter is signing is an argument to `open`, not something the contract
+looks up. Authorization has to be demanded of one specific address: requiring
+every member of the set to sign would need all of them online, and the contract
+cannot ask "did any of you sign?" after the fact. Naming the signer keeps the
+check exact — the address must be in the set **and** must have authorized that
+exact call.
 
 The quoter prices inside a band it cannot widen. `Limits::max_premium_bps` caps
 every premium at a share of the collateral escrowed against it, so the worst a
@@ -97,9 +104,18 @@ price, and the put leg keeps trading through a feed outage. A call cannot be
 written against a stale or empty feed: with no current price there is no
 honest way to value what is being escrowed, so the write fails closed.
 
-`admin` sets the risk limits, and that is its only power: it cannot move
-collateral, price an option, or settle a position, and tightening a limit does
-not reach collateral already escrowed under the old one.
+`admin` sets the risk limits and maintains the quoter set, and that is the whole
+of its power: it cannot move collateral, price an option, or settle a position,
+and tightening a limit does not reach collateral already escrowed under the old
+one.
+
+`add_quoter` and `remove_quoter` are how a pricing key is rotated or revoked.
+Rotation is add-then-remove: the contract refuses to empty the set (`LastQuoter`),
+so there is no ledger in between where a writer would be turned away. Revocation
+does not reach backwards — positions the revoked key priced keep their premium
+and their escrow, and settle normally, because settlement never consults a
+quoter. The set is bounded at 8: every member can price up to the premium
+ceiling, so it is a trust surface rather than a capacity knob.
 
 The premium ceiling is the one limit that also widens something — the band the
 quoter prices in. The admin cannot pay a premium and the quoter cannot raise
@@ -110,17 +126,22 @@ Units: strikes use the oracle's `decimals()` scale (Reflector: 14). Collateral
 and cash amounts are 7-decimal token units, so
 `strike_value = amount × strike / 10^14`.
 
-### Known limitation, tracked for T2
+### What is left to the account layer
 
-The premium ceiling above closes the half of this the contract can close: a
-stolen quoter key can no longer reach the cash pool, only overpay a bounded
-share of collateral that is actually posted.
+The contract now bounds what a stolen pricing key is worth (`max_premium_bps`)
+and gives the admin a way to revoke it (`remove_quoter`). Both are on-chain and
+enforced.
 
-What remains is account-level and deliberately outside the contract. The quoter
-is still a single key, so a compromise still costs that bounded share until it
-is rotated. Making it a multisig account, and putting quoter rotation behind
-that multisig, is a Stellar account change this contract neither sees nor needs
-to — it authorizes an address and does not care how that address is controlled.
+What remains is deliberately outside the contract: how the admin account itself
+is controlled. `add_quoter` is the one call that can widen who may set a
+premium, so the admin belongs behind a multisig — a Stellar account change this
+contract neither sees nor needs to, since it authorizes an address and does not
+care how that address is controlled. Until that is in place, a compromise costs
+the bounded share until the key is rotated out.
+
+The contract does not record which quoter priced which position. Attribution
+would make a post-compromise audit exact rather than time-bounded; it is a
+`Position` field and a Tranche 3 item, not a safety gap.
 
 ### Out of scope (Tranche 3)
 
@@ -131,7 +152,7 @@ Today ops funds both pools through `fund` / `fund_underlying`.
 
 ```sh
 cd contracts
-cargo test                # 37 unit tests incl. a mock Reflector oracle
+cargo test                # 60 unit tests incl. a mock Reflector oracle
 stellar contract build    # target/wasm32v1-none/release/lusty_vault.wasm
 ```
 
@@ -140,7 +161,8 @@ stellar contract build    # target/wasm32v1-none/release/lusty_vault.wasm
 Every version so far has been a fresh instance, and has had to be: the contract
 has no `upgrade` entrypoint (that is Tranche 3), so its code is fixed once
 deployed. v3 added `admin` and `Limits` to the constructor; v4 adds
-`max_premium_bps` to `Limits`, which changes that constructor argument again.
+`max_premium_bps` to `Limits` and replaces the single `--quoter` with a
+`--quoters` set, changing that constructor's shape again.
 
 ```sh
 stellar contract deploy \
@@ -152,7 +174,7 @@ stellar contract deploy \
   --token <underlying SAC> \
   --cash <cash token SAC> \
   --treasury <treasury account> \
-  --quoter <pricing engine key> \
+  --quoters '["<pricing engine key>"]' \
   --admin <admin account> \
   --limits '{"max_position_call":"100000000000","max_position_put":"100000000000","max_expiry_call":"5000000000000","max_expiry_put":"5000000000000","max_premium_bps":2000}'
 ```
