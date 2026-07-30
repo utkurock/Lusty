@@ -223,52 +223,83 @@ node scripts/verify-vault.mjs stats          # pools, escrow, exposure, solvency
 
 ## Testnet deployment
 
-The live instance runs **v3**. The premium ceiling described above is v4 source
-that has not been deployed yet, so on chain today the quoter is still bounded
-only by the pricing engine. Deploying it means a new instance and a new
-`NEXT_PUBLIC_VAULT_CONTRACT`, plus reseeding both pools.
+The live instance runs **v4** — the premium ceiling and the quoter set are both
+enforced on chain.
 
 | What | Address |
 | --- | --- |
-| **Vault v3** (calls + puts, LUSD cash) | `CDNES2LSMDPISV6W3PT3KHZXCLGBU6FG2EK6S3V422V6ZYIMVRGXTHKG` |
+| **Vault v4** (calls + puts, LUSD cash) | `CBJZGTCF2PJVHX2BNFTFZ2L2LX6DWD5JMTLHNCVYTSOD3BLVSXZRUCJZ` |
 | Reflector oracle (external CEX/DEX feed) | `CCYOZJCOPG34LLQQ7N24YXBM7LL62R7ONMZ3G6WZAAYPB5OYKOMJRN63` |
 | Feed asset | `Other("XLM")`, 14 decimals, 300 s resolution |
 | Underlying — native XLM SAC | `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC` |
 | Cash — LUSD SAC | `CDTMNV7F7P3LUH6LLBTXY4EQYBUYGVGYRC7P73HMFV5PXLO5NE6A74QB` |
 | Treasury | `GCXVANOIFHM7IAAZTDEEOYW7WUDO7ETVJYVEO74LA23JSXQJP4TAJVUX` |
-| Quoter (pricing engine) | `GC7Z4LVQCUOU7FMRBX4WOGANARQGM4SZTACKMSQSMGIOO4KEAASHLOTX` |
-| Admin (limits only) | `GBDNJQDP4HJQH6WCJCYVYGTKDRYKZXQQSVEC4FOE24CVG4VRQU26IKEC` |
+| Quoter set — one member (pricing engine) | `GC7Z4LVQCUOU7FMRBX4WOGANARQGM4SZTACKMSQSMGIOO4KEAASHLOTX` |
+| Admin (limits and the quoter set) | `GBDNJQDP4HJQH6WCJCYVYGTKDRYKZXQQSVEC4FOE24CVG4VRQU26IKEC` |
 
-Limits at deploy: 10,000 per position on both legs; 500,000 XLM and 50,000 cash
-per expiry. Pools seeded with 20,000 LUSD and 100,000 XLM.
+Limits at deploy: 10,000 per position on both legs; 500,000 per expiry on both
+legs; premium ceiling 2,000 bps (20% of collateral at spot). Pools seeded with
+20,000 LUSD and 100,000 XLM.
 
-### Verified on testnet (2026-07-28)
+The v3 instance is retired but its pools are not recoverable: `fund` and
+`fund_underlying` are one-way, and collateral leaves only through `settle`. A
+retired instance keeps whatever is left in it, which is the standing cost of
+having no `upgrade` entrypoint — worth pricing in before a deployment, not
+after.
 
-Five positions written and settled end to end against the live Reflector feed,
+### Quoter rotation, verified on chain (2026-07-30)
+
+Run against the live v4 instance, in order:
+
+| Call | Source | Result |
+| --- | --- | --- |
+| `add_quoter` | admin | set goes to 2, `quoter`/`add` event |
+| `remove_quoter` | non-admin | refused — the admin's signature is missing |
+| `remove_quoter` | admin | set back to 1, `quoter`/`remove` event |
+| `remove_quoter` on the last member | admin | refused, `Error(Contract, #17)` |
+
+The last row is the one worth having: the guard that keeps rotation
+add-then-remove is enforced by the contract, not by operator discipline.
+
+### Verified on testnet (2026-07-30)
+
+Four positions written and settled end to end against the live Reflector feed,
 covering both legs on both sides of the strike. Settlement price at expiry:
-$0.17284.
+$0.172713.
 
 | Position | Strike | Outcome | Payout |
 | --- | --- | --- | --- |
-| call, 100 XLM (×2) | $0.20 | kept | collateral returned whole |
+| call, 100 XLM | $0.20 | kept | collateral returned whole |
 | call, 100 XLM | $0.15 | assigned | collateral to treasury, $15 cash to the writer |
 | put, 20 LUSD | $0.15 | kept | collateral returned whole |
 | put, 20 LUSD | $0.20 | assigned | cash to treasury, 100 XLM delivered to the writer |
 
-Every premium arrived in the writer's wallet inside the opening transaction.
-Escrow, outstanding obligations and per-expiry exposure all returned to zero
-after the last settlement, and the writer's balances reconcile exactly:
-100 → 100.5 LUSD (premiums +5.50, put collateral −40, kept put +20, call
-assignment +15) with XLM back where it started net of fees.
+Every premium arrived in the writer's wallet inside the opening transaction,
+and every `open` named its quoter and carried that key's co-signature — the
+v4 path, not a compatibility shim.
 
-The put assignment is where the treasury trustline requirement surfaced: the
-first attempt reverted inside the LUSD contract with "trustline entry is
-missing", not in the vault. Adding the trustline settled it unchanged.
+Escrow, outstanding obligations and per-expiry exposure all returned to zero
+after the last settlement, and both sides reconcile to the stroop. The writer
+nets −0.5 LUSD (premiums +4.5, put collateral −40, kept put +20, call
+assignment +15) and zero XLM (200 escrowed, 100 returned, 100 to treasury, 100
+delivered by the assigned put). The pools land where the payouts say they
+should: cash 20,000 → 19,980.5 (premiums and the call's strike value),
+underlying 100,000 → 99,900 (the put's delivery).
+
+The treasury's trustline for the cash token is a standing prerequisite, found
+the hard way on the v3 deployment: an assigned put sends its cash collateral
+to the treasury, and without the trustline settlement reverts from inside the
+LUSD contract rather than the vault. It carried over to v4 already in place.
 
 ### Superseded deployments
 
-These ran the v2 (call-only) contract against the previous testnet and are kept
-for provenance; testnet resets have since cleared their state.
+**Vault v3** — `CDNES2LSMDPISV6W3PT3KHZXCLGBU6FG2EK6S3V422V6ZYIMVRGXTHKG`. Both
+legs, no premium ceiling, a single immutable quoter. Replaced by v4 on
+2026-07-30 with no open positions outstanding, so nothing was stranded except
+the pools themselves.
+
+The ones below ran the v2 (call-only) contract against the previous testnet and
+are kept for provenance; testnet resets have since cleared their state.
 
 | What | Address |
 | --- | --- |

@@ -34,7 +34,7 @@ import { execFileSync } from 'node:child_process'
 
 const RPC_URL = 'https://soroban-testnet.stellar.org'
 const PASSPHRASE = Networks.TESTNET
-const VAULT = process.env.VAULT_CONTRACT ?? 'CDNES2LSMDPISV6W3PT3KHZXCLGBU6FG2EK6S3V422V6ZYIMVRGXTHKG'
+const VAULT = process.env.VAULT_CONTRACT ?? 'CBJZGTCF2PJVHX2BNFTFZ2L2LX6DWD5JMTLHNCVYTSOD3BLVSXZRUCJZ'
 
 const server = new rpc.Server(RPC_URL)
 
@@ -98,6 +98,10 @@ async function open({ kind, amount, strike, expiry, premium, label }) {
     nativeToScVal(strike, { type: 'i128' }),
     nativeToScVal(BigInt(expiry), { type: 'u64' }),
     nativeToScVal(premium, { type: 'i128' }),
+    // The contract checks the named quoter against its own set and demands
+    // authorization from that exact address, so the call has to declare which
+    // key is co-signing before there is anything to sign.
+    new Address(quoter.publicKey()).toScVal(),
   ]
 
   const build = async (auth) =>
