@@ -247,6 +247,22 @@ retired instance keeps whatever is left in it, which is the standing cost of
 having no `upgrade` entrypoint — worth pricing in before a deployment, not
 after.
 
+### Permissionless settlement, verified on chain (2026-07-30)
+
+Four more positions (#4–#7) were written by the usual writer and then settled
+by `GAF3A2PPHM5TB56YXBNYJNWCDI4UV75BP7WUIXJQHBOTPAOMGDD6LXIC` — a freshly
+funded account with no relationship to the writer, the quoter, the admin or the
+treasury. Settlement price $0.172147; all four outcomes correct, escrow and
+obligations back to zero.
+
+The writer settling their own position proves nothing about who *may* settle,
+which is why this was run from a stranger. What the stranger got for it: the
+account went from 10,000 XLM to 9,999.98777, the difference being transaction
+fees. It received no payout, no fee share and no privilege. Settlement is a
+public good the vault will accept from anyone and pay nobody for, so a stalled
+operator cannot strand a position — any observer can close it, and the price it
+closes at was fixed by the oracle at expiry either way.
+
 ### Quoter rotation, verified on chain (2026-07-30)
 
 Run against the live v4 instance, in order:
