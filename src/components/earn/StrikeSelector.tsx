@@ -20,7 +20,7 @@ import { StablePicker, Stable } from '@/components/shared/StablePicker'
 import { savePosition } from '@/lib/positions'
 import { buildTrustlineTx, hasLusdTrustline } from '@/lib/swap'
 import { openPosition } from '@/lib/vault-contract'
-import { cosignWithQuoter } from '@/lib/quoter'
+import { activeQuoter, cosignWithQuoter } from '@/lib/quoter'
 import { TransactionBuilder, Networks } from '@stellar/stellar-sdk'
 import { ChevronDown, TrendingUp, TrendingDown } from 'lucide-react'
 
@@ -318,6 +318,8 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
       //    position record all land in the one transaction the user signs —
       //    no server-held account touches the collateral at any point. The
       //    quoter co-signs only the premium, after repricing it itself.
+      //    The transaction has to name the quoter it expects to co-sign, so
+      //    ask which key that is before building it.
       const opened = await openPosition({
         owner: address,
         side: type,
@@ -325,6 +327,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
         strike: selectedStrike!.strike,
         expiry: expiry.date,
         premium,
+        quoter: await activeQuoter(),
         signTransaction,
         cosignQuote: (authEntries) =>
           cosignWithQuoter({

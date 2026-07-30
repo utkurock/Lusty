@@ -18,6 +18,21 @@ export interface CosignRequest {
   authEntries: string[]
 }
 
+/**
+ * Which quoter to name in the `open` call. Asked before the transaction is
+ * built, because the contract takes the signing address as an argument and
+ * will reject any address outside its own set — so this has to be the key the
+ * server holds, not whichever member of `quoters()` happens to be first.
+ */
+export async function activeQuoter(): Promise<string> {
+  const res = await fetch('/api/vault/authorize')
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok || typeof data.quoter !== 'string') {
+    throw new Error(data?.error ?? 'The protocol is not quoting right now')
+  }
+  return data.quoter
+}
+
 export async function cosignWithQuoter(req: CosignRequest): Promise<string[]> {
   const res = await fetch('/api/vault/authorize', {
     method: 'POST',

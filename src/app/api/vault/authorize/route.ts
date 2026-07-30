@@ -229,6 +229,9 @@ export async function POST(req: Request) {
     // actually being signed: same contract, same function, same arguments,
     // byte for byte. Without it a caller could ask for an honest quote and
     // hand over an entry authorizing something else entirely.
+    const quoterKey = Keypair.fromSecret(QUOTER_SECRET)
+    const quoterAddress = quoterKey.publicKey()
+
     const expected = openArgs({
       owner: body.address,
       side: body.side,
@@ -236,10 +239,8 @@ export async function POST(req: Request) {
       strike: body.strikePrice,
       expiry: new Date(expiryMs),
       premium: body.premium,
+      quoter: quoterAddress,
     }).map((v) => v.toXDR('base64'))
-
-    const quoterKey = Keypair.fromSecret(QUOTER_SECRET)
-    const quoterAddress = quoterKey.publicKey()
 
     let entries: xdr.SorobanAuthorizationEntry[]
     try {
@@ -262,7 +263,7 @@ export async function POST(req: Request) {
       contractId: VAULT_ID,
       functionName: 'open',
       args: expected,
-      labels: ['owner', 'side', 'collateral', 'strike', 'expiry', 'premium'],
+      labels: ['owner', 'side', 'collateral', 'strike', 'expiry', 'premium', 'quoter'],
     })
     if (mismatch) {
       return NextResponse.json(
@@ -297,6 +298,25 @@ export async function POST(req: Request) {
       { status: 500 },
     )
   }
+}
+
+/**
+ * Which quoter will co-sign. The contract takes the signing address as an
+ * argument to `open` and checks it against its own set, so the transaction has
+ * to name it before there is anything to co-sign — and only the holder of the
+ * key can say which one that is. Reading `quoters()` off the contract would
+ * give the set but not which member this server can actually sign for.
+ *
+ * The address is public: it is in the contract's registry either way.
+ */
+export async function GET() {
+  if (!QUOTER_SECRET) {
+    return NextResponse.json(
+      { error: 'quoter key not configured on the server' },
+      { status: 503 },
+    )
+  }
+  return NextResponse.json({ quoter: Keypair.fromSecret(QUOTER_SECRET).publicKey() })
 }
 
 const positive = (n: unknown): n is number =>

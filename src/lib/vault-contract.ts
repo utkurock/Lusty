@@ -92,7 +92,6 @@ export interface VaultConfig {
   token: string
   cash: string
   treasury: string
-  quoter: string
   admin: string
 }
 
@@ -154,6 +153,13 @@ export interface OpenArgs {
   expiry: Date
   /** Cash premium the vault pays the writer, in human units. */
   premium: number
+  /**
+   * Which authorised quoter is co-signing this premium. The contract demands
+   * authorization from this exact address and checks it against its own set,
+   * so it has to be the key the server actually holds — ask
+   * `GET /api/vault/authorize` rather than guessing from `quoters()`.
+   */
+  quoter: string
 }
 
 /** Argument list for `open`, in the contract's declared order. */
@@ -165,6 +171,7 @@ export function openArgs(args: OpenArgs): xdr.ScVal[] {
     nativeToScVal(toOracleScale(args.strike), { type: 'i128' }),
     nativeToScVal(BigInt(Math.floor(args.expiry.getTime() / 1000)), { type: 'u64' }),
     nativeToScVal(toTokenUnits(args.premium), { type: 'i128' }),
+    new Address(args.quoter).toScVal(),
   ]
 }
 
@@ -218,9 +225,17 @@ export async function getVaultConfig(): Promise<VaultConfig> {
     token: c.token,
     cash: c.cash,
     treasury: c.treasury,
-    quoter: c.quoter,
     admin: c.admin,
   }
+}
+
+/**
+ * Every key the contract will accept a premium from. Read from contract state,
+ * so the set being enforced can be compared against the one the operator says
+ * is in force — the point of keeping the registry on chain.
+ */
+export async function getVaultQuoters(): Promise<string[]> {
+  return await readVault('quoters')
 }
 
 export async function getVaultStats(): Promise<VaultStats> {

@@ -16,9 +16,10 @@ const QUOTE: OpenArgs = {
   strike: 0.25,
   expiry: new Date('2026-08-14T16:00:00.000Z'),
   premium: 5,
+  quoter: QUOTER,
 }
 
-const LABELS = ['owner', 'side', 'collateral', 'strike', 'expiry', 'premium']
+const LABELS = ['owner', 'side', 'collateral', 'strike', 'expiry', 'premium', 'quoter']
 
 function expected(overrides: Partial<OpenArgs> = {}) {
   return {
@@ -115,6 +116,14 @@ describe('describeMismatch', () => {
     expect(describeMismatch(entry, expected())).toBe('strike differs')
   })
 
+  // The quoter is an argument now, so it is also something a caller could
+  // rewrite: get this server to sign an entry that names a different key, and
+  // the signature no longer matches the address the contract will check.
+  it('catches a substituted quoter', () => {
+    const entry = openEntry({ quoter: WRITER })
+    expect(describeMismatch(entry, expected())).toBe('quoter differs')
+  })
+
   it('refuses another contract wearing the same call shape', () => {
     const entry = entryFor(QUOTER, OTHER_CONTRACT, 'open', openArgs(QUOTE))
     expect(describeMismatch(entry, expected())).toContain('is not the vault')
@@ -129,7 +138,7 @@ describe('describeMismatch', () => {
     const entry = entryFor(QUOTER, VAULT, 'open', [
       nativeToScVal(1, { type: 'u32' }),
     ])
-    expect(describeMismatch(entry, expected())).toBe('expected 6 arguments, got 1')
+    expect(describeMismatch(entry, expected())).toBe('expected 7 arguments, got 1')
   })
 
   it('refuses an entry that authorizes a contract upload rather than a call', () => {
