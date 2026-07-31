@@ -381,10 +381,14 @@ APR ladder  : nearest strike pinned to a time-scaled ceiling,
             covers deposit, claim and swap, including cross-endpoint reuse.
           </li>
           <li>
-            <strong>Atomic capacity caps.</strong> Per-user (30-day), per-user
-            per-expiry, per-strike and per-expiry caps are checked and reserved
-            in one advisory-locked database transaction, so concurrent requests
-            cannot overshoot them.
+            <strong>Two tiers of caps.</strong> Position size, per-expiry
+            exposure, pool solvency and the premium ceiling are enforced by the
+            contract and hold even if this server is compromised. Concentration
+            policy (per-user 30-day, per-user per-expiry, per-strike) depends on
+            off-chain history the contract cannot see, so the quoter enforces it
+            by declining to sign; those checks reserve nothing, so racing
+            requests can overshoot one by at most a single position, still
+            bounded by the contract caps.
           </li>
           <li>
             <strong>Fail-closed everywhere.</strong> If the price feed, the

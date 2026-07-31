@@ -34,27 +34,27 @@ feed, all feeding the same volatility inputs the quote engine uses.
 
 ## Where Lusty is today
 
-The protocol runs on two rails that share one pricing engine and one oracle.
+Collateral lives in the Soroban vault contract. The web app is a front end to
+it, not a second rail: the earn flow opens positions through `open()`, which
+escrows the collateral and pays the premium in one atomic transaction, and
+anyone can call `settle()` against the Reflector price pinned to the expiry
+timestamp. Real ITM and OTM positions have been opened and settled end to end
+on testnet, including settlement driven from an unrelated third-party account.
+Details in [`contracts/README.md`](contracts/README.md).
 
-The web vault is the production testnet app. It runs on Stellar Classic: a
-protocol distributor account holds collateral and the server pays premiums.
-This rail is custodial on purpose while the contract rail matures. Settlement
-prices come from the Reflector oracle, pinned to the expiry timestamp.
+The custodial rail is retired. No operational account holds option collateral
+or pays premiums; the LUSD distributor now backs only the testnet faucet and
+the swap desk. What the server still holds is the quoter key, which co-signs
+the premium on every `open()` and can do nothing else — it cannot move
+collateral, settle, or change a position once opened, and the contract caps
+every premium it may sign at `max_premium_bps` of the collateral behind it.
 
-The Soroban vault is the trustless rail, deployed on testnet. The contract
-escrows collateral, pays the premium inside the same `deposit()` transaction,
-and settles permissionlessly against Reflector at the expiry price. Real ITM
-and OTM positions have been opened and settled end to end on testnet. Details
-in [`contracts/README.md`](contracts/README.md).
-
-Tranche 2 covers what remains of the migration: pointing the web app's deposit
-flow at the contract, in-contract cash-secured puts, and an independent audit.
-Custody is the only trust assumption left. Pricing and settlement already run
-on the same oracle on both rails.
+Tranche 2 covers what remains: putting quoter administration behind a multisig,
+a scheduled runner that settles expired positions, and an independent audit.
 
 LUSD is a testnet convenience token, faucet-issued and unbacked, and the app
 says so. It has no mainnet path. Mainnet settles in Circle's native USDC,
-which the contract rail already supports.
+which the contract already supports.
 
 ## How a position works
 
@@ -63,7 +63,7 @@ which the contract rail already supports.
 2. Deposit collateral: XLM for covered calls, cash for puts. The premium lands
    in your wallet immediately, and the quoted number is the paid number.
 3. At expiry, settlement reads the oracle price at the expiry timestamp, so
-   when you claim cannot change the outcome. For a covered call, spot at or
+   when it settles cannot change the outcome. For a covered call, spot at or
    below the strike returns your collateral whole; spot above the strike means
    assignment and you receive the strike value in cash. Puts mirror this.
 4. You keep the premium in every case.
@@ -75,14 +75,20 @@ and everything the vault pays. There is no second adjustment layer.
 
 ```
 σ_realized  ← XLM price history (EWMA, RiskMetrics λ=0.94)
-σ_offered   = σ_realized × 1.10 + 0.03        vol risk premium, capped at 100%
+σ_offered   = σ_realized × 1.10 + 0.03         vol risk premium, capped at 100%
+σ_strike    = σ_offered × ψ(z)                 per-strike vol off the smile,
+                                               z = ln(K/F) / (σ_offered·√T)
 F           ← forward from perp funding        (≈ spot for weeklies)
-P_fair      = Black-76(side, F, K, T, σ_offered)
+P_fair      = Black-76(side, F, K, T, σ_strike)
 APR ladder  : nearest strike pinned to a time-scaled ceiling (120% × days/ref),
               farther strikes fall away on the Black-76 gradient
 × taper     : offered APR falls linearly with pool utilization (−50% at full)
 − fee       : 10% of the upfront, taken from the premium (never collateral)
 ```
+
+The smile shape ψ is fitted to a live options surface rather than invented, and
+σ_offered stays the anchor that sets the level, so the smile cannot feed back on
+itself.
 
 Unit tests enforce two invariants. The user is never paid above the haircut
 fair value, so the protocol keeps at least a 20% edge against its own Black-76
@@ -95,16 +101,16 @@ quote above the displayed ceiling.
 |-------|------|
 | Frontend | Next.js 14, React 18, TypeScript, Tailwind |
 | Wallets | Stellar Wallets Kit (Freighter, xBull, Albedo, Lobstr) |
-| Settlement oracle | Reflector, on both rails: Soroban RPC simulation server-side, cross-contract call on-chain |
+| Settlement oracle | Reflector: cross-contract call on-chain, Soroban RPC simulation server-side |
 | Contracts | Soroban (Rust), `contracts/vault` |
-| Web settlement | Stellar Classic payments from the distributor |
+| Testnet LUSD | Stellar Classic issuer + distributor, faucet and swap only |
 | Quote inputs | Binance (realized vol history, perp funding). Quote inputs only, never the settlement price |
 | Database | PostgreSQL (Supabase), deny-all RLS |
 
 ## Testnet addresses
 
 ```
-Soroban vault v2     CASVHBJ7MOZ5YFSVAYXKZFWIYAR6Y3Q4JI2P6GGJMRFUJBZN6APTZEZD
+Soroban vault v4     CBJZGTCF2PJVHX2BNFTFZ2L2LX6DWD5JMTLHNCVYTSOD3BLVSXZRUCJZ
 Reflector oracle     CCYOZJCOPG34LLQQ7N24YXBM7LL62R7ONMZ3G6WZAAYPB5OYKOMJRN63
 LUSD issuer          GBCMRD6NDL2RAJUOFQ25EHZVO3IRIGNESWE4QDRFB4AVFIP7IT5BRCJ6
 LUSD distributor     GBAIN6CHZJGBL365JNXSRQEKALXYTWKXANQZ3RBM7AGUEYYKLJJ6SNR6
@@ -115,29 +121,36 @@ LUSD distributor     GBAIN6CHZJGBL365JNXSRQEKALXYTWKXANQZ3RBM7AGUEYYKLJJ6SNR6
 The security model was rebuilt after the SCF #43 panel review. Each item below
 can be checked against the commit history, and most are covered by tests.
 
-- Premiums are recomputed server side from the quote engine. At claim time the
-  strike, expiry, type and collateral come from the deposit record, never from
-  the client.
-- Settlement is pinned to the Reflector price at expiry, so claim timing gives
-  the writer no optionality. The Binance kline at expiry is only a fallback.
+- Premiums are recomputed server side from the quote engine before the quoter
+  co-signs, never taken from the client. Before it signs, the server proves the
+  authorization entry it is about to sign is the one it just verified — same
+  contract, same function, every argument byte for byte — so an honest quote
+  cannot be signed onto a different transaction.
+- Settlement is pinned to the Reflector price at expiry, so settlement timing
+  gives the writer no optionality. The Binance kline is only a fallback.
 - A database ledger with unique constraints blocks replays on deposit, claim
   and swap. It also blocks cross-endpoint reuse: one on-chain payment can fund
   a deposit or a swap, not both.
-- Capacity caps (per user over 30 days, per user per expiry, per strike,
-  per expiry) are checked and reserved in a single advisory-locked database
-  transaction, so concurrent requests cannot overshoot them.
+- Caps come in two tiers. The contract enforces position size, per-expiry
+  exposure, pool solvency and the premium ceiling, and those hold even if this
+  server is compromised. Concentration policy — per wallet over 30 days, per
+  wallet per expiry, per strike — depends on off-chain history the contract
+  cannot see, so the quoter enforces it by declining to sign. Those checks read
+  and reserve nothing: two racing requests can overshoot a per-wallet allowance
+  by at most one position, which the contract caps still bound.
 - Operations fail closed. If the price feed, the database, the breaker state
   or the oracle is unavailable or stale, the request is refused.
 - A circuit breaker halts deposits on a volatility spike (3x the daily
   baseline), on oracle stress (a 10% one-minute move or an unreachable feed),
   and when a per-epoch loss cap is hit. A manual trip can only be cleared by
   a human.
-- The issuer account requires 2-of-3 signatures for every operation, including
-  minting. The distributor stays hot for payments, bounded by the caps above,
-  and needs 2-of-3 for signer or threshold changes.
-- 48 unit tests cover the pricing path; writing them caught a real CDF scaling
-  bug in the Black-76 code. The Soroban contract has 17 more, including a mock
-  oracle.
+- The LUSD issuer requires 2-of-3 signatures for every operation, including
+  minting. The distributor stays hot for faucet and swap payments and needs
+  2-of-3 for signer or threshold changes. Neither account holds option
+  collateral.
+- 94 unit tests cover pricing, the volatility smile, expiries and the contract
+  client; writing them caught a real CDF scaling bug in the Black-76 code. The
+  Soroban contract has 60 more, including a mock oracle.
 - Rate limiting, parameterized SQL, wallet-signature admin auth, CSP and HSTS
   headers.
 
@@ -145,21 +158,25 @@ can be checked against the commit history, and most are covered by tests.
 
 ```
 contracts/
-  vault/               Soroban covered-call vault (escrow + premium + settlement)
+  vault/               Soroban options vault — covered calls and cash-secured
+                       puts (escrow + premium + settlement)
 src/
   app/
     earn/              Strike selector, deposit, instant premium
     (app)/dashboard/   Positions & claims
     swap/  leaderboard/  docs/  (app)/research/
     api/
-      vault/{quote,deposit,claim,positions,stats}
+      vault/{quote,authorize,deposit,claim,positions,stats,events}
       swap/  faucet/lusd/  leaderboard/  admin/  cron/monitor/
   lib/
-    pricing-server.ts  The quote engine (Black-76 + ladder + taper + fee)
+    pricing-server.ts  The quote engine (Black-76 + smile + ladder + taper + fee)
     pricing.ts         Black-76 / CDF primitives, strike ladders
+    smile.ts           Per-strike vol from a fitted smile shape
     vol.ts forward.ts  Realized vol (EWMA), perp-funding forward
     reflector.ts       Reflector reads via Soroban RPC (settlement source)
-    deposit-capacity.ts Atomic cap checks + pending-row reservation
+    vault-contract.ts  Soroban client for the vault (reads + open)
+    vault-auth.ts      Auth-entry inspection for the quoter co-signature
+    quote-policy.ts    Concentration policy, enforced by declining to sign
     idempotency.ts     Replay ledger (deposit/claim/swap)
     circuit-breaker.ts monitor/  Risk halts & alerting
     db.ts db-queries.ts vault-state.ts expiries.ts
@@ -171,7 +188,7 @@ src/
 ```sh
 npm install
 npm run dev        # web app on :3000 (.env.local required)
-npm test           # pricing test suite
+npm test           # unit test suite
 cd contracts && cargo test && stellar contract build
 ```
 

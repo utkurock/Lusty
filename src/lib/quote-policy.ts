@@ -20,10 +20,21 @@ import { getPool, ensureSchema } from './db'
  * see the same history and both pass, overshooting a per-wallet allowance by
  * at most one position. The previous rail closed that window with an advisory
  * lock around a pending row, which it could do because it also wrote the row.
- * The quoter writes nothing. That window closes properly in T2, when signed
- * quotes carry a nonce and outstanding signatures count toward the allowance
- * alongside indexed deposits. Until then the overshoot is bounded by the
- * contract's own caps, which no race can cross.
+ * The quoter writes nothing.
+ *
+ * A nonce does not close this window. Soroban's auth layer already carries one:
+ * `SorobanCredentials::Address` holds a nonce and an expiration ledger, and the
+ * host rejects an entry that reuses either. But replay is not the failure mode
+ * here. The race is between two distinct quotes, each honest, each signed once,
+ * neither a replay of the other. Closing it properly means the quoter reserving
+ * what it signs, so an outstanding signature counts against the allowance
+ * before the position exists on chain — that is a write, and it brings back the
+ * pending-row bookkeeping this rail was built to shed.
+ *
+ * So the overshoot is accepted rather than fixed. It is bounded at one position
+ * per race, and the contract's own caps — position size, per-expiry exposure,
+ * pool solvency, premium ceiling — hold no matter how many requests race, so
+ * the worst case stays inside limits that do not depend on this server.
  */
 
 export class PolicyRejection extends Error {
