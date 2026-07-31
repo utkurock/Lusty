@@ -91,6 +91,15 @@ export async function GET(req: Request) {
 // upfront it pays out. Internal pricing inputs (fair value, vol, the spread we
 // keep) stay server-side; they're persisted with each deposit for our own audit
 // trail but are not part of the public quote.
+//
+// Delta and vega are published because the dashboard has to show risk it did
+// not compute itself — the criterion is that the screen matches this engine's
+// output, which it cannot do if it re-derives the numbers client-side. They are
+// the option's Greeks, holder's side; the UI negates for the writer.
+//
+// `sigmaStrike` stays out on purpose. Publishing the Greeks gives away the
+// shape of the sensitivity, publishing σ_K gives away the level we price at,
+// and the second is the input the smile and the vol spread are built on.
 function slimRung(r: any) {
   return {
     index: r.index,
@@ -98,6 +107,8 @@ function slimRung(r: any) {
     label: r.label,
     apr: r.apr,
     userPremium: r.userPremium,
+    delta: r.delta,
+    vega: r.vega,
   }
 }
 function slimQuote(q: any) {
@@ -106,6 +117,8 @@ function slimQuote(q: any) {
     daysToExpiry: q.daysToExpiry,
     apr: q.apr,
     userPremium: q.userPremium,
+    delta: q.delta,
+    vega: q.vega,
   }
 }
 

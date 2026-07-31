@@ -1,8 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import {
   normalCDF,
+  normalPDF,
   black76Call,
   black76Put,
+  black76Delta,
+  black76Vega,
   niceStrikeStep,
   roundStrike,
   calculateAPR,
@@ -84,6 +87,112 @@ describe('Black-76', () => {
     const otmCall = black76Call(F, F * 1.1, T, VOL)
     const itmCall = black76Call(F, F * 0.9, T, VOL)
     expect(itmCall).toBeGreaterThan(otmCall)
+  })
+})
+
+describe('normalPDF', () => {
+  it('peaks at zero with the 1/√(2π) height', () => {
+    expect(normalPDF(0)).toBeCloseTo(1 / Math.sqrt(2 * Math.PI), 10)
+  })
+
+  it('is symmetric and decays in the tails', () => {
+    expect(normalPDF(-1.3)).toBeCloseTo(normalPDF(1.3), 12)
+    expect(normalPDF(8)).toBeCloseTo(0, 10)
+  })
+})
+
+describe('Black-76 Greeks', () => {
+  const F = 0.23
+  const T = 7 / 365
+  const VOL = 0.9
+
+  // The claim these Greeks have to earn: they are the derivatives of the
+  // pricer sitting next to them, not of some other model. Everything else in
+  // this block is a property; this is the identity.
+  describe('agree with a finite difference of the pricer', () => {
+    const strikes = [F * 0.85, F * 0.95, F, F * 1.05, F * 1.2]
+
+    it('delta is dP/dF', () => {
+      const h = F * 1e-5
+      for (const K of strikes) {
+        const fdCall = (black76Call(F + h, K, T, VOL) - black76Call(F - h, K, T, VOL)) / (2 * h)
+        const fdPut = (black76Put(F + h, K, T, VOL) - black76Put(F - h, K, T, VOL)) / (2 * h)
+        expect(black76Delta('call', F, K, T, VOL)).toBeCloseTo(fdCall, 4)
+        expect(black76Delta('put', F, K, T, VOL)).toBeCloseTo(fdPut, 4)
+      }
+    })
+
+    it('vega is dP/dσ, and calls and puts share it', () => {
+      const h = 1e-5
+      for (const K of strikes) {
+        const fdCall = (black76Call(F, K, T, VOL + h) - black76Call(F, K, T, VOL - h)) / (2 * h)
+        const fdPut = (black76Put(F, K, T, VOL + h) - black76Put(F, K, T, VOL - h)) / (2 * h)
+        expect(black76Vega(F, K, T, VOL)).toBeCloseTo(fdCall, 4)
+        expect(black76Vega(F, K, T, VOL)).toBeCloseTo(fdPut, 4)
+      }
+    })
+  })
+
+  it('satisfies put-call parity: Δcall − Δput = 1 (r=0)', () => {
+    for (const K of [F * 0.8, F, F * 1.25]) {
+      const dc = black76Delta('call', F, K, T, VOL)
+      const dp = black76Delta('put', F, K, T, VOL)
+      expect(dc - dp).toBeCloseTo(1, 10)
+    }
+  })
+
+  it('is roughly 0.5 delta at the money', () => {
+    // Not exactly 0.5: d1 = σ√T/2 > 0 when F = K, so a call sits just above it.
+    expect(black76Delta('call', F, F, T, VOL)).toBeCloseTo(0.5, 1)
+    expect(black76Delta('put', F, F, T, VOL)).toBeCloseTo(-0.5, 1)
+  })
+
+  it('keeps delta inside its bounds and saturates in the wings', () => {
+    for (const K of [F * 0.5, F * 0.9, F, F * 1.1, F * 2]) {
+      const dc = black76Delta('call', F, K, T, VOL)
+      const dp = black76Delta('put', F, K, T, VOL)
+      expect(dc).toBeGreaterThan(0)
+      expect(dc).toBeLessThan(1)
+      expect(dp).toBeGreaterThan(-1)
+      expect(dp).toBeLessThan(0)
+    }
+    expect(black76Delta('call', F, F * 0.05, T, VOL)).toBeCloseTo(1, 3)
+    expect(black76Delta('call', F, F * 20, T, VOL)).toBeCloseTo(0, 3)
+    expect(black76Delta('put', F, F * 20, T, VOL)).toBeCloseTo(-1, 3)
+  })
+
+  it('peaks vega at the money and keeps it positive everywhere', () => {
+    const atm = black76Vega(F, F, T, VOL)
+    for (const mult of [0.7, 0.85, 1.15, 1.4]) {
+      const away = black76Vega(F, F * mult, T, VOL)
+      expect(away).toBeGreaterThan(0)
+      expect(away).toBeLessThan(atm)
+    }
+  })
+
+  it('grows vega with tenor', () => {
+    const week = black76Vega(F, F, 7 / 365, VOL)
+    const month = black76Vega(F, F, 28 / 365, VOL)
+    expect(month).toBeGreaterThan(week)
+  })
+
+  it('collapses to the intrinsic step at expiry and at zero vol', () => {
+    for (const T0 of [0, -1]) {
+      expect(black76Delta('call', F, F * 0.9, T0, VOL)).toBe(1)
+      expect(black76Delta('call', F, F * 1.1, T0, VOL)).toBe(0)
+      expect(black76Delta('put', F, F * 1.1, T0, VOL)).toBe(-1)
+      expect(black76Delta('put', F, F * 0.9, T0, VOL)).toBe(0)
+      expect(black76Vega(F, F, T0, VOL)).toBe(0)
+    }
+    expect(black76Delta('call', F, F * 0.9, T, 0)).toBe(1)
+    expect(black76Vega(F, F, T, 0)).toBe(0)
+  })
+
+  it('fails soft on non-positive forward or strike', () => {
+    expect(black76Delta('call', 0, F, T, VOL)).toBe(0)
+    expect(black76Delta('put', F, 0, T, VOL)).toBe(0)
+    expect(black76Vega(0, F, T, VOL)).toBe(0)
+    expect(black76Vega(F, -1, T, VOL)).toBe(0)
   })
 })
 

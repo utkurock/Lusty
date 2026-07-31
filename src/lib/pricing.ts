@@ -102,6 +102,88 @@ export function black76Put(
   return Math.exp(-rate * timeYears) * (strike * normalCDF(-d2) - forward * normalCDF(-d1))
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Black-76 Greeks — sensitivities of the FAIR value priced above.
+//
+// Analytic derivatives of the same two formulas, evaluated at whatever σ the
+// caller passes in. Lusty passes the per-strike σ off the smile, so vega here
+// is ∂P/∂σ_K: the response to THIS strike's vol moving with the rest of the
+// curve held still. It is not ∂P/∂σ_atm, which would need the smile's own
+// derivative as well. Sticky-strike is the right convention at this book size,
+// but reading one number for the other overstates a parallel vol shock.
+//
+//   d1    = [ln(F/K) + (σ²/2)·T] / (σ·√T)
+//   Δcall = e^(−rT)·N(d1)          Δput = e^(−rT)·[N(d1) − 1]
+//   ν     = e^(−rT)·F·φ(d1)·√T     identical for calls and puts
+//
+// SIGN: these are the option's Greeks from the HOLDER's side. A Lusty writer is
+// short the option, so their exposure is the negative of what these return.
+// Nothing in this file flips that sign — the negation happens once, in the
+// layer that knows whose book it is describing.
+// ────────────────────────────────────────────────────────────────────────────
+
+/** Standard normal PDF φ(x). */
+export function normalPDF(x: number): number {
+  return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI)
+}
+
+function black76D1(forward: number, strike: number, timeYears: number, vol: number): number {
+  const sqrtT = vol * Math.sqrt(timeYears)
+  return (Math.log(forward / strike) + 0.5 * vol * vol * timeYears) / sqrtT
+}
+
+// True when the pricing inputs cannot produce a finite d1 (expired, zero vol,
+// non-positive forward or strike). Callers fall back to the degenerate case.
+function degenerate(forward: number, strike: number, timeYears: number, vol: number): boolean {
+  return !(timeYears > 0) || !(vol > 0) || !(forward > 0) || !(strike > 0)
+}
+
+/**
+ * ∂P/∂F. Call delta runs 0..1, put delta −1..0.
+ *
+ * At expiry (or zero vol) the option is a step function of the forward, so
+ * delta collapses to its intrinsic side: 1/0 for a call, 0/−1 for a put.
+ * Exactly at the strike the derivative does not exist — the step is there — and
+ * 0 is returned rather than picking a side the position does not have.
+ */
+export function black76Delta(
+  side: 'call' | 'put',
+  forward: number,
+  strike: number,
+  timeYears: number,
+  vol: number,
+  rate: number = DISCOUNT_RATE
+): number {
+  if (degenerate(forward, strike, timeYears, vol)) {
+    if (!(forward > 0) || !(strike > 0)) return 0
+    const itm = side === 'call' ? forward > strike : forward < strike
+    if (!itm) return 0
+    return side === 'call' ? 1 : -1
+  }
+  const df = Math.exp(-rate * timeYears)
+  const nd1 = normalCDF(black76D1(forward, strike, timeYears, vol))
+  return side === 'call' ? df * nd1 : df * (nd1 - 1)
+}
+
+/**
+ * ∂P/∂σ, per unit of σ (1.00 = 100 vol points) and per unit notional — the same
+ * basis the premiums above are quoted on. Divide by 100 for a per-vol-point
+ * figure. Positive for both legs: an option is worth more when vol rises,
+ * whichever side it is. A writer is short this.
+ */
+export function black76Vega(
+  forward: number,
+  strike: number,
+  timeYears: number,
+  vol: number,
+  rate: number = DISCOUNT_RATE
+): number {
+  if (degenerate(forward, strike, timeYears, vol)) return 0
+  const df = Math.exp(-rate * timeYears)
+  const d1 = black76D1(forward, strike, timeYears, vol)
+  return df * forward * normalPDF(d1) * Math.sqrt(timeYears)
+}
+
 // Protocol revenue share taken from every premium (25% of Black-Scholes
 // fair value). The user receives 75% of the BS premium; the remaining 25%
 // is the protocol's edge — paid to FEE_WALLET on every successful deposit.
@@ -116,11 +198,12 @@ export function black76Put(
 export const PROTOCOL_FEE_BPS = 2500 // 25.00%
 export const PROTOCOL_FEE = PROTOCOL_FEE_BPS / 10_000
 
-// NOTE: There is intentionally no volatility smile here. A smile is an
-// *observed* market artifact read off an options surface. XLM has no options
-// market, so any smile we wrote down would be fabricated. The old
-// `iv_eff = iv_base × (1 + SMILE_K × ln(K/S)²)` hack has been removed; tail
-// risk is instead carried in the realized-vol spread (see vol.ts / quote.ts).
+// NOTE: the pricers above take σ as given and apply no smile of their own. The
+// old `iv_eff = iv_base × (1 + SMILE_K × ln(K/S)²)` hack was invented and is
+// gone. A fitted shape now lives in smile.ts — borrowed in standardised
+// moneyness from surfaces that actually trade — and the server engine applies
+// it per strike before calling in here. Keeping that choice out of the pricer
+// is what lets the Greeks be evaluated at exactly the σ the caller priced at.
 
 // Round a strike to a Deribit-style "nice" tick size based on the spot price.
 // The tick is chosen from a 1-2-5 ladder so strikes like $0.23, $42, $1500

@@ -28,6 +28,8 @@
 import {
   black76Call,
   black76Put,
+  black76Delta,
+  black76Vega,
   calculateAPR,
   roundStrike,
   CALL_STRIKE_MULTIPLIERS,
@@ -151,6 +153,19 @@ export interface Quote {
   sigmaStrike: number
   /** Black-76 fair premium per unit notional (USD). */
   fairPremium: number
+  /**
+   * Black-76 delta at `sigmaStrike`, from the option HOLDER's side: 0..1 for a
+   * call, −1..0 for a put. A Lusty user writes the option, so their position
+   * delta is the negative of this — the flip belongs to whoever is describing
+   * a book, not here. Sensitivity of `fairPremium`, not of `userPremium`.
+   */
+  delta: number
+  /**
+   * Black-76 vega at `sigmaStrike`, per unit σ (1.00 = 100 vol points) per unit
+   * notional. Positive on both legs; the writer is short it. Measured against
+   * this strike's own σ (sticky-strike), not σ_atm.
+   */
+  vega: number
   /** Effective haircut applied (decimal, 0..1). */
   haircut: number
   /** What the user receives per unit notional (USD). */
@@ -233,6 +248,22 @@ export function quoteOption(input: QuoteInput): Quote {
   // This strike's raw (un-normalized) Black-76 APR.
   const self = rawStrike(side, forward, spot, strike, timeYears, daysToExpiry, sigmaOffered, baseHaircut)
 
+  // Greeks of the option, at the σ this strike actually priced at. Two things
+  // they are NOT, both of which an auditor will ask about:
+  //
+  //   * Not the writer's. These are the holder's Greeks (call delta positive).
+  //     A Lusty user sells the option, so their exposure is the negative. The
+  //     sign is flipped once, by the portfolio layer that knows it is
+  //     describing a writer's book, so there is exactly one place to check.
+  //   * Not the sensitivity of what we pay. `userPremium` comes off the APR
+  //     ladder — MAX_APR, the time scaling, the utilization taper — and
+  //     Black-76 enters that only as the ratio between rungs. Fair value can
+  //     move while the paid premium sits pinned at the ceiling. These are the
+  //     option's mathematical sensitivities, and the position they describe is
+  //     the one that settles, not the cash that changed hands at open.
+  const delta = black76Delta(side, forward, strike, timeYears, self.sigma)
+  const vega = black76Vega(forward, strike, timeYears, self.sigma)
+
   // Reference = the nearest strike (index 0 of the ladder), whose raw APR is the
   // ladder maximum. We pin it to the time-scaled MAX_APR target and scale every
   // strike by the same factor — so the top strike lands on target and the rest
@@ -284,6 +315,8 @@ export function quoteOption(input: QuoteInput): Quote {
     sigmaOffered,
     sigmaStrike: self.sigma,
     fairPremium,
+    delta,
+    vega,
     haircut,
     userPremium,
     protocolEdge,

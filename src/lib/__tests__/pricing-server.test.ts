@@ -5,7 +5,13 @@ import {
   utilizationTaper,
   type QuoteInput,
 } from '../pricing-server'
-import { roundStrike, CALL_STRIKE_MULTIPLIERS } from '../pricing'
+import {
+  roundStrike,
+  CALL_STRIKE_MULTIPLIERS,
+  PUT_STRIKE_MULTIPLIERS,
+  black76Delta,
+  black76Vega,
+} from '../pricing'
 
 // Defaults assumed by these tests (env unset in the test runner):
 //   VOL_SPREAD_REL=0.10  VOL_SPREAD_ABS=0.03  MAX_PRICING_SIGMA=1.0
@@ -159,5 +165,62 @@ describe('quoteOption — money-path invariants', () => {
     expect(quote.forward).toBe(SPOT)
     const quote2 = q({ forward: NaN })
     expect(quote2.forward).toBe(SPOT)
+  })
+})
+
+describe('quoteOption — Greeks', () => {
+  // The M3 criterion is that risk shown anywhere matches THIS engine's output.
+  // That only holds if the Greeks are evaluated at the σ the strike was priced
+  // at — the smile-adjusted one — and not at the at-the-money level.
+  it('are evaluated at sigmaStrike, not sigmaOffered', () => {
+    for (const mult of CALL_STRIKE_MULTIPLIERS) {
+      const strike = roundStrike(SPOT * mult, SPOT)
+      const quote = q({ strike })
+      const T = quote.daysToExpiry / 365
+      expect(quote.delta).toBeCloseTo(
+        black76Delta('call', quote.forward, strike, T, quote.sigmaStrike), 12,
+      )
+      expect(quote.vega).toBeCloseTo(
+        black76Vega(quote.forward, strike, T, quote.sigmaStrike), 12,
+      )
+    }
+    // The two σ's differ on the wings, so the wrong one is a detectable error.
+    const far = q({ strike: roundStrike(SPOT * 1.2, SPOT) })
+    expect(far.sigmaStrike).not.toBeCloseTo(far.sigmaOffered, 3)
+    expect(far.delta).not.toBeCloseTo(
+      black76Delta('call', far.forward, far.strike, far.daysToExpiry / 365, far.sigmaOffered), 4,
+    )
+  })
+
+  it('carries the option holder\'s sign, leaving the writer flip to callers', () => {
+    for (const mult of CALL_STRIKE_MULTIPLIERS) {
+      const call = q({ strike: roundStrike(SPOT * mult, SPOT) })
+      expect(call.delta).toBeGreaterThan(0)
+      expect(call.vega).toBeGreaterThan(0)
+    }
+    for (const mult of PUT_STRIKE_MULTIPLIERS) {
+      const put = q({ side: 'put', strike: roundStrike(SPOT * mult, SPOT) })
+      expect(put.delta).toBeLessThan(0)
+      expect(put.vega).toBeGreaterThan(0)
+    }
+  })
+
+  it('tracks fair value rather than the paid premium', () => {
+    // Utilization halves what the user is paid without touching the option's
+    // sensitivities — the clearest case of the two being different numbers.
+    const empty = q()
+    const full = q({ utilization: 1 })
+    expect(full.userPremium).toBeLessThan(empty.userPremium)
+    expect(full.delta).toBeCloseTo(empty.delta, 12)
+    expect(full.vega).toBeCloseTo(empty.vega, 12)
+  })
+
+  it('falls away across the ladder as strikes go further out', () => {
+    const deltas = CALL_STRIKE_MULTIPLIERS.map(
+      (m) => q({ strike: roundStrike(SPOT * m, SPOT) }).delta,
+    )
+    for (let i = 1; i < deltas.length; i++) {
+      expect(deltas[i]).toBeLessThan(deltas[i - 1])
+    }
   })
 })
