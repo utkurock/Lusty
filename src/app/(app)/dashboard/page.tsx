@@ -22,6 +22,23 @@ interface Position {
   expiryIso: string | null
   expiryLabel: string
   settled: boolean
+  /**
+   * Contract-assigned id, or null for a position from the retired distributor
+   * rail. The difference decides how a position closes, so it decides what the
+   * row is allowed to offer: on-chain settlement for one, nothing for the other.
+   */
+  positionId: number | null
+}
+
+/** GET /api/vault/claim — the retired rail's state, for this wallet. */
+interface LegacyClaims {
+  payoutsEnabled: boolean
+  backlog: {
+    rows: number
+    wallets: number
+    callCollateralXlm: number
+    putCollateralUsd: number
+  }
 }
 
 // Mirrors the /api/vault/portfolio response.
@@ -302,6 +319,7 @@ export default function DashboardPage() {
   const { connected, connect, address } = useWalletContext()
   const [positions, setPositions] = useState<Position[]>([])
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null)
+  const [legacy, setLegacy] = useState<LegacyClaims | null>(null)
   const [loading, setLoading] = useState(false)
   const [claimingId, setClaimingId] = useState<string | null>(null)
   const [toast, setToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
@@ -310,22 +328,27 @@ export default function DashboardPage() {
     if (!address) {
       setPositions([])
       setPortfolio(null)
+      setLegacy(null)
       return
     }
     setLoading(true)
     const q = encodeURIComponent(address)
     // Independent on purpose: the risk panel is priced against a live feed and
-    // is the more fragile of the two. If it fails the position list still
+    // is the most fragile of the three. If it fails the position list still
     // renders, which is the part the user needs to act on.
-    const [list, risk] = await Promise.allSettled([
+    const [list, risk, old] = await Promise.allSettled([
       fetch(`/api/vault/positions?address=${q}`).then((r) => r.json()),
       fetch(`/api/vault/portfolio?address=${q}`).then((r) => r.json()),
+      fetch(`/api/vault/claim?address=${q}`).then((r) => r.json()),
     ])
     if (list.status === 'fulfilled' && list.value?.ok) {
       setPositions(list.value.positions as Position[])
     }
     setPortfolio(
       risk.status === 'fulfilled' && risk.value?.ok ? (risk.value as Portfolio) : null
+    )
+    setLegacy(
+      old.status === 'fulfilled' && old.value?.ok ? (old.value as LegacyClaims) : null
     )
     setLoading(false)
   }
@@ -361,6 +384,12 @@ export default function DashboardPage() {
         }),
       })
       const data = await res.json()
+      if (res.status === 410) {
+        // The flag went off between render and click. Re-read rather than
+        // leaving a button on screen that cannot work.
+        await refresh()
+        throw new Error('Server-side payouts are retired')
+      }
       if (!res.ok) throw new Error(data.error ?? 'Claim failed')
       await refresh()
       setToast({
@@ -461,6 +490,32 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {connected && legacy && legacy.backlog.rows > 0 && !legacy.payoutsEnabled && (
+        <div className="mb-3 p-4 border border-[#eab308]/40 bg-[#eab308]/10 rounded-sm font-mono text-xs text-ink">
+          <div className="font-bold mb-1">
+            {legacy.backlog.rows} position{legacy.backlog.rows === 1 ? '' : 's'}{' '}
+            from the retired rail
+          </div>
+          <div className="text-ink-2 leading-relaxed">
+            These were written before collateral moved into the vault contract,
+            so they were only ever settleable by this server paying out of the
+            distributor account. That path is retired: a server that can spend
+            what you escrowed is the assumption the contract removes, and it was
+            not worth keeping open. Your collateral is still recorded —{' '}
+            {legacy.backlog.callCollateralXlm > 0 && (
+              <>{amount(legacy.backlog.callCollateralXlm)} XLM in calls</>
+            )}
+            {legacy.backlog.callCollateralXlm > 0 &&
+              legacy.backlog.putCollateralUsd > 0 &&
+              ' and '}
+            {legacy.backlog.putCollateralUsd > 0 && (
+              <>${amount(legacy.backlog.putCollateralUsd)} in puts</>
+            )}
+            . Positions opened since settle on chain and are unaffected.
+          </div>
+        </div>
+      )}
+
       {connected && portfolio && positions.length > 0 && (
         <>
           <RiskPanel portfolio={portfolio} />
@@ -530,15 +585,41 @@ export default function DashboardPage() {
                 </div>
 
                 <div className="flex items-center gap-3 justify-self-end">
-                  {expired && !p.settled && (
-                    <button
-                      onClick={() => handleClaim(p)}
-                      disabled={claimingId === p.id}
-                      className="h-9 px-4 bg-[#eab308] text-ink font-mono text-xs font-bold rounded-sm hover:bg-[#f5b938] disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2 transition"
+                  {/*
+                    How a position closes depends on which rail wrote it.
+                    A contract position settles on chain and needs nobody's
+                    permission, so there is nothing to offer here. A legacy one
+                    could only ever be paid by this server, and that path is
+                    retired — showing a button that returns 410 would be worse
+                    than saying so.
+                  */}
+                  {expired && !p.settled && p.positionId !== null && (
+                    <span
+                      className="font-mono text-[11px] text-ink-2"
+                      title="Settled by the contract against the oracle price at expiry. Anyone can trigger it; a scheduled runner does."
                     >
-                      {claimingId === p.id && <Loader2 size={12} className="animate-spin" />}
-                      claim
-                    </button>
+                      settles on chain
+                    </span>
+                  )}
+                  {expired && !p.settled && p.positionId === null && (
+                    legacy?.payoutsEnabled ? (
+                      <button
+                        onClick={() => handleClaim(p)}
+                        disabled={claimingId === p.id}
+                        className="h-9 px-4 bg-[#eab308] text-ink font-mono text-xs font-bold rounded-sm hover:bg-[#f5b938] disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2 transition"
+                      >
+                        {claimingId === p.id && <Loader2 size={12} className="animate-spin" />}
+                        claim
+                      </button>
+                    ) : (
+                      <span
+                        className="font-mono text-[11px] text-[#eab308]"
+                        title="Written before the vault contract. Its collateral sits in the distributor account, and the server-side payout path has been retired."
+                        data-testid="legacy-retired"
+                      >
+                        legacy — payouts retired
+                      </span>
+                    )
                   )}
                   <a
                     href={`https://stellarchain.io/tx/${p.depositHash}`}

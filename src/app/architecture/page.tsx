@@ -317,21 +317,32 @@ settle(id) -> "kept" | "assigned"
         └─ store Position{open}, emit "deposit"
                                    ▼
                  premium is in the writer's wallet in the same ledger`}</Pre>
-        <H3>Settlement (either rail)</H3>
-        <Pre>{`anyone ──► settle(id)            (server: POST /api/vault/claim)
+        <H3>Settlement</H3>
+        <Pre>{`anyone ──► settle(id)            (contract entrypoint, permissionless)
    │
    ├─ load Position; require expiry in the past; require not settled
    ├─ price = Reflector.price(XLM, expiry)          [expiry-pinned]
-   │     └─ missing + late claim -> revert/refuse   [fail-closed]
+   │     └─ missing or stale -> revert               [fail-closed]
    ├─ assigned (price > strike): collateral -> treasury,
    │                             strike value -> writer (cash)
    ├─ kept     (price <= strike): collateral -> writer
    └─ mark settled, emit "settle"`}</Pre>
         <P>
-          On the server rail the same logic runs with replay protection: a
-          unique-constraint ledger reserves the deposit hash before any payout,
-          so a claim or swap cannot be replayed and one on-chain payment cannot
-          fund both a deposit and a swap.
+          No server takes part. The caller pays the transaction fee and receives
+          nothing for it, which was demonstrated on chain by settling four
+          positions from an unrelated account. A scheduled runner
+          (<Code>/api/cron/settle</Code>) closes expired positions so writers do
+          not have to send the transaction themselves, but it holds no privilege
+          the caller above does not — if it never ran, anyone could close the
+          same positions on the same terms.
+        </P>
+        <P>
+          The server-side payout path that settled positions on the old
+          distributor rail (<Code>POST /api/vault/claim</Code>) is retired and
+          disabled by default. It could move user collateral, which is the
+          assumption contract custody exists to remove. What remains of that
+          book is still reported, read-only, by <Code>GET</Code> on the same
+          route.
         </P>
 
         {/* 7 */}

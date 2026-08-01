@@ -8,7 +8,11 @@ import {
   Networks,
   BASE_FEE,
 } from '@stellar/stellar-sdk'
-import { logTransaction, getDepositRecord } from '@/lib/db-queries'
+import {
+  logTransaction,
+  getDepositRecord,
+  getLegacyClaimBacklog,
+} from '@/lib/db-queries'
 import { rateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
 import {
@@ -23,16 +27,39 @@ const HORIZON =
   process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
 const DISTRIBUTOR_SECRET = process.env.LUSD_DISTRIBUTOR_SECRET ?? ''
 
-// Legacy settlement, for positions written before the vault contract.
-// ===================================================================
+/**
+ * The server-side payout path is off unless an operator turns it on.
+ *
+ * Not a feature flag — a safety catch on the last piece of custody in the
+ * system. Everything below this line can move user collateral out of the
+ * distributor account, which is exactly the capability the contract migration
+ * exists to remove. Leaving it permanently reachable would mean the protocol
+ * still has a server that can spend what users escrowed, whatever the contract
+ * does.
+ */
+const LEGACY_CLAIM_ENABLED = process.env.LEGACY_CLAIM_ENABLED === '1'
+
+// Legacy settlement, retired and gated.
+// =====================================
 // Positions opened on the contract escrow their collateral there and settle
 // through its permissionless `settle(id)` — no server involvement, and no
-// server able to interfere. This route only settles what predates that: the
-// distributor-escrowed positions from the old rail, whose collateral sits in
-// an account only this server can spend from. It refuses contract positions
-// outright.
+// server able to interfere. This route only ever settled what predates that:
+// distributor-escrowed positions from the old rail, whose collateral sits in an
+// account only this server can spend from. It refuses contract positions
+// outright, and now refuses everything else too unless LEGACY_CLAIM_ENABLED=1.
 //
-// It goes away entirely once the last legacy position has been claimed.
+// Why gated rather than deleted. The old book is not empty — at the time of
+// writing 592 positions across 207 wallets are past expiry and unclaimed, all
+// of them written before contract custody. Deleting the path would stop the
+// server holding a spending key over user collateral, which is the goal, but it
+// would also decide unilaterally that those positions are never settling.
+// Behind a flag the default is the safe one — no code path pays from the
+// distributor in normal operation — while an operator can still finish the
+// wind-down deliberately, with the flag on, and turn it back off.
+//
+// GET reports the outstanding book without any of that: it needs no key, moves
+// nothing, and exists so the size of what is left does not become invisible
+// just because the payout is closed. When it reaches zero this file can go.
 //
 // Server-canonical claim: the client only identifies *which* deposit to settle
 // (address + depositHash). Every parameter that affects assignment math —
@@ -50,7 +77,51 @@ interface ClaimBody {
   expiryIso?: string
 }
 
+/**
+ * Report the retired rail's outstanding book. Reads only — no key is loaded on
+ * this path and nothing here can move a balance.
+ */
+export async function GET(req: Request) {
+  try {
+    const address = new URL(req.url).searchParams.get('address') ?? undefined
+    if (address && !isValidStellarAddress(address)) {
+      return NextResponse.json({ error: 'invalid address' }, { status: 400 })
+    }
+    const backlog = await getLegacyClaimBacklog(address)
+    return NextResponse.json(
+      {
+        ok: true,
+        // So a client can tell "you cannot claim here" apart from "you have
+        // nothing to claim", which look identical from a failed POST.
+        payoutsEnabled: LEGACY_CLAIM_ENABLED,
+        ...(address ? { address } : {}),
+        backlog,
+      },
+      { headers: { 'Cache-Control': 'no-store' } }
+    )
+  } catch (e: any) {
+    return NextResponse.json(
+      { error: 'failed to read legacy backlog', detail: e?.message ?? 'unknown' },
+      { status: 500 }
+    )
+  }
+}
+
 export async function POST(req: Request) {
+  // First statement in the handler, deliberately: with the flag off there is
+  // no argument, no record and no failure mode that reaches the distributor.
+  if (!LEGACY_CLAIM_ENABLED) {
+    return NextResponse.json(
+      {
+        error:
+          'server-side payouts are retired — positions opened on the vault ' +
+          'contract settle on chain through settle(id), which anyone can call',
+        code: 'legacy_claims_closed',
+      },
+      { status: 410 }
+    )
+  }
+
   try {
     const body = (await req.json()) as ClaimBody
 

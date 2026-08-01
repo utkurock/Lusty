@@ -724,3 +724,65 @@ export async function getFeedback(limit = 50, offset = 0) {
     },
   }
 }
+
+// ── Legacy claim backlog ───────────────────────────────────────────
+
+/**
+ * What the retired distributor rail still owes.
+ *
+ * A position written before contract custody escrowed its collateral in the
+ * distributor account, and only this server can spend from there. Those rows
+ * are identified by the absence of a `positionId` in their metadata: contract
+ * positions carry the id the vault assigned them, legacy ones cannot.
+ *
+ * Reported rather than paid. The payout path is closed by default (see
+ * /api/vault/claim) precisely because a server that can move user collateral is
+ * the trust assumption the contract migration exists to remove — but the size
+ * of what is outstanding should not become invisible along with it.
+ *
+ * The `positionId` test is the same one the payout path applies, so this counts
+ * exactly the rows that path would act on — which is the useful definition, but
+ * it means the count is an upper bound rather than a fact about custody. A
+ * contract position whose indexing call never landed is recorded without an id
+ * and shows up here, even though its collateral is escrowed by the contract and
+ * settles on chain. One such row exists at the time of writing. Treat this as
+ * "what the retired path would still consider", not "what the distributor owes".
+ */
+export interface LegacyClaimBacklog {
+  /** Unsettled legacy deposits. */
+  rows: number
+  /** Distinct wallets holding them. */
+  wallets: number
+  /** Collateral still escrowed in the distributor, per leg. Never summed. */
+  callCollateralXlm: number
+  putCollateralUsd: number
+}
+
+export async function getLegacyClaimBacklog(
+  address?: string
+): Promise<LegacyClaimBacklog> {
+  await ensureSchema()
+  const pool = getPool()
+  const res = await pool.query(
+    `select count(*)::int as rows,
+            count(distinct t.address)::int as wallets,
+            coalesce(sum(t.amount) filter (where t.subtype = 'call'), 0)::float8 as call_xlm,
+            coalesce(sum(t.amount) filter (where t.subtype = 'put'), 0)::float8 as put_usd
+       from transactions t
+       left join processed_actions pa
+         on pa.action_type = 'claim' and pa.source_hash = t.tx_hash
+      where t.type = 'deposit'
+        and t.subtype in ('call', 'put')
+        and not (t.metadata ? 'positionId')
+        and pa.confirmed_at is null
+        and ($1::text is null or t.address = $1)`,
+    [address ?? null]
+  )
+  const r = res.rows[0] ?? {}
+  return {
+    rows: r.rows ?? 0,
+    wallets: r.wallets ?? 0,
+    callCollateralXlm: r.call_xlm ?? 0,
+    putCollateralUsd: r.put_usd ?? 0,
+  }
+}
