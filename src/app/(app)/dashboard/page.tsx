@@ -24,6 +24,30 @@ interface Position {
   settled: boolean
 }
 
+// Mirrors the /api/vault/portfolio response.
+//
+// Nothing on this screen recomputes a Greek. The requirement is that displayed
+// risk matches the pricing engine's own output, and a client-side re-derivation
+// would be a second opinion that drifts the moment either side changes. The
+// numbers arrive already negated for the writer (lib/portfolio.ts owns that
+// flip); all this file does is choose units and labels.
+interface PortfolioGreeks {
+  /** Whose book: the wallet is short every option it opened. */
+  basis: 'writer'
+  /** Underlying units. Negative = short XLM. */
+  netDelta: number
+  /** USD per 1.00 of σ. Displayed per vol point, so divided by 100. */
+  netVega: number
+  pricedPositions: number
+}
+
+interface Portfolio {
+  source: 'contract' | 'database'
+  counts: { open: number; awaitingSettlement: number; settled: number }
+  greeks: PortfolioGreeks | null
+  market: { spot: number } | null
+}
+
 function daysRemaining(expiryIso: string | null): number {
   if (!expiryIso) return 0
   const ms = new Date(expiryIso).getTime() - Date.now()
@@ -35,9 +59,96 @@ function isExpired(expiryIso: string | null): boolean {
   return new Date(expiryIso).getTime() <= Date.now()
 }
 
+/** Signed, with a real minus sign — the sign is the point of these numbers. */
+function signed(n: number, digits = 2): string {
+  const body = Math.abs(n).toLocaleString('en-US', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  })
+  return `${n < 0 ? '−' : '+'}${body}`
+}
+
+/**
+ * Portfolio-level risk, straight from /api/vault/portfolio.
+ *
+ * The sign convention gets its own line on screen rather than a tooltip: a
+ * reader who assumes these are the option's Greeks reads every number
+ * backwards, and that is a worse failure than showing nothing.
+ */
+function RiskPanel({ portfolio }: { portfolio: Portfolio }) {
+  const g = portfolio.greeks
+
+  // Absent Greeks are not zero risk, and must never render as zero. Say which
+  // of the two reasons it is.
+  const absence =
+    portfolio.counts.open === 0
+      ? 'nothing open to price — expired positions settle at a price already fixed by the oracle'
+      : !portfolio.market
+        ? 'price feed unavailable, so live risk cannot be computed'
+        : 'positions could not be priced'
+
+  return (
+    <div className="light-card rounded-sm p-5 mb-3">
+      <div className="flex items-baseline justify-between flex-wrap gap-x-6 gap-y-1 mb-4">
+        <div className="font-mono text-[11px] uppercase text-ink-2 tracking-wider">
+          Portfolio risk
+        </div>
+        <div className="font-mono text-[11px] text-ink-2">
+          you wrote these options, so your book carries the opposite sign to the
+          option itself
+        </div>
+      </div>
+
+      {g ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+          <div>
+            <div className="font-mono text-[11px] uppercase text-ink-2 tracking-wider">
+              Net delta
+            </div>
+            <div className="num text-xl font-bold text-ink mt-0.5">
+              {signed(g.netDelta)}{' '}
+              <span className="text-sm font-normal text-ink-2">XLM</span>
+            </div>
+            <div className="font-mono text-[11px] text-ink-2 mt-1">
+              {g.netDelta < 0 ? 'short' : 'long'} the underlying · the same
+              directional exposure as holding{' '}
+              {signed(g.netDelta, 0)} XLM
+            </div>
+          </div>
+
+          <div>
+            <div className="font-mono text-[11px] uppercase text-ink-2 tracking-wider">
+              Net vega
+            </div>
+            <div className="num text-xl font-bold text-ink mt-0.5">
+              {signed(g.netVega / 100)}{' '}
+              <span className="text-sm font-normal text-ink-2">USD / vol pt</span>
+            </div>
+            <div className="font-mono text-[11px] text-ink-2 mt-1">
+              {g.netVega < 0 ? 'short' : 'long'} volatility · P&L per 1 point of
+              implied vol
+            </div>
+          </div>
+
+          {g.pricedPositions < portfolio.counts.open && (
+            <div className="sm:col-span-2 font-mono text-[11px] text-[#eab308]">
+              priced {g.pricedPositions} of {portfolio.counts.open} open
+              positions — the rest could not be priced and are not in these
+              totals
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="font-mono text-xs text-ink-2">Not shown — {absence}.</div>
+      )}
+    </div>
+  )
+}
+
 export default function DashboardPage() {
   const { connected, connect, address } = useWalletContext()
   const [positions, setPositions] = useState<Position[]>([])
+  const [portfolio, setPortfolio] = useState<Portfolio | null>(null)
   const [loading, setLoading] = useState(false)
   const [claimingId, setClaimingId] = useState<string | null>(null)
   const [toast, setToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
@@ -45,18 +156,25 @@ export default function DashboardPage() {
   const refresh = async () => {
     if (!address) {
       setPositions([])
+      setPortfolio(null)
       return
     }
     setLoading(true)
-    try {
-      const res = await fetch(`/api/vault/positions?address=${encodeURIComponent(address)}`)
-      const data = await res.json()
-      if (res.ok && data.ok) setPositions(data.positions as Position[])
-    } catch {
-      /* keep last good list */
-    } finally {
-      setLoading(false)
+    const q = encodeURIComponent(address)
+    // Independent on purpose: the risk panel is priced against a live feed and
+    // is the more fragile of the two. If it fails the position list still
+    // renders, which is the part the user needs to act on.
+    const [list, risk] = await Promise.allSettled([
+      fetch(`/api/vault/positions?address=${q}`).then((r) => r.json()),
+      fetch(`/api/vault/portfolio?address=${q}`).then((r) => r.json()),
+    ])
+    if (list.status === 'fulfilled' && list.value?.ok) {
+      setPositions(list.value.positions as Position[])
     }
+    setPortfolio(
+      risk.status === 'fulfilled' && risk.value?.ok ? (risk.value as Portfolio) : null
+    )
+    setLoading(false)
   }
 
   useEffect(() => {
@@ -188,6 +306,10 @@ export default function DashboardPage() {
             go to earn
           </Link>
         </div>
+      )}
+
+      {connected && portfolio && positions.length > 0 && (
+        <RiskPanel portfolio={portfolio} />
       )}
 
       {connected && positions.length > 0 && (
