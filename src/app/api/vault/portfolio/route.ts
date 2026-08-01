@@ -2,10 +2,21 @@ import { NextResponse } from 'next/server'
 import { getPositionsForAddress, type DbPosition } from '@/lib/db-queries'
 import { isValidStellarAddress } from '@/lib/utils'
 import { rateLimit } from '@/lib/rate-limit'
-import { getPositionsOf, VAULT_ID, type VaultPosition } from '@/lib/vault-contract'
+import {
+  getPositionsOf,
+  getExposure,
+  getVaultLimits,
+  VAULT_ID,
+  type VaultPosition,
+} from '@/lib/vault-contract'
 import { getSpotXlmUsd } from '@/lib/spot'
 import { getMarketContext } from '@/lib/pricing-server'
-import { aggregatePortfolio, daysUntil, type Leg } from '@/lib/portfolio'
+import {
+  aggregatePortfolio,
+  daysUntil,
+  type ExpiryBucket,
+  type Leg,
+} from '@/lib/portfolio'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -72,6 +83,13 @@ export async function GET(req: Request) {
       return null
     })
 
+    const summary = aggregatePortfolio(legs, market)
+
+    // Only meaningful against contract state: comparing a mirror-derived
+    // holding to the contract's own book invites a discrepancy that means
+    // nothing to the reader.
+    if (chain) await attachVaultLoad(summary.byExpiry)
+
     return NextResponse.json(
       {
         ok: true,
@@ -84,7 +102,7 @@ export async function GET(req: Request) {
         // beats dropping them silently from a total the user reads as whole.
         ...(incomplete > 0 ? { unpricedLegacyRows: incomplete } : {}),
         market,
-        ...aggregatePortfolio(legs, market),
+        ...summary,
       },
       { headers: { 'Cache-Control': 'no-store' } }
     )
@@ -93,6 +111,48 @@ export async function GET(req: Request) {
       { error: 'failed to load portfolio', detail: e?.message ?? 'unknown' },
       { status: 500 }
     )
+  }
+}
+
+/**
+ * Fill each bucket in with the vault's total load at that expiry.
+ *
+ * This is the one figure on the screen that never touches the database: the
+ * contract's `exposure(kind, expiry)` view is the same number `open` checks
+ * against `max_expiry`, so "how full is this tenor" is answered by the thing
+ * that will actually refuse the next deposit. The stats route derives its
+ * equivalent from the deposit ledger, which is a mirror and can drift.
+ *
+ * Best-effort throughout. A wallet's own exposure is the point of the response
+ * and must not be held hostage to an extra read; a failure here leaves `vault`
+ * absent, which the UI renders as "unknown" rather than as zero.
+ */
+async function attachVaultLoad(buckets: ExpiryBucket[]): Promise<void> {
+  if (buckets.length === 0) return
+  try {
+    const [limits, loads] = await Promise.all([
+      getVaultLimits(),
+      Promise.all(
+        buckets.map(async (b) => {
+          const expiry = new Date(b.expiryIso)
+          const [callXlm, putUsd] = await Promise.all([
+            getExposure('call', expiry),
+            getExposure('put', expiry),
+          ])
+          return { callXlm, putUsd }
+        })
+      ),
+    ])
+    buckets.forEach((b, i) => {
+      b.vault = {
+        callXlm: loads[i].callXlm,
+        putUsd: loads[i].putUsd,
+        maxCallXlm: limits.maxExpiryCall,
+        maxPutUsd: limits.maxExpiryPut,
+      }
+    })
+  } catch (err) {
+    console.warn('vault/portfolio: per-expiry exposure read failed', err)
   }
 }
 

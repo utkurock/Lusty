@@ -41,10 +41,36 @@ interface PortfolioGreeks {
   pricedPositions: number
 }
 
+/** The vault's whole book at one expiry, from contract state. Not this wallet. */
+interface VaultExpiryLoad {
+  callXlm: number
+  putUsd: number
+  maxCallXlm: number
+  maxPutUsd: number
+}
+
+interface ExpiryBucket {
+  expiryIso: string
+  expiryLabel: string
+  daysToExpiry: number
+  positions: number
+  callCollateralXlm: number
+  putCollateralUsd: number
+  premiumUsd: number
+  netDelta: number | null
+  netVega: number | null
+  awaitingSettlement: number
+  vault?: VaultExpiryLoad
+}
+
 interface Portfolio {
   source: 'contract' | 'database'
   counts: { open: number; awaitingSettlement: number; settled: number }
+  /** Two tokens, deliberately never summed into one figure. */
+  collateral: { callXlm: number; putUsd: number }
+  premiumUsd: number
   greeks: PortfolioGreeks | null
+  byExpiry: ExpiryBucket[]
   market: { spot: number } | null
 }
 
@@ -140,6 +166,133 @@ function RiskPanel({ portfolio }: { portfolio: Portfolio }) {
         </div>
       ) : (
         <div className="font-mono text-xs text-ink-2">Not shown — {absence}.</div>
+      )}
+    </div>
+  )
+}
+
+function amount(n: number, digits = 2): string {
+  return n.toLocaleString('en-US', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  })
+}
+
+function pctFull(used: number, cap: number): number | null {
+  if (!(cap > 0)) return null
+  return Math.min(100, (used / cap) * 100)
+}
+
+/**
+ * Asset-level exposure: what is locked, in which token, coming due when.
+ *
+ * The two legs are never added together. A call escrows XLM and a put escrows
+ * cash, so a single "total collateral" would be a currency error — and one that
+ * reads as a perfectly sensible number right up until someone sizes a decision
+ * on it. The API refuses to produce that figure and so does this panel.
+ *
+ * The vault column is the whole book at that expiry, not this wallet's share.
+ * It comes from the contract's own `exposure(kind, expiry)` view — the same
+ * number `open` checks against `max_expiry` — so it answers "how much room is
+ * left on this date" with the figure that will actually refuse the next
+ * deposit, rather than with a database mirror of it.
+ */
+function ExposurePanel({ portfolio }: { portfolio: Portfolio }) {
+  const buckets = portfolio.byExpiry
+  if (buckets.length === 0) return null
+
+  return (
+    <div className="light-card rounded-sm p-5 mb-3">
+      <div className="flex items-baseline justify-between flex-wrap gap-x-6 gap-y-1 mb-4">
+        <div className="font-mono text-[11px] uppercase text-ink-2 tracking-wider">
+          Asset exposure
+        </div>
+        <div className="font-mono text-[11px] text-ink-2">
+          calls lock XLM, puts lock cash — separate tokens, so there is no
+          combined total
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-5 mb-5">
+        <div>
+          <div className="font-mono text-[11px] uppercase text-ink-2 tracking-wider">
+            Locked in calls
+          </div>
+          <div className="num text-xl font-bold text-ink mt-0.5">
+            {amount(portfolio.collateral.callXlm)}{' '}
+            <span className="text-sm font-normal text-ink-2">XLM</span>
+          </div>
+        </div>
+        <div>
+          <div className="font-mono text-[11px] uppercase text-ink-2 tracking-wider">
+            Locked in puts
+          </div>
+          <div className="num text-xl font-bold text-ink mt-0.5">
+            <span className="text-sm font-normal text-ink-2">$</span>
+            {amount(portfolio.collateral.putUsd)}
+          </div>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto">
+        <div className="min-w-[560px]">
+          <div className="grid grid-cols-[1.1fr_0.9fr_0.9fr_0.8fr_1.1fr] gap-3 font-mono text-[11px] uppercase text-ink-2 tracking-wider pb-2 border-b border-line">
+            <div>Expiry</div>
+            <div className="text-right">Calls (XLM)</div>
+            <div className="text-right">Puts (USD)</div>
+            <div className="text-right">Upfront</div>
+            <div className="text-right">Vault load at this expiry</div>
+          </div>
+
+          {buckets.map((b) => {
+            const callPct = b.vault ? pctFull(b.vault.callXlm, b.vault.maxCallXlm) : null
+            const putPct = b.vault ? pctFull(b.vault.putUsd, b.vault.maxPutUsd) : null
+            const due = b.awaitingSettlement > 0 && b.awaitingSettlement === b.positions
+
+            return (
+              <div
+                key={b.expiryIso}
+                className="grid grid-cols-[1.1fr_0.9fr_0.9fr_0.8fr_1.1fr] gap-3 py-2.5 border-b border-line last:border-0 items-baseline"
+              >
+                <div>
+                  <div className="font-mono text-xs text-ink">{b.expiryLabel}</div>
+                  <div className="font-mono text-[11px] text-ink-2">
+                    {due
+                      ? 'awaiting settlement'
+                      : `in ${Math.ceil(b.daysToExpiry)}d · ${b.positions} position${b.positions === 1 ? '' : 's'}`}
+                  </div>
+                </div>
+                <div className="num text-xs text-ink text-right">
+                  {b.callCollateralXlm > 0 ? amount(b.callCollateralXlm) : '—'}
+                </div>
+                <div className="num text-xs text-ink text-right">
+                  {b.putCollateralUsd > 0 ? amount(b.putCollateralUsd) : '—'}
+                </div>
+                <div className="num text-xs text-[#22c55e] text-right">
+                  ${amount(b.premiumUsd, 4)}
+                </div>
+                <div className="num text-[11px] text-ink-2 text-right">
+                  {callPct === null && putPct === null ? (
+                    'unknown'
+                  ) : (
+                    <>
+                      calls {callPct?.toFixed(1) ?? '—'}% · puts{' '}
+                      {putPct?.toFixed(1) ?? '—'}% full
+                    </>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {buckets.some((b) => b.vault) && (
+        <div className="font-mono text-[11px] text-ink-2 mt-3">
+          Vault load is every writer&apos;s collateral at that expiry against the
+          contract&apos;s own per-expiry cap, read from contract state — not your
+          share.
+        </div>
       )}
     </div>
   )
@@ -309,7 +462,10 @@ export default function DashboardPage() {
       )}
 
       {connected && portfolio && positions.length > 0 && (
-        <RiskPanel portfolio={portfolio} />
+        <>
+          <RiskPanel portfolio={portfolio} />
+          <ExposurePanel portfolio={portfolio} />
+        </>
       )}
 
       {connected && positions.length > 0 && (

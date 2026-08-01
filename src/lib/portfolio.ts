@@ -35,6 +35,25 @@ export interface PortfolioMarket {
   fundingAnnual: number
 }
 
+/**
+ * The vault's total load at one expiry — every writer's collateral, not just
+ * this wallet's, and the cap the contract enforces against it.
+ *
+ * Read from the contract's own `exposure(kind, expiry)` view, in the same units
+ * as the wallet's own figures above, so a holding is directly comparable to the
+ * book it sits in. This is the only per-expiry number on the screen that does
+ * not come through the database at all: `/api/vault/stats` derives its
+ * equivalent from the deposit ledger, which is a mirror. Where the two ever
+ * disagree, this one is the one that will be enforced at open.
+ */
+export interface VaultExpiryLoad {
+  callXlm: number
+  putUsd: number
+  /** `Limits::max_expiry_call` — the point at which `open` starts reverting. */
+  maxCallXlm: number
+  maxPutUsd: number
+}
+
 export interface ExpiryBucket {
   expiryIso: string
   expiryLabel: string
@@ -51,6 +70,12 @@ export interface ExpiryBucket {
   netVega: number | null
   /** Past expiry, not yet settled — no remaining market sensitivity. */
   awaitingSettlement: number
+  /**
+   * Vault-wide load at this expiry. Filled in by the route from contract
+   * state; absent when the read failed or the wallet's own data came from the
+   * mirror, in which case there is nothing authoritative to compare against.
+   */
+  vault?: VaultExpiryLoad
 }
 
 export interface PortfolioSummary {
