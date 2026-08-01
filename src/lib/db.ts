@@ -7,6 +7,8 @@ declare global {
   var __pgPool: Pool | undefined
   // eslint-disable-next-line no-var
   var __pgSchemaReady: boolean | undefined
+  // eslint-disable-next-line no-var
+  var __pgSchemaInFlight: Promise<void> | undefined
 }
 
 export function getPool(): Pool {
@@ -30,8 +32,42 @@ export function getPool(): Pool {
   return global.__pgPool
 }
 
-export async function ensureSchema(): Promise<void> {
-  if (global.__pgSchemaReady) return
+/**
+ * Create the schema once per process, however many callers ask for it at once.
+ *
+ * The ready flag is only set when the whole batch finishes, so a cold start
+ * used to let every request that arrived in the meantime run the DDL itself.
+ * Most of it is `if not exists` and survives being run twice — but the
+ * leaderboard view has to be dropped and recreated, because Postgres has no
+ * `create view if not exists` and the column list changes over time. Whichever
+ * racer lost then failed with `relation "leaderboard_view" already exists` and
+ * took its request down with it.
+ *
+ * That surfaced as sporadic multi-second 500s on any database-backed route, and
+ * as false 403s from the admin check, which denies when its lookup throws — so
+ * a real admin was told they were not one, for a few seconds after every boot.
+ *
+ * Callers now share one in-flight promise. A failed run is not cached, so the
+ * next caller retries instead of inheriting the error for the life of the
+ * process. This serialises within a process, which is what a dev server or one
+ * serverless instance needs; two instances booting simultaneously can still
+ * collide, which is why the view step below tolerates losing that race.
+ */
+export function ensureSchema(): Promise<void> {
+  if (global.__pgSchemaReady) return Promise.resolve()
+  if (!global.__pgSchemaInFlight) {
+    global.__pgSchemaInFlight = createSchema()
+      .then(() => {
+        global.__pgSchemaReady = true
+      })
+      .finally(() => {
+        global.__pgSchemaInFlight = undefined
+      })
+  }
+  return global.__pgSchemaInFlight
+}
+
+async function createSchema(): Promise<void> {
   const pool = getPool()
   console.log('ensureSchema: creating tables and views…')
   await pool.query(`
@@ -171,6 +207,11 @@ export async function ensureSchema(): Promise<void> {
   // etc.), so we have to DROP first to avoid:
   //   "cannot change name of view column ... to ..."
   // CASCADE so any dependent objects (none today, but be safe) are dropped too.
+  //
+  // Tolerated: another process may recreate the view between our drop and our
+  // create. The definition is this file's, identical in both, so losing that
+  // race is harmless — what is not harmless is failing the request that
+  // happened to trigger the boot. See the note on ensureSchema.
   await pool.query(`drop view if exists leaderboard_view cascade`)
 
   // Points formula:
@@ -194,7 +235,16 @@ export async function ensureSchema(): Promise<void> {
       ) as points
     from transactions t
     group by t.address
-  `)
+  `).catch((err: any) => {
+    // 42P07 = duplicate_table: another instance recreated the view in the gap
+    // above. Its definition came from this same file, so the schema is correct
+    // either way and there is nothing to do but carry on.
+    if (err?.code === '42P07') {
+      console.warn('ensureSchema: leaderboard_view created concurrently, continuing')
+      return
+    }
+    throw err
+  })
 
   // Security hardening (idempotent). The app connects as the privileged owner
   // role, which bypasses RLS — but Supabase also exposes a public PostgREST API
