@@ -120,6 +120,9 @@ LUSD distributor     GBAIN6CHZJGBL365JNXSRQEKALXYTWKXANQZ3RBM7AGUEYYKLJJ6SNR6
 
 The security model was rebuilt after the SCF #43 panel review. Each item below
 can be checked against the commit history, and most are covered by tests.
+[`docs/SECURITY.md`](docs/SECURITY.md) covers key custody and what each key can
+and cannot do; [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) covers where the
+boundaries between components fall, including the limits we know about.
 
 - Premiums are recomputed server side from the quote engine before the quoter
   co-signs, never taken from the client. Before it signs, the server proves the
@@ -157,6 +160,9 @@ can be checked against the commit history, and most are covered by tests.
 ## Project structure
 
 ```
+docs/
+  ARCHITECTURE.md      Components, responsibilities and security boundaries
+  SECURITY.md          Key custody, multisig policy, what breaks if a key is lost
 contracts/
   vault/               Soroban options vault — covered calls and cash-secured
                        puts (escrow + premium + settlement)
