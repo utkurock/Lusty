@@ -9,13 +9,16 @@
 //   • expiries as unix seconds.
 //
 // Everything crossing into application code is converted to human units here
-// and nowhere else. Reads go through simulation only — nothing in this module
-// submits, signs or costs anything.
+// and nowhere else. Every read goes through simulation and costs nothing. Two
+// functions write: `openPosition`, which assembles a transaction the user's own
+// wallet signs, and `settlePosition`, which signs with a runner key that the
+// contract grants no standing to — see the note there.
 
 import {
   Account,
   Address,
   Contract,
+  Keypair,
   Networks,
   Operation,
   TransactionBuilder,
@@ -420,20 +423,73 @@ export async function openPosition(
   return { id, txHash: sent.hash }
 }
 
+/**
+ * Settle one expired position.
+ *
+ * `settle` is permissionless: the contract asks for no authorization beyond the
+ * transaction's own source account, so there is none of the co-signature dance
+ * `open` needs — build, sign, send. That also means the key used here holds no
+ * privilege whatsoever. It cannot move collateral, change a parameter or
+ * influence the outcome; the payout is fixed by the oracle price at the expiry
+ * timestamp and goes to the position's owner no matter who makes the call. All
+ * this signer does is pay the fee, which is why running it is a convenience
+ * rather than a trust assumption: if this runner never ran, any stranger could
+ * close the same positions on the same terms.
+ */
+export async function settlePosition(
+  id: number,
+  signer: Keypair,
+): Promise<{ txHash: string; outcome: string }> {
+  const server = vaultServer()
+  const contractId = requireVaultId()
+
+  const account = await server.getAccount(signer.publicKey())
+  const tx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
+    .addOperation(
+      new Contract(contractId).call('settle', nativeToScVal(BigInt(id), { type: 'u64' })),
+    )
+    .setTimeout(180)
+    .build()
+
+  const sim = await server.simulateTransaction(tx)
+  if (rpc.Api.isSimulationError(sim)) {
+    throw new Error(readableContractError(sim.error, 'settle'))
+  }
+  if (!rpc.Api.isSimulationSuccess(sim)) {
+    throw new Error('vault settle simulation returned no result')
+  }
+
+  const prepared = rpc.assembleTransaction(tx, sim).build()
+  prepared.sign(signer)
+
+  const sent = await server.sendTransaction(prepared)
+  if (sent.status === 'ERROR') {
+    throw new Error(`vault settle rejected: ${JSON.stringify(sent.errorResult)}`)
+  }
+
+  const result = await waitForTransaction(server, sent.hash, 30, 'settle')
+  const outcome = result.returnValue ? String(scValToNative(result.returnValue)) : 'unknown'
+  return { txHash: sent.hash, outcome }
+}
+
 async function waitForTransaction(
   server: rpc.Server,
   hash: string,
   attempts = 30,
+  label = 'deposit',
 ): Promise<rpc.Api.GetSuccessfulTransactionResponse> {
   for (let i = 0; i < attempts; i++) {
     const got = await server.getTransaction(hash)
     if (got.status === rpc.Api.GetTransactionStatus.SUCCESS) return got
     if (got.status === rpc.Api.GetTransactionStatus.FAILED) {
-      throw new Error('vault deposit failed on chain')
+      throw new Error(`vault ${label} failed on chain`)
     }
     await new Promise((r) => setTimeout(r, 1500))
   }
-  throw new Error(`vault deposit not confirmed after ${attempts} checks — check ${hash}`)
+  throw new Error(`vault ${label} not confirmed after ${attempts} checks — check ${hash}`)
 }
 
 /** Contract error codes, as the vault defines them (see contracts/vault). */
@@ -453,12 +509,23 @@ const CONTRACT_ERRORS: Record<number, string> = {
   13: 'This expiry is full — pick another',
 }
 
-/** Turn `Error(Contract, #10)` into something a user can act on. */
-function readableSimError(error: string): string {
+/**
+ * Turn `Error(Contract, #10)` into something a caller can act on.
+ *
+ * A caveat that has cost time before: a settle failure is not always the
+ * vault's error. An assigned put pays cash out through the LUSD contract, and
+ * if the recipient has no trustline it is LUSD that reverts, not the vault —
+ * with a code that can collide with the vault's own numbering. When a
+ * settlement fails, check which contract the error came from before reading it
+ * off this table.
+ */
+function readableContractError(error: string, action = 'deposit'): string {
   const code = error.match(/Error\(Contract, #(\d+)\)/)
   if (code) {
     const known = CONTRACT_ERRORS[Number(code[1])]
     if (known) return known
   }
-  return `Vault rejected the deposit: ${error}`
+  return `Vault rejected the ${action}: ${error}`
 }
+
+const readableSimError = (error: string): string => readableContractError(error)

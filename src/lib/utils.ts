@@ -14,6 +14,25 @@ export const MAX_DEPOSIT_XLM = 10_000
 export const MAX_USER_EPOCH_CALL_XLM = 10_000
 export const MAX_USER_EPOCH_PUT_USD = 10_000
 
+/**
+ * A non-negative integer query parameter, or the fallback.
+ *
+ * Worth a named helper because the obvious inline version is wrong: a missing
+ * parameter reads as `null`, and `Number(null)` is 0, which is finite and
+ * non-negative and therefore passes every plausible guard. A caller that omits
+ * the parameter silently gets a limit of zero instead of its default.
+ */
+export function intParam(
+  params: URLSearchParams,
+  name: string,
+  fallback: number
+): number {
+  const raw = params.get(name)
+  if (raw === null || raw.trim() === '') return fallback
+  const n = Number(raw)
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback
+}
+
 export function toScaled(value: number): bigint {
   return BigInt(Math.round(value * SCALE))
 }
