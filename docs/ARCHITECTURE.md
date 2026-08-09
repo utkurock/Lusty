@@ -285,7 +285,12 @@ treasury, and it finished down only its fees
 
 `/api/cron/settle` runs a scheduled sweep so writers do not have to send the
 transaction themselves. It is a **convenience, not a component**: if it never
-ran, every position could still be closed by anyone on identical terms. The
+ran, every position could still be closed by anyone on identical terms — which
+is just as well, because for a period it did not run at all. The route was
+written against a `vercel.json` cron entry and the application is deployed to a
+self-hosted Coolify instance, which does not read that file. Nothing was at
+risk, exactly as this paragraph claims; the schedule now lives with the
+deployment and is documented in the [README](../README.md#scheduled-jobs). The
 runner key holds no standing with the contract, which
 [`src/lib/__tests__/settlement-scope.test.ts`](../src/lib/__tests__/settlement-scope.test.ts)
 pins in code — the transaction it builds invokes `settle` with one argument and

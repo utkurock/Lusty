@@ -15,10 +15,12 @@ const CRON_SECRET = process.env.CRON_SECRET ?? ''
 const RUNNER_SECRET = process.env.SETTLE_RUNNER_SECRET ?? ''
 
 /**
- * Scheduled settlement sweep. Wired to a Vercel cron in vercel.json.
+ * Scheduled settlement sweep. Nothing in this repository schedules it: the
+ * deployment does, and the schedule is recorded in the README rather than in a
+ * config file this application reads. See the note at the foot of this comment.
  *
- * Auth: requires CRON_SECRET, as `Authorization: Bearer <s>` (how Vercel cron
- * sends it) or `?secret=<s>`. If CRON_SECRET is unset we fail closed (403)
+ * Auth: requires CRON_SECRET, as `Authorization: Bearer <s>` (what most
+ * schedulers send) or `?secret=<s>`. If CRON_SECRET is unset we fail closed (403)
  * rather than leave an endpoint anyone can drive. Same pattern as
  * /api/cron/monitor, deliberately — there should be one way to authorize a
  * scheduled job in this codebase.
@@ -51,6 +53,13 @@ const RUNNER_SECRET = process.env.SETTLE_RUNNER_SECRET ?? ''
  * `?dryRun=1` runs the scan and returns what it would settle without signing
  * anything. It needs no runner key, which makes it the safe way to check the
  * sweep against a live vault.
+ *
+ * On scheduling, because it has already been got wrong once: this route was
+ * written against a `vercel.json` cron entry, and the application is deployed
+ * to a self-hosted Coolify instance, which never reads that file. The entry
+ * scheduled nothing and its presence claimed otherwise, so it was removed and
+ * the schedule now lives with the deployment. The endpoint is indifferent to
+ * who calls it — any timer that can send the secret over HTTP will do.
  */
 async function handle(req: Request) {
   if (!CRON_SECRET) {

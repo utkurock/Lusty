@@ -173,7 +173,7 @@ src/
     swap/  leaderboard/  docs/  (app)/research/
     api/
       vault/{quote,authorize,deposit,claim,positions,stats,events}
-      swap/  faucet/lusd/  leaderboard/  admin/  cron/monitor/
+      swap/  faucet/lusd/  leaderboard/  admin/  cron/{monitor,settle}
   lib/
     pricing-server.ts  The quote engine (Black-76 + smile + ladder + taper + fee)
     pricing.ts         Black-76 / CDF primitives, strike ladders
@@ -197,6 +197,36 @@ npm run dev        # web app on :3000 (.env.local required)
 npm test           # unit test suite
 cd contracts && cargo test && stellar contract build
 ```
+
+## Scheduled jobs
+
+Two endpoints are meant to run on a timer, and nothing in this repository puts
+them on one. The application is deployed to a self-hosted Coolify instance, so
+the schedule belongs to the deployment; it is written down here because a
+schedule that lives only in a hosting dashboard is a schedule nobody can review.
+
+| Endpoint | Interval | What it does |
+|---|---|---|
+| `/api/cron/monitor` | `*/5 * * * *` | Risk sweep — raises alerts and can trip the circuit breaker |
+| `/api/cron/settle` | `0 */6 * * *` | Settles expired positions so writers need not send the transaction |
+
+Both authorize the same way, and both return 403 while `CRON_SECRET` is unset,
+so a deployment with no timer attached exposes nothing:
+
+```sh
+curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://<host>/api/cron/settle
+curl -fsS "https://<host>/api/cron/settle?dryRun=1&secret=$CRON_SECRET"  # scan only, signs nothing
+```
+
+Missing the settlement window costs time, not money: `settle(id)` is
+permissionless, so anyone can close a position on identical terms if the sweep
+is late or never runs ([`docs/ARCHITECTURE.md` §6](docs/ARCHITECTURE.md#6-settlement)).
+A missed monitor sweep is the one worth alerting on, since the circuit breaker
+depends on it.
+
+This repository previously carried a `vercel.json` with these two entries. It
+scheduled nothing here and implied otherwise, which is how `/api/cron/settle`
+came to be written and merged without ever being called; it was removed.
 
 ## License
 

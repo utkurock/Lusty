@@ -9,10 +9,13 @@ export const revalidate = 0
 const CRON_SECRET = process.env.CRON_SECRET ?? ''
 
 /**
- * Scheduled risk-monitor sweep (P1-7). Wired to a Vercel cron in vercel.json.
+ * Scheduled risk-monitor sweep (P1-7). Driven by the deployment's own
+ * scheduler, not by anything in this repository — the schedule is recorded in
+ * the README. It used to name a `vercel.json` cron entry, which this deployment
+ * never read; see /api/cron/settle for the longer version of that mistake.
  *
  * Auth: requires CRON_SECRET, supplied either as `Authorization: Bearer <s>`
- * (how Vercel cron sends it) or `?secret=<s>`. If CRON_SECRET is unset we fail
+ * (what most schedulers send) or `?secret=<s>`. If CRON_SECRET is unset we fail
  * closed (403) rather than expose an unauthenticated endpoint that anyone
  * could spam to blast the alert channels.
  *
