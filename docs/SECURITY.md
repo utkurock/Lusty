@@ -85,8 +85,9 @@ Two more details that make the ceiling hold:
 
 ## Multisig policy
 
-> **Status: not yet applied.** Thresholds and signers are decided in U3. The
-> policy is written here; the values below are `TBD` until then.
+> **Status: applied on testnet, 2026-08-09.** 2-of-3 on the admin account,
+> verified by a transaction that was rejected with one signature and accepted
+> with two — see [Verification](#verification-2026-08-09) below.
 
 **Both privileged calls sit behind multisig:** `set_limits` and
 `add_quoter`/`remove_quoter`. Those are the admin's entire power, so in practice
@@ -100,20 +101,83 @@ signers and thresholds on the admin account itself. Nothing in
 
 | Setting | Value |
 | --- | --- |
-| Admin account | `GBDNJQDP…IKEC` |
-| Admin signers | TBD (U3) |
-| Admin threshold | TBD (U3) |
-| Where the backup signer lives | TBD (U3) |
-| Quoter account multisig | TBD (U3) — see below |
+| Admin account | `GBDNJQDP4HJQH6WCJCYVYGTKDRYKZXQQSVEC4FOE24CVG4VRQU26IKEC` |
+| Admin signers | 3, each weight 1 — see below |
+| Admin threshold | low / med / high all `2` → **2-of-3** |
+| Where the backup signer lives | A wallet on a separate device from the operational key |
+| Quoter account multisig | None, deliberately — see below |
 
-**The quoter is a separate decision.** It signs on every single position, so a
-threshold above 1 puts a human in the path of every deposit. The likely answer
-is that the quoter stays single-signature and is protected by rotation speed
-instead: if it leaks, the admin adds a new key and removes the old one, and the
-damage is bounded by `max_premium_bps` in the meantime. That trade is worth
-stating explicitly rather than leaving it to look like an oversight.
+| Signer | Weight | Held as |
+| --- | --- | --- |
+| `GBDNJQDP…IKEC` (master) | 1 | CLI keystore on the operator's machine — the key that deployed the vault |
+| `GANN2GC2…7AYO` | 1 | Browser wallet. The human approval step: every limit change and every quoter rotation needs it |
+| `GAC3MHKA…WE5U` | 1 | Backup wallet on a second device. Not used in routine operation |
+
+**Why 2-of-3 and not 2-of-2.** Read the admin row of the key-loss table below:
+losing the admin is the one failure with no in-contract recovery, because there
+is no `upgrade` entrypoint and no way to change the admin address. Under 2-of-2,
+losing *either* key produces exactly that — `set_options` needs the high
+threshold, so the survivor cannot even rotate the dead signer out, and the only
+exit is redeploying the vault and migrating the pools. Under 2-of-3 any two
+survivors can rotate the third. The third signer costs 0.5 XLM in base reserve
+and removes the whole failure mode.
+
+**Order matters when applying this**, and getting it wrong is unrecoverable: add
+the signers first, verify them, and raise the thresholds last. Raising the
+threshold to 2 while the account still has one signer locks the account in the
+same transaction that was meant to protect it.
+
+**What this does not protect against, stated plainly.** All three signers are
+currently controlled by one operator. This raises the cost of a *key* compromise
+— a leaked CLI keystore is no longer sufficient to widen `max_premium_bps` or
+appoint a quoter — but it does not defend against the operator themselves being
+compromised or coerced, because the same person can produce both signatures. A
+2-of-3 whose signers are one human is a real control against key theft and a
+theatrical one against everything else. Mainnet should place the second and
+third signers with different people, on different devices; until then this
+document should not be read as claiming more than it does.
+
+**The quoter is a separate decision, and the answer is no.** It signs on every
+single position, so a threshold above 1 puts a human in the path of every
+deposit. It stays single-signature and is protected by rotation speed instead:
+if it leaks, the admin adds a new key and removes the old one, and the damage is
+bounded by `max_premium_bps` in the meantime. That trade is worth stating
+explicitly rather than leaving it to look like an oversight.
 
 **The runner needs none.** It has no privilege to protect.
+
+### Verification (2026-08-09)
+
+Anyone can confirm the configuration without trusting this document:
+
+```sh
+curl -s https://horizon-testnet.stellar.org/accounts/GBDNJQDP4HJQH6WCJCYVYGTKDRYKZXQQSVEC4FOE24CVG4VRQU26IKEC \
+  | jq '{signers, thresholds}'
+```
+
+Three signers of weight 1, `med_threshold: 2`. Since Soroban authorizes a
+`G…` address against that account's own signers and medium threshold,
+`set_limits` and `add_quoter` inherit it with no contract involvement.
+
+The behaviour was then demonstrated rather than inferred, on a `set_limits` call
+that wrote back the values already in force, so nothing changed but the
+authorization path:
+
+| Attempt | Signatures | Result |
+| --- | --- | --- |
+| One | admin master key only, weight 1 | **Rejected, `TxBadAuth`** — never entered a ledger |
+| Two | master key + `GANN2GC2…7AYO`, weight 2 | **Accepted**, ledger 4056855 |
+
+Both attempts carry the **same transaction hash**,
+`7b5142c405eb7496d05236c25342d407bca036546368c85f62ab22248fff9624`: identical
+bytes, identical sequence number, differing only in the signature set. The
+rejection leaves no on-chain artifact — `TxBadAuth` is refused at submission —
+so the reproducible evidence is the account configuration above, and the
+accepted transaction is what proves the same bytes pass once the threshold is
+met.
+
+Setup transactions: `7f8d2457…` added the second signer, `2828e304…` the third,
+`8f2f93bd…` raised all three thresholds to 2.
 
 ---
 
@@ -125,7 +189,7 @@ the contract, not the key, is what holds the money.
 | Key | Lost or stolen → | Not at risk | Recovery |
 | --- | --- | --- | --- |
 | **Quoter** | Attacker can price new positions anywhere inside `max_premium_bps`, overpaying up to 20% of collateral that they must also supply. Bounded, and it costs them collateral to exploit | Every open position. All escrow. Settlement. The cash pool beyond the bounded overpayment | Admin adds a fresh quoter, then removes the compromised one. No redeploy, no interruption to writers |
-| **Admin** | Attacker can widen `max_premium_bps` and appoint quoters. Combined with a quoter key, that is a drain of the escrow via premiums. Alone, it is a loaded gun with no trigger | Collateral already escrowed — tightening or widening a limit does not reach it. Settlement of existing positions | **None in-contract.** There is no `upgrade` entrypoint and no way to change the admin. Recovery means deploying a new vault and migrating. This is the reason the multisig above is not optional |
+| **Admin** | One signer is not enough to act: 2-of-3 means a stolen key buys an attacker nothing on its own. Two signers together can widen `max_premium_bps` and appoint quoters, and combined with a quoter key that is a drain of the escrow via premiums | Collateral already escrowed — tightening or widening a limit does not reach it. Settlement of existing positions | **One signer: rotate it out** with the surviving two, which is the whole reason for the third. **Two signers: none in-contract.** There is no `upgrade` entrypoint and no way to change the admin address, so recovery means deploying a new vault and migrating the pools |
 | **Treasury** | Attacker takes assigned collateral that has already been paid out to it | Everything still escrowed. Every open position | Change the treasury address — which needs a redeploy, since it is set at construction |
 | **Runner** | Attacker can settle positions, which anyone can already do, and spend the account's fee balance | Nothing else. It has no privilege to steal | Fund a new account, replace `SETTLE_RUNNER_SECRET`. Meanwhile settlement still works: writers or anyone else can call `settle` |
 | **`CRON_SECRET`** | Attacker can trigger the monitor and settlement sweeps | Nothing. Both endpoints do only what anyone could do | Rotate the value |

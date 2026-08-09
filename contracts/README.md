@@ -136,8 +136,11 @@ What remains is deliberately outside the contract: how the admin account itself
 is controlled. `add_quoter` is the one call that can widen who may set a
 premium, so the admin belongs behind a multisig — a Stellar account change this
 contract neither sees nor needs to, since it authorizes an address and does not
-care how that address is controlled. Until that is in place, a compromise costs
-the bounded share until the key is rotated out.
+care how that address is controlled. That is now in place on testnet: the admin
+is 2-of-3, so a single stolen key authorizes nothing. See
+[Admin multisig, verified on chain](#admin-multisig-verified-on-chain-2026-08-09)
+below and [`docs/SECURITY.md`](../docs/SECURITY.md#multisig-policy) for the
+policy and its limits.
 
 The contract does not record which quoter priced which position. Attribution
 would make a post-compromise audit exact rather than time-bounded; it is a
@@ -276,6 +279,50 @@ Run against the live v4 instance, in order:
 
 The last row is the one worth having: the guard that keeps rotation
 add-then-remove is enforced by the contract, not by operator discipline.
+
+### Admin multisig, verified on chain (2026-08-09)
+
+Both admin calls — `set_limits` and `add_quoter`/`remove_quoter` — now require
+two signatures. The contract is unchanged and unaware: the admin account carries
+three signers of weight 1 and a medium threshold of 2, and Soroban authorizes a
+`G…` address against that account's own signers.
+
+| Attempt | Signatures | Result |
+| --- | --- | --- |
+| `set_limits` | admin master key alone, weight 1 | refused, `TxBadAuth` |
+| `set_limits` | master key + a second signer, weight 2 | applied, ledger 4056855 |
+
+Both attempts share one transaction hash,
+`7b5142c405eb7496d05236c25342d407bca036546368c85f62ab22248fff9624` — the same
+bytes and the same sequence number, differing only in the signature set. The
+call wrote back the limits already in force, so the ledger records the
+authorization change and nothing else.
+
+Confirm it without trusting this file:
+
+```sh
+curl -s https://horizon-testnet.stellar.org/accounts/GBDNJQDP4HJQH6WCJCYVYGTKDRYKZXQQSVEC4FOE24CVG4VRQU26IKEC \
+  | jq '{signers, thresholds}'
+```
+
+**Making an admin call now takes four steps**, because `stellar contract invoke`
+signs with one key and submits in the same breath, which can no longer succeed.
+The order is what matters: assemble first, then collect signatures, because
+assembling changes the transaction and invalidates any signature already on it.
+
+```sh
+stellar contract invoke --build-only --source <admin> -- <call>   > tx.xdr   # unassembled
+stellar tx simulate --source-account <admin> < tx.xdr             > asm.xdr  # footprint + resource fee
+# asm.xdr goes to the second signer; lab.stellar.org → Import → Sign → Wallet extension
+stellar tx sign --sign-with-key <admin> < signed.xdr              > final.xdr
+stellar tx send < final.xdr
+```
+
+Two traps, both hit in practice. Lab cannot assemble a Soroban transaction
+itself here — hand it one that is already assembled, or its Sign step stays
+disabled behind an "auto-assembly failed" warning. And once assembled, Lab's
+`Record` auth mode rejects the transaction for already having an auth
+footprint; skip simulation entirely, or switch the mode to `Enforce`.
 
 ### Verified on testnet (2026-07-30)
 
