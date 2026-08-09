@@ -167,14 +167,25 @@ authorization path:
 | --- | --- | --- |
 | One | admin master key only, weight 1 | **Rejected, `TxBadAuth`** — never entered a ledger |
 | Two | master key + `GANN2GC2…7AYO`, weight 2 | **Accepted**, ledger 4056855 |
+| Three | master key + `GAC3MHKA…WE5U`, weight 2 | **Accepted**, ledger 4057305 |
 
-Both attempts carry the **same transaction hash**,
+The first two attempts carry the **same transaction hash**,
 `7b5142c405eb7496d05236c25342d407bca036546368c85f62ab22248fff9624`: identical
 bytes, identical sequence number, differing only in the signature set. The
 rejection leaves no on-chain artifact — `TxBadAuth` is refused at submission —
 so the reproducible evidence is the account configuration above, and the
 accepted transaction is what proves the same bytes pass once the threshold is
 met.
+
+The third attempt (`be0bf3addd534f7d134110acb7242f81dcaff1f427e1b5fd0a4c5c4673dcedfe`)
+exists because the backup signer is the whole reason this is 2-of-3 rather than
+2-of-2, and a recovery path that has never been exercised is a claim rather than
+a capability. Its failure modes are quiet ones — an unbacked-up seed, an address
+copied while the wallet had a different account selected, a device that is
+already inaccessible — and every one of them stays invisible until the emergency
+that needs it. So the backup key was made to sign something real once, while it
+cost nothing to find out. Two of the three pairs are now demonstrated rather
+than one.
 
 Setup transactions: `7f8d2457…` added the second signer, `2828e304…` the third,
 `8f2f93bd…` raised all three thresholds to 2.

@@ -290,12 +290,15 @@ three signers of weight 1 and a medium threshold of 2, and Soroban authorizes a
 | Attempt | Signatures | Result |
 | --- | --- | --- |
 | `set_limits` | admin master key alone, weight 1 | refused, `TxBadAuth` |
-| `set_limits` | master key + a second signer, weight 2 | applied, ledger 4056855 |
+| `set_limits` | master key + the operating signer, weight 2 | applied, ledger 4056855 |
+| `set_limits` | master key + the backup signer, weight 2 | applied, ledger 4057305 |
 
-Both attempts share one transaction hash,
+The first two attempts share one transaction hash,
 `7b5142c405eb7496d05236c25342d407bca036546368c85f62ab22248fff9624` — the same
 bytes and the same sequence number, differing only in the signature set. The
-call wrote back the limits already in force, so the ledger records the
+third used the backup signer specifically, because a recovery key that has never
+signed anything is an assumption; two of the three pairs are now demonstrated.
+Every call wrote back the limits already in force, so the ledger records the
 authorization change and nothing else.
 
 Confirm it without trusting this file:
