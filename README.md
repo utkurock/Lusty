@@ -208,7 +208,7 @@ schedule that lives only in a hosting dashboard is a schedule nobody can review.
 | Endpoint | Interval | What it does |
 |---|---|---|
 | `/api/cron/monitor` | `*/5 * * * *` | Risk sweep — raises alerts and can trip the circuit breaker |
-| `/api/cron/settle` | `0 */6 * * *` | Settles expired positions so writers need not send the transaction |
+| `/api/cron/settle` | `0 */2 * * *` | Settles expired positions, and must do so within a day of expiry |
 
 Both authorize the same way, and both return 403 while `CRON_SECRET` is unset,
 so a deployment with no timer attached exposes nothing:
@@ -218,11 +218,19 @@ curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://<host>/api/cron/settle
 curl -fsS "https://<host>/api/cron/settle?dryRun=1&secret=$CRON_SECRET"  # scan only, signs nothing
 ```
 
-Missing the settlement window costs time, not money: `settle(id)` is
-permissionless, so anyone can close a position on identical terms if the sweep
-is late or never runs ([`docs/ARCHITECTURE.md` §6](docs/ARCHITECTURE.md#6-settlement)).
-A missed monitor sweep is the one worth alerting on, since the circuit breaker
-depends on it.
+**Settlement has a deadline, and it is about a day.** `settle(id)` prices the
+position at the oracle's reading for its expiry timestamp; Reflector keeps
+around 24 hours of history (measured on testnet: present at 20h, gone at 22h). Once that reading is pruned the contract fails closed, and since
+there is no admin override and no upgrade entrypoint, the collateral stays
+escrowed. `settle` being permissionless means anyone may close a position in
+time — it
+does not make closing it optional
+([`docs/ARCHITECTURE.md` §6](docs/ARCHITECTURE.md#6-settlement)).
+
+Both sweeps are therefore worth alerting on: a missed monitor sweep leaves the
+circuit breaker unfed, and a settlement sweep that stays down for a day leaves
+positions that can no longer be closed. The two-hourly interval above is chosen
+so that a run has to fail repeatedly, not once, before that becomes possible.
 
 This repository previously carried a `vercel.json` with these two entries. It
 scheduled nothing here and implied otherwise, which is how `/api/cron/settle`

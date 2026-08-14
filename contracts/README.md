@@ -266,6 +266,22 @@ public good the vault will accept from anyone and pay nobody for, so a stalled
 operator cannot strand a position — any observer can close it, and the price it
 closes at was fixed by the oracle at expiry either way.
 
+**With one bound, established later.** "Any observer can close it" holds only
+while the oracle can still price the expiry. Reflector serves about a day of
+history — measured on testnet, the reading 20 hours back was still available and
+the one 22 hours back was gone — and the fallback to the live price is gated to
+within `MAX_PRICE_STALENESS_SECS` (1 hour) of expiry, deliberately, so that
+settling late cannot mean settling at a chosen price. After that, `settle`
+reverts with `StalePrice` for good: no admin path releases escrow and there is
+no `upgrade` entrypoint, so the collateral stays locked.
+
+Permissionless settlement removes the *permission* to close a position from the
+operator; it does not remove the *obligation* that someone do it in time.
+Anything writing options against this contract needs a settlement schedule well
+inside a day. The durable fixes are a self-settle path for the writer, whose
+collateral it is, and a settlement reward that would make strangers race to
+claim it — both tracked for T3.
+
 ### Quoter rotation, verified on chain (2026-07-30)
 
 Run against the live v4 instance, in order:

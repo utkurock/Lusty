@@ -253,7 +253,9 @@ Settlement reads Reflector at the **expiry timestamp**, not at the moment
 someone calls `settle`. Timing gives the writer no discretion: a covered-call
 writer cannot wait for spot to dip below the strike and claim "kept". A feed
 that is missing or stale beyond an hour fails closed — the contract reverts
-rather than settling on a guess.
+rather than settling on a guess. The same property has a consequence in the
+other direction, since Reflector keeps only about a day of history: settle late
+enough and the reading is gone, which [§6](#6-settlement) covers.
 
 Since v4 there is an asymmetry worth knowing when a feed goes down:
 
@@ -283,14 +285,41 @@ from an account with no relationship to the writer, the quoter, the admin or the
 treasury, and it finished down only its fees
 ([`contracts/README.md`](../contracts/README.md#permissionless-settlement-verified-on-chain-2026-07-30)).
 
-`/api/cron/settle` runs a scheduled sweep so writers do not have to send the
-transaction themselves. It is a **convenience, not a component**: if it never
-ran, every position could still be closed by anyone on identical terms — which
-is just as well, because for a period it did not run at all. The route was
-written against a `vercel.json` cron entry and the application is deployed to a
-self-hosted Coolify instance, which does not read that file. Nothing was at
-risk, exactly as this paragraph claims; the schedule now lives with the
-deployment and is documented in the [README](../README.md#scheduled-jobs). The
+### Settlement expires
+
+Permissionless is not the same as indefinite, and an earlier version of this
+section implied otherwise.
+
+The price the contract needs is Reflector's reading **for the expiry period**.
+Reflector serves a ring buffer, not an archive: measured on testnet, the reading
+20 hours back was still available and the one 22 hours back was gone. The
+contract's only fallback is the live price, and it is gated to within an hour of
+expiry on purpose — a late settlement priced at the current market would hand
+back exactly the timing discretion that pinning to expiry removes. So once the
+period is pruned, `settle` fails closed for good. There is no admin override and
+no upgrade entrypoint. The collateral stays escrowed with nothing able to
+release it, which was verified against the live feed rather than read off the
+oracle's documentation.
+
+The sweep is therefore **a component with a deadline, not a convenience**. Anyone
+may still settle a position on identical terms — the permission is real and
+nothing above changes — but somebody has to, within about a day. `/api/cron/settle`
+reports each due position with the time it must be closed by, and reports one
+that is past it separately, because a stale-price failure inside the window and
+one outside it are the same error message asking for opposite responses.
+
+The deadline is also why the writer's own claim on the dashboard is a gap and
+not a nicety: a self-settle button would make the runner genuinely optional
+(tracked for a later tranche), since the collateral is the writer's and only the
+writer reliably cares.
+
+### The schedule
+
+`/api/cron/settle` was written against a `vercel.json` cron entry, and the
+application is deployed to a self-hosted Coolify instance, which does not read
+that file. It scheduled nothing while appearing to schedule two jobs, so it was
+removed; the schedule now lives with the deployment and is documented in the
+[README](../README.md#scheduled-jobs). The
 runner key holds no standing with the contract, which
 [`src/lib/__tests__/settlement-scope.test.ts`](../src/lib/__tests__/settlement-scope.test.ts)
 pins in code — the transaction it builds invokes `settle` with one argument and
