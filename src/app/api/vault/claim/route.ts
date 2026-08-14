@@ -14,6 +14,7 @@ import {
   getLegacyClaimBacklog,
 } from '@/lib/db-queries'
 import { rateLimit } from '@/lib/rate-limit'
+import { requireAdmin } from '@/lib/admin-auth'
 import { isValidStellarAddress } from '@/lib/utils'
 import {
   reserveAction,
@@ -59,7 +60,8 @@ const LEGACY_CLAIM_ENABLED = process.env.LEGACY_CLAIM_ENABLED === '1'
 //
 // GET reports the outstanding book without any of that: it needs no key, moves
 // nothing, and exists so the size of what is left does not become invisible
-// just because the payout is closed. When it reaches zero this file can go.
+// just because the payout is closed. A wallet may ask about itself; the total
+// across every wallet is an admin view. When it reaches zero this file can go.
 //
 // Server-canonical claim: the client only identifies *which* deposit to settle
 // (address + depositHash). Every parameter that affects assignment math —
@@ -80,12 +82,23 @@ interface ClaimBody {
 /**
  * Report the retired rail's outstanding book. Reads only — no key is loaded on
  * this path and nothing here can move a balance.
+ *
+ * Scoped to one wallet unless an admin asks. Without `address` this returns the
+ * whole rail — how many deposits are unsettled, across how many wallets, and
+ * how much collateral that is — which is a statement about the operator's
+ * outstanding liabilities rather than about the caller. The dashboard has only
+ * ever asked for one wallet at a time; the aggregate existed for us, so it now
+ * requires the session the rest of the admin surface requires.
  */
 export async function GET(req: Request) {
   try {
     const address = new URL(req.url).searchParams.get('address') ?? undefined
     if (address && !isValidStellarAddress(address)) {
       return NextResponse.json({ error: 'invalid address' }, { status: 400 })
+    }
+    if (!address) {
+      const admin = requireAdmin(req)
+      if (admin instanceof NextResponse) return admin
     }
     const backlog = await getLegacyClaimBacklog(address)
     return NextResponse.json(

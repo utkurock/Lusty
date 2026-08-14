@@ -11,7 +11,7 @@ import { FeedbackWidget } from '@/components/shared/FeedbackWidget'
 
 export const metadata: Metadata = {
   title: 'Lusty — Earn yield upfront',
-  description: 'Options yield venue on Stellar. Sell covered calls and cash-secured puts, receive premium upfront. Server-settled today; trustless Soroban rebuild on the roadmap.',
+  description: 'Options yield venue on Stellar. Sell covered calls and cash-secured puts, receive premium upfront. Collateral is escrowed by a Soroban vault contract and settled on chain against a Reflector price.',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

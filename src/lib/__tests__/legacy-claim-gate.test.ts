@@ -76,6 +76,35 @@ describe('the payout gate', () => {
   })
 })
 
+describe('the outstanding book', () => {
+  function get(query = '', headers: Record<string, string> = {}) {
+    return new Request(`http://localhost/api/vault/claim${query}`, { headers })
+  }
+
+  it('refuses the whole-rail total to a caller with no admin session', async () => {
+    // Unscoped, this answers "how much does the operator still owe, to how
+    // many wallets" — a fact about us, not about whoever asked. It used to
+    // answer that to anyone who removed the query parameter.
+    const { GET } = await claimRoute({})
+    const res = await GET(get())
+    expect(res.status).toBe(403)
+    expect((await res.json()).error).toContain('not authorized')
+  })
+
+  it('rejects a bad address before it reaches the database', async () => {
+    const { GET } = await claimRoute({})
+    const res = await GET(get('?address=not-a-key'))
+    expect(res.status).toBe(400)
+    expect((await res.json()).error).toContain('invalid address')
+  })
+
+  it('does not treat a stale session token as an admin', async () => {
+    const { GET } = await claimRoute({})
+    const res = await GET(get('', { 'x-admin-token': 'made-up' }))
+    expect(res.status).toBe(401)
+  })
+})
+
 describe('the gate sits in front of the spending key', () => {
   const source = readFileSync(resolve(process.cwd(), ROUTE), 'utf8')
 
