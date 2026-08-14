@@ -371,10 +371,10 @@ cannot be reached, and say so in the response rather than silently.
 
 Where they disagree, the contract wins.
 
-One legacy exception is documented in
-[`docs/SECURITY.md`](SECURITY.md#what-is-still-custodial): positions written
-before contract custody are escrowed in an operational account, and their payout
-path is closed by default.
+There is no longer an exception to that. Positions written before contract
+custody were escrowed in an operational account; that book has been settled in
+full and the route that could pay from it is gone, which
+[`docs/SECURITY.md`](SECURITY.md#what-is-still-custodial) records.
 
 ---
 

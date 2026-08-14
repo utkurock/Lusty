@@ -24,7 +24,7 @@ custody is still escrowed in an operational account. See
 | **Treasury** | Operator | Receive assigned collateral, and spend what it has received | Nothing in the contract. It is a destination, not a role |
 | **Settlement runner** | This server, `SETTLE_RUNNER_SECRET` | Call `settle(id)` and pay the fee | Everything else. It holds no standing with the contract at all |
 | **LUSD issuer** | Operator, 2-of-3 | Mint testnet LUSD | Reach vault collateral |
-| **LUSD distributor** | This server, `LUSD_DISTRIBUTOR_SECRET` | Fund the faucet and the swap desk; pay out the legacy book when explicitly enabled | Reach anything escrowed by the contract |
+| **LUSD distributor** | This server, `LUSD_DISTRIBUTOR_SECRET` | Fund the faucet and the swap desk | Reach anything escrowed by the contract |
 | **`CRON_SECRET`** | This server | Authorize the scheduled endpoints | Sign anything. It is an endpoint credential, not a key |
 
 Testnet addresses are in
@@ -204,7 +204,7 @@ the contract, not the key, is what holds the money.
 | **Treasury** | Attacker takes assigned collateral that has already been paid out to it | Everything still escrowed. Every open position | Change the treasury address — which needs a redeploy, since it is set at construction |
 | **Runner** | Attacker can settle positions, which anyone can already do, and spend the account's fee balance | Nothing else. It has no privilege to steal | Fund a new account, replace `SETTLE_RUNNER_SECRET`. Meanwhile settlement still works: writers or anyone else can call `settle` |
 | **`CRON_SECRET`** | Attacker can trigger the monitor and settlement sweeps | Nothing. Both endpoints do only what anyone could do | Rotate the value |
-| **LUSD issuer / distributor** | Attacker mints unbacked testnet LUSD and drains the faucet and swap desk, and the legacy book if the payout flag is on | All contract-escrowed collateral | Rotate the distributor. The issuer is 2-of-3 |
+| **LUSD issuer / distributor** | Attacker mints unbacked testnet LUSD and drains the faucet and swap desk | All contract-escrowed collateral | Rotate the distributor. The issuer is 2-of-3 |
 
 Two things worth reading twice:
 
@@ -242,7 +242,6 @@ catastrophic for anything else, so **never prefix a secret**, and treat a
 | `SETTLE_RUNNER_SECRET` | Signs settlement transactions. Unprivileged, but still a funded account |
 | `LUSD_DISTRIBUTOR_SECRET`, `LUSD_ISSUER_SECRET` | Testnet token operations |
 | `CRON_SECRET` | Authorizes `/api/cron/*`. Unset means those endpoints fail closed with 403, which is the safe default rather than an outage to work around |
-| `LEGACY_CLAIM_ENABLED` | Safety catch on the retired payout path. Anything other than `1` keeps it shut |
 | `DATABASE_URL` | Full connection string, including credentials |
 | `ADMIN_WALLETS` | Addresses allowed into the admin panel. Not a key — an allowlist |
 
@@ -259,21 +258,22 @@ a new deployment rather than only living here.
 
 ## What is still custodial
 
-Positions written before contract custody escrowed their collateral in the LUSD
-distributor account, which this server holds the key to. At the time of writing
-that is **592 positions across 207 wallets**, holding roughly 174,000 XLM and
-66,000 LUSD, all past expiry.
+Nothing. Every position in the system is escrowed by the vault contract and
+settles on chain, and no request path can move collateral a user deposited.
 
-For those positions, and only those, the trust assumption the contract removes
-still applies: a server can move what a user deposited. The payout path is
-therefore closed by default — `POST /api/vault/claim` returns 410 unless
-`LEGACY_CLAIM_ENABLED=1` — so it is unreachable in normal operation, and the
-flag exists so the wind-down can be finished deliberately rather than the book
-being abandoned. `GET` on the same route reports what remains, and needs no
-flag and no key.
+That is a recent statement rather than an original one. Positions written before
+contract custody escrowed their collateral in the LUSD distributor account,
+which this server holds the key to, and for those the trust assumption the
+contract removes still applied. Closing the payout route would have frozen that
+book rather than resolved it — the wallets would have kept a claim nobody could
+act on — so the book was settled in full instead: every position priced at the
+close of its own expiry minute, paid, and recorded. The route that could pay
+from the distributor was then deleted, not disabled. `scripts/legacy-wind-down.mjs`
+is what did it and documents the method.
 
-Nothing opened since the migration is affected. Those positions are escrowed by
-the contract and settle on chain.
+The distributor account still exists and still holds a key this server can use.
+Its remaining jobs are the faucet and the swap desk, which spend protocol funds
+rather than user collateral.
 
 ---
 

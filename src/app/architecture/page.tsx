@@ -333,16 +333,23 @@ settle(id) -> "kept" | "assigned"
           positions from an unrelated account. A scheduled runner
           (<Code>/api/cron/settle</Code>) closes expired positions so writers do
           not have to send the transaction themselves, but it holds no privilege
-          the caller above does not — if it never ran, anyone could close the
-          same positions on the same terms.
+          the caller above does not — anyone can close the same positions on the
+          same terms.
         </P>
         <P>
-          The server-side payout path that settled positions on the old
-          distributor rail (<Code>POST /api/vault/claim</Code>) is retired and
-          disabled by default. It could move user collateral, which is the
-          assumption contract custody exists to remove. What remains of that
-          book is still reported, read-only, by <Code>GET</Code> on the same
-          route.
+          Settlement does expire, though. The price the contract needs is the
+          oracle&apos;s reading for the expiry period, and Reflector keeps about
+          a day of history; once that reading is pruned the contract fails
+          closed and the collateral stays escrowed, since there is no admin
+          override and no upgrade entrypoint. Permission to settle is
+          universal — the obligation to do it in time is not optional.
+        </P>
+        <P>
+          There is no server-side payout path any more. The route that settled
+          positions on the old distributor rail could move user collateral,
+          which is the assumption contract custody exists to remove; its book
+          was settled in full and the route was deleted rather than left
+          disabled.
         </P>
 
         {/* 7 */}
