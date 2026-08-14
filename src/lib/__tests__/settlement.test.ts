@@ -15,6 +15,7 @@ import {
   scanForSettlement,
   runSettlement,
   DEFAULT_SCAN_LIMIT,
+  ORACLE_HISTORY_SECS,
 } from '../settlement'
 
 const NOW = new Date('2026-08-01T12:00:00Z')
@@ -155,6 +156,44 @@ describe('scanForSettlement', () => {
     expect(getPosition).not.toHaveBeenCalled()
   })
 
+  it('flags a position the oracle can no longer price, and still lists it', async () => {
+    // Past the feed's history window the contract fails closed and the
+    // collateral cannot be released by anyone. The scan says so rather than
+    // reporting it beside positions that will close on the next run — but it
+    // keeps it in the candidate list, because the window belongs to the feed
+    // and a wrong constant here must not be what abandons a position.
+    book([
+      position({ id: 0, expiry: new Date(NOW.getTime() - 5 * day) }),
+      position({ id: 1, expiry: new Date(NOW.getTime() - 2 * 3_600_000) }),
+    ])
+    const scan = await scanForSettlement({ now: NOW })
+
+    expect(scan.candidates.map((c) => c.id)).toEqual([0, 1])
+    expect(scan.pastDeadline).toEqual([0])
+    expect(scan.candidates[0].pastDeadline).toBe(true)
+    expect(scan.candidates[1].pastDeadline).toBe(false)
+  })
+
+  it('dates the deadline from expiry, not from the moment it looked', async () => {
+    const expiry = new Date(NOW.getTime() - 3 * 3_600_000)
+    book([position({ id: 0, expiry })])
+    const scan = await scanForSettlement({ now: NOW })
+    expect(scan.candidates[0].settleBy.getTime()).toBe(
+      expiry.getTime() + ORACLE_HISTORY_SECS * 1000
+    )
+  })
+
+  it('treats the deadline itself as still in time', async () => {
+    // The boundary belongs to the side that can still act. A position written
+    // off one millisecond early is written off for nothing.
+    book([
+      position({ id: 0, expiry: new Date(NOW.getTime() - ORACLE_HISTORY_SECS * 1000) }),
+      position({ id: 1, expiry: new Date(NOW.getTime() - ORACLE_HISTORY_SECS * 1000 - 1) }),
+    ])
+    const scan = await scanForSettlement({ now: NOW })
+    expect(scan.pastDeadline).toEqual([1])
+  })
+
   it('records an unreadable position instead of hiding the ones behind it', async () => {
     vi.mocked(getVaultStats).mockResolvedValue({
       escrowedCall: 0,
@@ -192,6 +231,8 @@ describe('runSettlement', () => {
     strike: 0.25,
     collateral: 1000,
     expiry: new Date(NOW.getTime() - day),
+    settleBy: new Date(NOW.getTime() - day + ORACLE_HISTORY_SECS * 1000),
+    pastDeadline: false,
   }))
 
   it('settles every candidate and reports the outcome', async () => {
@@ -218,9 +259,29 @@ describe('runSettlement', () => {
     const run = await runSettlement(candidates, signer)
     expect(run.settled.map((s) => s.id)).toEqual([0, 2])
     expect(run.failed).toEqual([
-      { id: 1, error: 'Oracle price is stale — settlement is blocked' },
+      {
+        id: 1,
+        error: 'Oracle price is stale — settlement is blocked',
+        permanent: false,
+      },
     ])
     expect(settlePosition).toHaveBeenCalledTimes(3)
+  })
+
+  it('separates the failure that will never come good from the one that might', async () => {
+    // Both come back from the contract as a refused price. Only one of them
+    // gets better by waiting, and reporting them alike makes a position that
+    // can no longer be closed look like a transient error.
+    const mixed = [
+      { ...candidates[0], pastDeadline: false },
+      { ...candidates[1], pastDeadline: true },
+    ]
+    vi.mocked(settlePosition).mockRejectedValue(
+      new Error('Oracle price is stale — settlement is blocked')
+    )
+
+    const run = await runSettlement(mixed, signer)
+    expect(run.failed.map((f) => f.permanent)).toEqual([false, true])
   })
 
   it('survives a failure with no message', async () => {

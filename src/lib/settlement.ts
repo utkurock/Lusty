@@ -20,14 +20,36 @@ import {
 // first two hundred ids and reported success would read exactly like a scan
 // that found nothing to do.
 //
-// Nothing here is privileged. `settle` is permissionless, so this module is a
-// convenience that keeps positions from sitting expired — not a component the
-// vault depends on. See `settlePosition` in vault-contract.ts.
+// Nothing here is privileged. `settle` is permissionless, so anyone can do what
+// this module does — but somebody has to, and within a bounded time. See the
+// deadline below.
 
 /** How many position ids one run will read. */
 export const DEFAULT_SCAN_LIMIT = 200
 /** How many settlements one run will submit, whatever the scan turned up. */
 export const DEFAULT_SETTLE_LIMIT = 25
+
+/**
+ * How long after expiry a position can still be settled.
+ *
+ * Settlement is priced at the oracle's reading for the expiry timestamp, and
+ * the contract fails closed when it cannot get one (`StalePrice`). Reflector
+ * keeps a ring buffer of historical prices, not a permanent record: once the
+ * expiry period is pruned, `price(asset, expiry)` returns nothing, and the
+ * contract's only fallback — the live price — is gated on being within an hour
+ * of expiry, deliberately, so that a late settlement cannot pick its own price.
+ * Past that point nothing can settle the position — not this runner, not the
+ * writer, not a stranger. There is no admin override and no upgrade entrypoint,
+ * so the collateral stays escrowed. This has been confirmed against the live
+ * testnet feed, not inferred from the documentation.
+ *
+ * Measured there: the reading 20h back was still served, the one 22h back was
+ * gone. The nominal 24h here is the wrong side of that boundary on purpose — a
+ * position over the real limit costs a simulation that fails for free, while
+ * one wrongly written off would be abandoned while it could still have been
+ * closed.
+ */
+export const ORACLE_HISTORY_SECS = 24 * 60 * 60
 
 export interface SettlementCandidate {
   id: number
@@ -36,6 +58,10 @@ export interface SettlementCandidate {
   strike: number
   collateral: number
   expiry: Date
+  /** Last moment the oracle is expected to still price this expiry. */
+  settleBy: Date
+  /** Past that moment: the attempt is made anyway, but expect it to fail. */
+  pastDeadline: boolean
 }
 
 export interface ScanResult {
@@ -52,6 +78,13 @@ export interface ScanResult {
   candidates: SettlementCandidate[]
   /** Ids whose read failed. Not settled, not assumed settled. */
   unreadable: number[]
+  /**
+   * Ids past the oracle's history window. Still attempted — the window is a
+   * property of the feed, not of this code, and being wrong about it must not
+   * strand a position — but a failure on one of these is the permanent kind
+   * and should be read as collateral needing a decision, not as a retry.
+   */
+  pastDeadline: number[]
 }
 
 /**
@@ -76,12 +109,16 @@ export async function scanForSettlement(opts: {
 
   const candidates: SettlementCandidate[] = []
   const unreadable: number[] = []
+  const stranded: number[] = []
 
   for (let id = cursor; id < end; id++) {
     try {
       const p = await getPosition(id)
       if (p.settled) continue
       if (p.expiry.getTime() > now.getTime()) continue
+      const settleBy = new Date(p.expiry.getTime() + ORACLE_HISTORY_SECS * 1000)
+      const pastDeadline = now.getTime() > settleBy.getTime()
+      if (pastDeadline) stranded.push(p.id)
       candidates.push({
         id: p.id,
         owner: p.owner,
@@ -89,6 +126,8 @@ export async function scanForSettlement(opts: {
         strike: p.strike,
         collateral: p.collateral,
         expiry: p.expiry,
+        settleBy,
+        pastDeadline,
       })
     } catch (err) {
       console.warn(`settlement: could not read position ${id}`, err)
@@ -105,6 +144,7 @@ export async function scanForSettlement(opts: {
     unexamined: Math.max(0, nextId - end),
     candidates,
     unreadable,
+    pastDeadline: stranded,
   }
 }
 
@@ -117,6 +157,12 @@ export interface SettlementOutcome {
 export interface SettlementFailure {
   id: number
   error: string
+  /**
+   * The oracle can no longer price this expiry, so no later run will do
+   * better. Separated from an ordinary failure because the two ask for
+   * opposite responses: wait, or act.
+   */
+  permanent: boolean
 }
 
 export interface SettlementRun {
@@ -129,11 +175,15 @@ export interface SettlementRun {
 /**
  * Settle each candidate, one transaction at a time.
  *
- * One failure never stops the run. The likeliest cause is a stale oracle feed,
- * which the contract refuses on purpose — that position is simply not settleable
- * this minute, and the next run will find it again because nothing about it has
- * changed. Sequentially rather than in parallel because every transaction comes
- * from the same source account and shares its sequence number.
+ * One failure never stops the run. A stale feed is the likeliest cause and the
+ * contract refuses it on purpose; usually that means the position is not
+ * settleable this minute and the next run will find it again. Usually — a
+ * failure past `settleBy` is the other kind, where the reading the contract
+ * needs no longer exists and no later run can succeed. The two are reported
+ * apart because only one of them is something to wait out.
+ *
+ * Sequentially rather than in parallel because every transaction comes from the
+ * same source account and shares its sequence number.
  */
 export async function runSettlement(
   candidates: SettlementCandidate[],
@@ -152,7 +202,11 @@ export async function runSettlement(
       const { txHash, outcome } = await settlePosition(c.id, signer)
       settled.push({ id: c.id, txHash, outcome })
     } catch (err: any) {
-      failed.push({ id: c.id, error: err?.message ?? 'unknown' })
+      failed.push({
+        id: c.id,
+        error: err?.message ?? 'unknown',
+        permanent: c.pastDeadline,
+      })
     }
   }
 

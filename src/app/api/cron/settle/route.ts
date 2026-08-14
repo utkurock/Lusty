@@ -44,11 +44,18 @@ const RUNNER_SECRET = process.env.SETTLE_RUNNER_SECRET ?? ''
  *     fee share, which was demonstrated on chain in 16367b8: an unrelated
  *     account settled four positions and ended down only its fees.
  *
- * The consequence worth stating plainly: if this endpoint is compromised, or
- * simply never runs, no position is at risk. Anyone can settle the same
- * positions on the same terms. This is a convenience for writers who would
- * rather not send the transaction themselves, not a component the vault's
- * safety depends on.
+ * The consequence worth stating plainly: if this endpoint is compromised, it
+ * gains nothing an anonymous account does not already have. Anyone can settle
+ * the same positions on the same terms, and no key here can do anything else.
+ *
+ * What does not follow, and what an earlier version of this comment claimed, is
+ * that the sweep never running is equally harmless. Settlement is priced at the
+ * oracle's reading for the expiry timestamp and Reflector keeps roughly a day
+ * of history; after that the contract can no longer obtain the price, fails
+ * closed, and the collateral stays escrowed with nothing able to release it —
+ * there is no admin override and no upgrade entrypoint. Permissionless
+ * settlement means anyone may close a position in time; it does not mean the
+ * closing is optional. See ORACLE_HISTORY_SECS in lib/settlement.ts.
  *
  * `?dryRun=1` runs the scan and returns what it would settle without signing
  * anything. It needs no runner key, which makes it the safe way to check the
@@ -108,7 +115,12 @@ async function handle(req: Request) {
         strike: c.strike,
         collateral: c.collateral,
         expiry: c.expiry.toISOString(),
+        settleBy: c.settleBy.toISOString(),
+        pastDeadline: c.pastDeadline,
       })),
+      // Hoisted out of `due` because it is the one thing in this response a
+      // human has to act on: these will not close by being left alone.
+      pastDeadline: scan.pastDeadline,
     }
 
     if (dryRun) return NextResponse.json(report)
