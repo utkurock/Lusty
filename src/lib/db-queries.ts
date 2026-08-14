@@ -743,10 +743,24 @@ export async function getFeedback(limit = 50, offset = 0) {
  * The `positionId` test is the same one the payout path applies, so this counts
  * exactly the rows that path would act on — which is the useful definition, but
  * it means the count is an upper bound rather than a fact about custody. A
- * contract position whose indexing call never landed is recorded without an id
- * and shows up here, even though its collateral is escrowed by the contract and
- * settles on chain. One such row exists at the time of writing. Treat this as
- * "what the retired path would still consider", not "what the distributor owes".
+ * contract position whose indexing call never landed would be recorded without
+ * an id and would show up here, even though its collateral is escrowed by the
+ * contract and settles on chain. Treat this as "what the retired path would
+ * still consider", not "what the distributor owes".
+ *
+ * Where the collateral figure comes from, because the obvious column is wrong
+ * ---------------------------------------------------------------------------
+ * `transactions.amount` is not collateral on a call row. It is the USD notional
+ * — collateral × spot at the time of deposit — so summing it reports the debt
+ * in dollars while labelling it XLM, understating it by the price of XLM. The
+ * two were compared against the recorded book before this was changed, and the
+ * gap is the spot price, exactly as the definition implies.
+ *
+ * `metadata.collateralAmount` carries the real collateral and is present on
+ * every legacy deposit row, so the coalesce below is a guard rather than a
+ * fallback anything currently depends on. On the put leg the two agree already
+ * — cash-secured puts escrow cash, which is what `amount` measured — so one
+ * expression is correct for both legs and the put total is unchanged by it.
  */
 export interface LegacyClaimBacklog {
   /** Unsettled legacy deposits. */
@@ -766,8 +780,10 @@ export async function getLegacyClaimBacklog(
   const res = await pool.query(
     `select count(*)::int as rows,
             count(distinct t.address)::int as wallets,
-            coalesce(sum(t.amount) filter (where t.subtype = 'call'), 0)::float8 as call_xlm,
-            coalesce(sum(t.amount) filter (where t.subtype = 'put'), 0)::float8 as put_usd
+            coalesce(sum(coalesce((t.metadata->>'collateralAmount')::numeric, t.amount))
+                       filter (where t.subtype = 'call'), 0)::float8 as call_xlm,
+            coalesce(sum(coalesce((t.metadata->>'collateralAmount')::numeric, t.amount))
+                       filter (where t.subtype = 'put'), 0)::float8 as put_usd
        from transactions t
        left join processed_actions pa
          on pa.action_type = 'claim' and pa.source_hash = t.tx_hash
