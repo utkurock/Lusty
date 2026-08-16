@@ -120,6 +120,17 @@ considerably more than one that is discovered.
 `quote` is a read: it prices the ladder and returns what the UI renders. It
 commits to nothing. `authorize` is where the protocol puts its name to a number.
 
+Both are asked the same question — **by expiry**. Days-to-expiry and pool
+utilization are the two inputs derivable from an expiry, and both routes derive
+them through `lib/quote-inputs.ts` rather than accepting them from the caller.
+That is what makes the displayed premium and the paid premium the same
+computation instead of two computations that usually agree: before it, the
+browser sent its own tenor and its own utilization, and until the vault-stats
+poll landed the latter was a fabricated 0.68 — a third off the real premium, in
+the direction the old one-sided check waved through. The earn screen also
+reprices the selected strike immediately before building the transaction, so the
+number encoded is live rather than however old the ladder on screen is.
+
 The contract requires authorization from **both** the writer and one of the
 protocol's quoter keys, so neither side sets the premium alone. Producing both
 signatures takes a round trip:

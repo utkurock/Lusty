@@ -5,7 +5,8 @@ import { isValidStellarAddress } from '@/lib/utils'
 import { credentialAddress, describeMismatch } from '@/lib/vault-auth'
 import { quoteOptionLive } from '@/lib/pricing-server'
 import { fetchXlmUsd } from '@/lib/spot'
-import { expiryUtilizationFor } from '@/lib/vault-state'
+import { pricingInputsFor } from '@/lib/quote-inputs'
+import { MIN_DAYS_TO_EXPIRY } from '@/lib/expiries'
 import { assertQuoteAllowed, PolicyRejection } from '@/lib/quote-policy'
 import { getBreakerState } from '@/lib/circuit-breaker'
 import {
@@ -66,7 +67,9 @@ function premiumTolerance(quoted: number): number {
   return Math.max(PREMIUM_TOLERANCE_MIN, (quoted * bps) / 10_000)
 }
 
-const MIN_DAYS_TO_EXPIRY = 2
+// MIN_DAYS_TO_EXPIRY is the schedule's own minimum tenor, imported rather than
+// restated: it decides which expiries the UI offers and which ones this route
+// will still price, and those two must be the same number.
 const MAX_DAYS_TO_EXPIRY = 365
 
 // Concentration policy. The contract's own caps bound vault risk; these bound
@@ -221,10 +224,14 @@ export async function POST(req: Request) {
       )
     }
 
-    const utilization = await expiryUtilizationFor(body.side, expiryIso)
-    // Price on the time to the expiry the contract will settle against, so a
-    // long-dated premium can never be bought for a short-dated lock.
-    const pricingDays = Math.max(MIN_DAYS_TO_EXPIRY, Math.ceil(daysToExpiry))
+    // Days and utilization both come off the expiry, through the same function
+    // /api/vault/quote used to price what the caller was shown — so the only
+    // input that can differ between the two is spot, which is what the
+    // slippage allowance below is for.
+    const { daysToExpiry: pricingDays, utilization } = await pricingInputsFor(
+      body.side,
+      expiryMs,
+    )
     const { quote } = await quoteOptionLive({
       side: body.side,
       spot,

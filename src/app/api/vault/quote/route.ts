@@ -2,19 +2,30 @@ import { NextResponse } from 'next/server'
 import { quoteLadder, quoteOptionLive } from '@/lib/pricing-server'
 import { getSpotXlmUsd } from '@/lib/spot'
 import { rateLimit } from '@/lib/rate-limit'
+import { pricingInputsFor } from '@/lib/quote-inputs'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
 // Public quote endpoint — the single source of truth for both the earn UI and
 // any auditor. Returns the exact premium/APR the vault will pay if the same
-// parameters arrive at /api/vault/deposit, plus the full derivation (realized
+// parameters arrive at /api/vault/authorize, plus the full derivation (realized
 // σ, the σ we sell at, the forward, the haircut) so "where does the APR come
 // from?" has a concrete, verifiable answer.
 //
-// Two modes:
-//   GET ?side=call&days=7[&util=0.4]            → full strike ladder
-//   GET ?side=call&days=7&strike=0.24[&util=…]  → single quote for one strike
+// Two modes, and two ways to say which expiry:
+//   GET ?side=call&expiry=2026-08-21T08:00:00.000Z            → ladder
+//   GET ?side=call&expiry=…&strike=0.24                       → one strike
+//   GET ?side=call&days=7[&util=0.4]                          → ladder
+//   GET ?side=call&days=7&strike=0.24[&util=…]                → one strike
+//
+// PREFER `expiry`. It is the form the money path uses, because days AND pool
+// utilization are then derived server-side from the one expiry — by the same
+// function the co-signature calls (lib/quote-inputs.ts) — so the quote on
+// screen was priced from the inputs the premium will actually be priced from.
+// A caller-supplied `util` is a display convenience for auditors exploring the
+// curve; it cannot raise a premium the vault pays, because /api/vault/authorize
+// reprices from the expiry regardless of what was asked for here.
 //
 // Spot is fetched server-side so a caller can't bias the quote with a stale or
 // inflated price.
@@ -25,17 +36,34 @@ export async function GET(req: Request) {
     const strikeRaw = url.searchParams.get('strike')
     const daysRaw = url.searchParams.get('days')
     const utilRaw = url.searchParams.get('util')
+    const expiryRaw = url.searchParams.get('expiry')
 
     if (side !== 'call' && side !== 'put') {
       return NextResponse.json({ error: 'invalid side' }, { status: 400 })
     }
-    const days = Number(daysRaw)
-    if (!isFinite(days) || days <= 0 || days > 365) {
-      return NextResponse.json({ error: 'invalid days' }, { status: 400 })
+
+    let days: number
+    let util: number
+    if (expiryRaw !== null) {
+      const expiryMs = new Date(expiryRaw).getTime()
+      if (!isFinite(expiryMs) || expiryMs <= Date.now()) {
+        return NextResponse.json({ error: 'invalid expiry' }, { status: 400 })
+      }
+      const inputs = await pricingInputsFor(side, expiryMs)
+      if (inputs.daysToExpiry > 365) {
+        return NextResponse.json({ error: 'expiry too far out' }, { status: 400 })
+      }
+      days = inputs.daysToExpiry
+      util = inputs.utilization
+    } else {
+      days = Number(daysRaw)
+      if (!isFinite(days) || days <= 0 || days > 365) {
+        return NextResponse.json({ error: 'invalid days' }, { status: 400 })
+      }
+      // Utilization is optional; clamp to [0,1]. Absent → empty pool (max APR).
+      const asked = Number(utilRaw)
+      util = isFinite(asked) ? Math.max(0, Math.min(1, asked)) : 0
     }
-    // Utilization is optional; clamp to [0,1]. Absent → empty pool (max APR).
-    let util = Number(utilRaw)
-    util = isFinite(util) ? Math.max(0, Math.min(1, util)) : 0
 
     // Cheap shared rate limit so a public endpoint can't be used to pummel the
     // upstream price feeds through us.
@@ -68,7 +96,7 @@ export async function GET(req: Request) {
         utilization: util,
       })
       return NextResponse.json(
-        { ok: true, spot, spotSource, quote: slimQuote(quote) },
+        { ok: true, spot, spotSource, days, utilization: util, quote: slimQuote(quote) },
         { headers },
       )
     }
@@ -76,7 +104,16 @@ export async function GET(req: Request) {
     // Ladder mode
     const { rungs } = await quoteLadder(side, spot, days, util)
     return NextResponse.json(
-      { ok: true, spot, spotSource, strikes: rungs.map(slimRung) },
+      {
+        ok: true,
+        spot,
+        spotSource,
+        // Echoed so a caller can see what its quote was priced against — and,
+        // when it passed `expiry`, what the server derived on its behalf.
+        days,
+        utilization: util,
+        strikes: rungs.map(slimRung),
+      },
       { headers },
     )
   } catch (e: any) {

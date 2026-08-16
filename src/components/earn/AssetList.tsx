@@ -3,7 +3,8 @@ import { useEffect, useState } from 'react'
 import { AssetRow } from './AssetRow'
 import { cn } from '@/lib/utils'
 import { useVaultStats } from '@/hooks/useVaultStats'
-import { upcomingExpiryDates, MIN_DAYS_TO_EXPIRY } from '@/lib/expiries'
+import { upcomingExpiryDates } from '@/lib/expiries'
+import { fetchLadder } from '@/lib/quote-client'
 
 export type Tab = 'calls' | 'puts'
 
@@ -30,25 +31,24 @@ export function AssetList({ tab, onTabChange }: AssetListProps) {
 
   useEffect(() => {
     let cancelled = false
-    const now = Date.now()
+    // Quote by expiry, so the range advertised here is priced against the same
+    // tenor AND the same pool utilization the earn screen and the co-signature
+    // use. Asking by `days` alone quoted an empty pool, which overstated the
+    // headline as the vault filled up.
     const dates = upcomingExpiryDates()
-    const daysTo = (d: Date) =>
-      Math.max(MIN_DAYS_TO_EXPIRY, Math.ceil((d.getTime() - now) / 86_400_000))
-    const shortDays = daysTo(dates[0])
-    const longDays = daysTo(dates[dates.length - 1])
+    const shortExpiry = dates[0].toISOString()
+    const longExpiry = dates[dates.length - 1].toISOString()
 
-    const ladder = async (side: 'call' | 'put', days: number): Promise<number[] | undefined> => {
+    const ladder = async (side: 'call' | 'put', expiry: string): Promise<number[] | undefined> => {
       try {
-        const r = await fetch(`/api/vault/quote?side=${side}&days=${days}`)
-        const j = await r.json()
-        if (!j.ok || !Array.isArray(j.strikes) || j.strikes.length === 0) return undefined
-        return j.strikes.map((s: { apr: number }) => s.apr)
+        const aprs = (await fetchLadder(side, expiry)).strikes.map((s) => s.apr)
+        return aprs.length > 0 ? aprs : undefined
       } catch {
         return undefined
       }
     }
     const range = async (side: 'call' | 'put'): Promise<AprRange | undefined> => {
-      const [longL, shortL] = await Promise.all([ladder(side, longDays), ladder(side, shortDays)])
+      const [longL, shortL] = await Promise.all([ladder(side, longExpiry), ladder(side, shortExpiry)])
       if (!longL || !shortL) return undefined
       return { max: Math.max(...longL), min: Math.min(...shortL) }
     }

@@ -19,8 +19,9 @@ import { getExpiryOptions, ExpiryOption } from '@/lib/expiries'
 import { StablePicker, Stable } from '@/components/shared/StablePicker'
 import { savePosition } from '@/lib/positions'
 import { buildTrustlineTx, hasLusdTrustline } from '@/lib/swap'
-import { openPosition } from '@/lib/vault-contract'
+import { openPosition, coveredUnits } from '@/lib/vault-contract'
 import { activeQuoter, cosignWithQuoter } from '@/lib/quoter'
+import { fetchLadder, fetchStrikeQuote, type QuotedRung } from '@/lib/quote-client'
 import { TransactionBuilder, Networks } from '@stellar/stellar-sdk'
 import { ChevronDown, TrendingUp, TrendingDown } from 'lucide-react'
 
@@ -33,19 +34,28 @@ const PROGRESS = {
   submitting: 'Submitting to the network…',
 } as const
 
+// How far the fresh quote may sit BELOW the one on screen before the deposit
+// stops and shows the new number instead.
+//
+// The ladder is repriced just before the transaction is built, so the premium
+// encoded is always the live one — never a stale figure the co-signature would
+// refuse. But "live" is not the same as "what the user agreed to": a quote that
+// has fallen since it was rendered would otherwise be paid silently, which is
+// the exact failure the old one-sided server check allowed. Past this much
+// drift the press is treated as consent to a price that no longer exists.
+const MAX_QUOTE_DRIFT = 0.01 // 1% of the displayed premium
+
+// How often the displayed ladder is repriced.
+const QUOTE_REFRESH_MS = 30_000
+
 interface StrikeSelectorProps {
   assetSymbol: string
   type: 'call' | 'put'
 }
 
-// One priced strike returned by /api/vault/quote — only the user-facing fields.
-interface Rung {
-  index: number
-  strike: number
-  label: string
-  apr: number
-  userPremium: number
-}
+// One priced strike returned by /api/vault/quote. Defined by the client that
+// calls it (lib/quote-client.ts), not restated here.
+type Rung = QuotedRung
 
 export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
   const { connected, connect, address, signTransaction } = useWalletContext()
@@ -142,52 +152,67 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
   // Strikes + APR come from the server quote engine (/api/vault/quote) — the
   // SAME engine that pays the premium on deposit — so what's shown equals what's
   // paid. The engine prices Black-76 off XLM's real realized vol (no fabricated
-  // σ) and the perp forward, with a utilization-aware haircut. We pass the
-  // selected expiry's days + pool utilization so the quote matches the payout.
+  // σ) and the perp forward, with a utilization-aware haircut.
+  //
+  // We send the EXPIRY and nothing else about it: the server derives both the
+  // tenor and the pool utilization from it, through the same function the
+  // co-signature calls. Passing our own utilization is what used to break the
+  // equality — before the stats poll landed, `expiry.utilization` was a
+  // fabricated 0.68, so the ladder was priced against a pool that did not exist.
   const [strikes, setStrikes] = useState<Rung[]>([])
   const [quoteLoading, setQuoteLoading] = useState(false)
   const [quoteError, setQuoteError] = useState<string | null>(null)
 
+  const expiryIso = useMemo(() => expiry?.date.toISOString() ?? null, [expiry])
+
+  const loadLadder = useCallback(
+    (signal?: AbortSignal) => {
+      if (!expiryIso) return Promise.resolve()
+      setQuoteLoading(true)
+      setQuoteError(null)
+      return fetchLadder(type, expiryIso, signal)
+        .then((ladder) => {
+          setStrikes(ladder.strikes)
+        })
+        .catch((e) => {
+          if (e?.name === 'AbortError') return
+          setQuoteError(e?.message ?? 'quote unavailable')
+          setStrikes([])
+        })
+        .finally(() => {
+          if (!signal?.aborted) setQuoteLoading(false)
+        })
+    },
+    [type, expiryIso],
+  )
+
+  // Keep the ladder live on a timer of its own. It used to refresh as a side
+  // effect of the vault-stats poll handing back a new object every 30s, which
+  // worked by accident and stopped working the moment the quote key became the
+  // expiry itself. A displayed premium that stops tracking spot is one the user
+  // is more likely to press on and have refused as drifted.
   useEffect(() => {
-    if (!expiry) return
     const ctrl = new AbortController()
-    setQuoteLoading(true)
-    setQuoteError(null)
-    const params = new URLSearchParams({
-      side: type,
-      days: String(expiry.daysToExpiry),
-      util: String(expiry.utilization ?? 0),
-    })
-    fetch(`/api/vault/quote?${params.toString()}`, { signal: ctrl.signal })
-      .then(async (r) => {
-        const j = await r.json()
-        if (!r.ok || !j.ok) throw new Error(j.error ?? 'quote failed')
-        setStrikes(j.strikes as Rung[])
-      })
-      .catch((e) => {
-        if (e?.name === 'AbortError') return
-        setQuoteError(e?.message ?? 'quote unavailable')
-        setStrikes([])
-      })
-      .finally(() => {
-        if (!ctrl.signal.aborted) setQuoteLoading(false)
-      })
-    return () => ctrl.abort()
-  }, [type, expiry])
+    loadLadder(ctrl.signal)
+    const id = setInterval(() => loadLadder(ctrl.signal), QUOTE_REFRESH_MS)
+    return () => {
+      clearInterval(id)
+      ctrl.abort()
+    }
+  }, [loadLadder])
 
   const amount = useMemo(() => parseFloat(amountStr) || 0, [amountStr])
   const selectedStrike = strikes[selectedIdx]
 
   const apr = selectedStrike?.apr ?? 0
 
-  // Premium = per-unit user premium × number of option units. This is exactly
-  // what the deposit route pays (units = XLM for calls, cash/strike for puts),
-  // so the displayed upfront equals the paid upfront.
+  // Premium = per-unit user premium × number of option units, where the unit
+  // count is the contract's own `coveredUnits` (XLM for calls, cash/strike for
+  // puts) rather than a second copy of that arithmetic — the server multiplies
+  // the same way when it verifies the premium it co-signs.
   const premium = useMemo(() => {
-    if (!selectedStrike) return 0
-    const units =
-      type === 'call' ? amount : selectedStrike.strike > 0 ? amount / selectedStrike.strike : 0
-    return selectedStrike.userPremium * units
+    if (!selectedStrike || amount <= 0 || selectedStrike.strike <= 0) return 0
+    return selectedStrike.userPremium * coveredUnits(type, amount, selectedStrike.strike)
   }, [selectedStrike, amount, type])
 
   // The capacity bucket for the selected expiry — drives the cap gate + donut.
@@ -291,6 +316,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
       return
     }
     if (!address) { setError('Wallet not connected'); return }
+    if (!selectedStrike || !expiryIso) { setError('Pick a strike first'); return }
     setTxLoading(true)
     try {
       // 1. Ensure LUSD trustline so the user can receive the premium.
@@ -314,7 +340,33 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
         }
       }
 
-      // 2. Open the position on the vault contract. Escrow, premium and the
+      // 2. Reprice the strike NOW, and encode that number.
+      //
+      //    The ladder on screen was priced when the expiry was selected; the
+      //    co-signature will price this position when it is asked to sign,
+      //    seconds from here. Sending the older of the two numbers is what
+      //    produced "premium exceeds the quote" on every downward tick — and,
+      //    when the tick went the other way, quietly paid the smaller one.
+      setSuccess('Refreshing the quote…')
+      const fresh = await fetchStrikeQuote(type, expiryIso, selectedStrike.strike)
+      const paidPremium =
+        fresh.userPremium * coveredUnits(type, amount, selectedStrike.strike)
+
+      //    Live is not the same as agreed. If the quote has fallen materially
+      //    since it was rendered, stop and show the new one rather than paying
+      //    a price the user never saw.
+      if (paidPremium < premium * (1 - MAX_QUOTE_DRIFT)) {
+        loadLadder()
+        setSuccess(null)
+        setError(
+          `The quote moved while you were deciding: ${formatUsdc(premium)} → ` +
+            `${formatUsdc(paidPremium)} upfront. Nothing was sent — the strikes ` +
+            `above have been repriced, press again to take the new quote.`
+        )
+        return
+      }
+
+      // 3. Open the position on the vault contract. Escrow, premium and the
       //    position record all land in the one transaction the user signs —
       //    no server-held account touches the collateral at any point. The
       //    quoter co-signs only the premium, after repricing it itself.
@@ -324,9 +376,9 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
         owner: address,
         side: type,
         collateral: amount,
-        strike: selectedStrike!.strike,
+        strike: selectedStrike.strike,
         expiry: expiry.date,
-        premium,
+        premium: paidPremium,
         quoter: await activeQuoter(),
         signTransaction,
         cosignQuote: (authEntries) =>
@@ -334,15 +386,15 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
             address,
             side: type,
             collateralAmount: amount,
-            strikePrice: selectedStrike!.strike,
-            expiryIso: expiry.date.toISOString(),
-            premium,
+            strikePrice: selectedStrike.strike,
+            expiryIso,
+            premium: paidPremium,
             authEntries,
           }),
         onProgress: (step) => setSuccess(PROGRESS[step]),
       })
 
-      // 3. Record the position the contract just wrote, for the leaderboard
+      // 4. Record the position the contract just wrote, for the leaderboard
       //    and analytics. Best-effort: the position exists on chain either way.
       const depositHash = opened.txHash
       await fetch('/api/vault/deposit', {
@@ -354,15 +406,15 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
           positionId: opened.id,
           type,
           collateralAmount: amount,
-          strikePrice: selectedStrike!.strike,
-          daysToExpiry: expiry.daysToExpiry,
-          expiryIso: expiry.date.toISOString(),
+          strikePrice: selectedStrike.strike,
+          daysToExpiry: fresh.daysToExpiry,
+          expiryIso,
         }),
       }).catch((recordErr) => {
         console.warn('vault deposit recorded on chain but not indexed', recordErr)
       })
 
-      setSuccess(`✓ ${formatUsdc(premium)} upfront received · position #${opened.id}`)
+      setSuccess(`✓ ${formatUsdc(paidPremium)} upfront received · position #${opened.id}`)
       setSuccessHash(depositHash)
       setAmountStr('')
 
@@ -374,18 +426,19 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
         type,
         asset: type === 'call' ? assetSymbol : stable,
         collateralAmount: amount,
-        strikePrice: selectedStrike!.strike,
+        strikePrice: selectedStrike.strike,
         strikeIndex: selectedIdx,
-        apr,
-        premium,
+        // The quote that was paid, not the one that was on screen.
+        apr: fresh.apr,
+        premium: paidPremium,
         depositHash,
         // Escrow and premium now settle in the same transaction, so there is
         // no separate payout hash to record.
         premiumHash: depositHash,
         positionId: opened.id,
-        expiryIso: expiry.date.toISOString(),
+        expiryIso,
         expiryLabel: expiry.label,
-        daysToExpirySnapshot: expiry.daysToExpiry,
+        daysToExpirySnapshot: fresh.daysToExpiry,
         createdAt: Date.now(),
         settled: false,
       })
