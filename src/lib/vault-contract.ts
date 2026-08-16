@@ -21,6 +21,7 @@ import {
   Keypair,
   Networks,
   Operation,
+  StrKey,
   TransactionBuilder,
   BASE_FEE,
   nativeToScVal,
@@ -384,7 +385,7 @@ export async function openPosition(
   const simulate = async (tx: Awaited<ReturnType<typeof build>>) => {
     const sim = await server.simulateTransaction(tx)
     if (rpc.Api.isSimulationError(sim)) {
-      throw new Error(readableSimError(sim.error))
+      throw new Error(readableSimError(sim.error, sim.events))
     }
     if (!rpc.Api.isSimulationSuccess(sim)) {
       throw new Error('vault simulation returned no result')
@@ -456,7 +457,7 @@ export async function settlePosition(
 
   const sim = await server.simulateTransaction(tx)
   if (rpc.Api.isSimulationError(sim)) {
-    throw new Error(readableContractError(sim.error, 'settle'))
+    throw new Error(readableContractError(sim.error, 'settle', sim.events))
   }
   if (!rpc.Api.isSimulationSuccess(sim)) {
     throw new Error('vault settle simulation returned no result')
@@ -485,15 +486,70 @@ async function waitForTransaction(
     const got = await server.getTransaction(hash)
     if (got.status === rpc.Api.GetTransactionStatus.SUCCESS) return got
     if (got.status === rpc.Api.GetTransactionStatus.FAILED) {
-      throw new Error(`vault ${label} failed on chain`)
+      // This is the failure the user is least equipped to explain: they signed,
+      // the wallet reported success, and the transaction died in the ledger —
+      // state can move between the simulation and the apply. Say what refused
+      // it and give the hash, so "I signed and nothing happened" is answerable.
+      throw new Error(`Vault ${label} failed on chain — ${onChainReason(got)} · ${hash}`)
     }
     await new Promise((r) => setTimeout(r, 1500))
   }
   throw new Error(`vault ${label} not confirmed after ${attempts} checks — check ${hash}`)
 }
 
-/** Contract error codes, as the vault defines them (see contracts/vault). */
-const CONTRACT_ERRORS: Record<number, string> = {
+/** Why a submitted transaction failed, as far as the RPC will tell us. */
+function onChainReason(failed: rpc.Api.GetFailedTransactionResponse): string {
+  const events = failed.diagnosticEventsXdr
+  const code = contractErrorCode(events)
+  if (code !== null) {
+    return readableContractError(`Error(Contract, #${code})`, 'transaction', events)
+  }
+  // No diagnostics: the transaction-level result code is all there is. It still
+  // separates "the contract refused" from "the fee was too low" or "it expired".
+  try {
+    const outcome = failed.resultXdr.result().switch().name
+    return `the network reported ${outcome}`
+  } catch {
+    return 'no reason reported by the RPC'
+  }
+}
+
+/** The contract error code carried by a diagnostic event, if any. */
+function contractErrorCode(events?: xdr.DiagnosticEvent[]): number | null {
+  for (const ev of events ?? []) {
+    try {
+      for (const topic of ev.event().body().v0().topics()) {
+        const native = scValToNative(topic)
+        // scValToNative renders a contract error as { type: 'contract', code }.
+        if (native?.type === 'contract' && typeof native.code === 'number') {
+          return native.code
+        }
+      }
+    } catch {
+      continue
+    }
+  }
+  return null
+}
+
+// ── Reading a failure ───────────────────────────────────────────────
+//
+// A contract error arrives as `Error(Contract, #13)` and nothing else: the code
+// is scoped to whichever contract raised it, and the invocation touches three.
+// The vault's own numbering and the Stellar Asset Contract's overlap across the
+// codes that matter most, which made a plain lookup table actively misleading:
+//
+//   #13   vault: this expiry is full     token: no trustline for the asset
+//   #10   vault: the pool cannot cover   token: insufficient balance
+//   #11   vault: position too large      token: trustline not authorized
+//
+// So a writer with no LUSD trustline — the single most common way an open fails
+// — was told to pick another expiry, and would have kept picking. The fix is to
+// attribute the error before naming it: the failing contract's id is in the
+// diagnostic events, both on a simulation error and on an on-chain failure.
+
+/** Vault error codes, as the contract defines them (see contracts/vault). */
+const VAULT_ERRORS: Record<number, string> = {
   1: 'Invalid amount',
   2: 'Invalid strike',
   3: 'Expiry must be in the future',
@@ -507,25 +563,111 @@ const CONTRACT_ERRORS: Record<number, string> = {
   11: 'Position is larger than the vault allows',
   12: 'Invalid limit',
   13: 'This expiry is full — pick another',
+  14: 'The quoted premium is above what the vault may pay for this collateral',
+  15: 'The co-signing key is not an authorised quoter',
+  16: 'That quoter is already registered',
+  17: 'Cannot remove the last quoter',
+  18: 'Too many quoters',
 }
 
 /**
- * Turn `Error(Contract, #10)` into something a caller can act on.
- *
- * A caveat that has cost time before: a settle failure is not always the
- * vault's error. An assigned put pays cash out through the LUSD contract, and
- * if the recipient has no trustline it is LUSD that reverts, not the vault —
- * with a code that can collide with the vault's own numbering. When a
- * settlement fails, check which contract the error came from before reading it
- * off this table.
+ * Stellar Asset Contract error codes — a DIFFERENT numbering that the vault's
+ * happens to overlap. Every token move in an open or a settle goes through one
+ * of these contracts, so these are the other half of what a code can mean.
  */
-function readableContractError(error: string, action = 'deposit'): string {
-  const code = error.match(/Error\(Contract, #(\d+)\)/)
-  if (code) {
-    const known = CONTRACT_ERRORS[Number(code[1])]
-    if (known) return known
+const TOKEN_ERRORS: Record<number, string> = {
+  1: 'Internal token error',
+  2: 'The token does not support that operation',
+  3: 'The token is already initialized',
+  4: 'Unauthorized token operation',
+  5: 'Token authentication failed',
+  6: 'That account does not exist on the network',
+  7: 'That address is not a classic Stellar account',
+  8: 'Negative token amount',
+  9: 'Token allowance error',
+  10: 'Not enough of the token to send',
+  11: 'The trustline is not authorized by the issuer',
+  12: 'Token arithmetic overflow',
+  13: 'No trustline for the asset — the account cannot receive it',
+}
+
+/**
+ * Which contract raised the error, from the diagnostic events.
+ *
+ * The earliest error-topic event carrying a contract id is the origin: a
+ * failure is raised in the deepest frame and then propagates outward, so the
+ * first one to say "error" is the contract that actually refused. Returns null
+ * when the RPC gave us no events to read, which is a normal outcome — some
+ * nodes serve simulations with diagnostics off.
+ */
+function failingContract(events?: xdr.DiagnosticEvent[]): string | null {
+  for (const ev of events ?? []) {
+    try {
+      const event = ev.event()
+      const id = event.contractId()
+      if (!id) continue
+      const isError = event
+        .body()
+        .v0()
+        .topics()
+        .some((t) => scValToNative(t) === 'error')
+      if (!isError) continue
+      return StrKey.encodeContract(id as unknown as Buffer)
+    } catch {
+      // A topic we cannot decode is not the one we are looking for.
+      continue
+    }
   }
+  return null
+}
+
+/**
+ * Turn `Error(Contract, #13)` into something a caller can act on.
+ *
+ * With attribution, one meaning. Without it, BOTH meanings when the code is
+ * ambiguous — a message that names two possibilities the reader can check beats
+ * one that confidently names the wrong one.
+ *
+ * Exported for its tests: which of two overlapping tables a code is read from
+ * is exactly the kind of decision that should be pinned down by assertions
+ * rather than by the next person to hit a failed deposit.
+ */
+export function readableContractError(
+  error: string,
+  action = 'deposit',
+  events?: xdr.DiagnosticEvent[],
+): string {
+  const match = error.match(/Error\(Contract, #(\d+)\)/)
+  if (!match) return `Vault rejected the ${action}: ${error}`
+  const code = Number(match[1])
+  const fromVault = VAULT_ERRORS[code]
+  const fromToken = TOKEN_ERRORS[code]
+
+  const culprit = failingContract(events)
+  if (culprit) {
+    if (culprit === VAULT_ID) {
+      return fromVault ?? `Vault rejected the ${action}: ${error}`
+    }
+    // Anything else in this invocation is a token contract: the collateral
+    // being escrowed or the cash paying the premium.
+    return fromToken
+      ? `${fromToken} (token ${culprit.slice(0, 6)}…)`
+      : `A token contract rejected the ${action} with code #${code} (${culprit.slice(0, 6)}…)`
+  }
+
+  if (fromVault && fromToken) {
+    return (
+      `The ${action} was rejected with code #${code}, which two of the ` +
+      `contracts involved define differently — from the vault it means ` +
+      `"${fromVault.toLowerCase()}", from a token contract "${fromToken.toLowerCase()}"`
+    )
+  }
+  if (fromVault) return fromVault
+  if (fromToken) return fromToken
   return `Vault rejected the ${action}: ${error}`
 }
 
-const readableSimError = (error: string): string => readableContractError(error)
+const readableSimError = (
+  error: string,
+  events?: xdr.DiagnosticEvent[],
+): string => readableContractError(error, 'deposit', events)
