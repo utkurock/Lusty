@@ -16,7 +16,8 @@ import { TransactionBuilder, Networks } from '@stellar/stellar-sdk'
 const ASSETS: AssetCode[] = ['XLM', 'LUSD']
 
 export default function SwapPage() {
-  const { connected, connect, address, signTransaction } = useWalletContext()
+  const { connected, connect, address, signTransaction, syncAddress } =
+    useWalletContext()
   const { price: xlmPrice, loading: priceLoading } = useXlmPrice()
 
   const [fromAsset, setFromAsset] = useState<AssetCode>('XLM')
@@ -78,6 +79,18 @@ export default function SwapPage() {
     if (!quote) return
     setSubmitting(true)
     try {
+      // Which account is the wallet on? Same reason as the earn flow: the swap
+      // sends from, and delivers to, one address, and ours is a remembered one.
+      const live = await syncAddress()
+      if (live && live !== address) {
+        setStatus(null)
+        setTxError(
+          `Your wallet is on a different account now (${live.slice(0, 4)}…${live.slice(-4)}). ` +
+            `Nothing was sent — press again to swap from it.`
+        )
+        return
+      }
+
       // Preflight: if receiving LUSD, make sure the user has a trustline.
       if (toAsset === 'LUSD') {
         const hasTrust = await hasLusdTrustline(address)

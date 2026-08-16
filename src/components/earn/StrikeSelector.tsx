@@ -58,7 +58,8 @@ interface StrikeSelectorProps {
 type Rung = QuotedRung
 
 export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
-  const { connected, connect, address, signTransaction } = useWalletContext()
+  const { connected, connect, address, signTransaction, syncAddress } =
+    useWalletContext()
   const { price: xlmPrice, change24h } = useXlmPrice()
   const { stats: vaultStats, refresh: refreshVaultStats } = useVaultStats(30_000)
   const pricePositive = change24h >= 0
@@ -319,6 +320,25 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
     if (!selectedStrike || !expiryIso) { setError('Pick a strike first'); return }
     setTxLoading(true)
     try {
+      // 0. Confirm which account the wallet is actually on.
+      //
+      //    Everything below — the collateral, the premium, the allowance we just
+      //    checked — is keyed to one address. Ours came from localStorage, and
+      //    the user may have switched accounts in their extension since. The
+      //    deposit would still SUCCEED in that case: the address is handed to
+      //    the wallet explicitly, so it signs for the account we named, escrows
+      //    that account's XLM and pays that account's premium — while the user
+      //    watches a different one and reports that nothing arrived.
+      const live = await syncAddress()
+      if (live && live !== address) {
+        setSuccess(null)
+        setError(
+          `Your wallet is on a different account now (${live.slice(0, 4)}…${live.slice(-4)}). ` +
+            `Nothing was sent. The page has switched to it — check the amount and press again.`
+        )
+        return
+      }
+
       // 1. Ensure LUSD trustline so the user can receive the premium.
       const hasTrust = await hasLusdTrustline(address)
       if (!hasTrust) {

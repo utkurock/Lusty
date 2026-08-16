@@ -10,6 +10,13 @@ import { xBullModule } from '@creit.tech/stellar-wallets-kit/modules/xbull'
 import { AlbedoModule } from '@creit.tech/stellar-wallets-kit/modules/albedo'
 import { LobstrModule } from '@creit.tech/stellar-wallets-kit/modules/lobstr'
 
+// What we remember between visits. The wallet ID belongs next to the address:
+// restoring an address while defaulting the wallet back to Freighter points the
+// kit at an extension that may not hold that account at all, and every later
+// signature is then asked of the wrong wallet.
+const SAVED_ADDRESS = 'lusty_wallet_address'
+const SAVED_WALLET_ID = 'lusty_wallet_id'
+
 // stellar-wallets-kit v2.x — every entry point is static. Call
 // StellarWalletsKit.init(...) once per page load, then all subsequent
 // calls (authModal, signTransaction, disconnect) hit the same singleton.
@@ -18,7 +25,7 @@ function ensureInit() {
   if (_inited || typeof window === 'undefined') return
   StellarWalletsKit.init({
     network: Networks.TESTNET,
-    selectedWalletId: FREIGHTER_ID,
+    selectedWalletId: localStorage.getItem(SAVED_WALLET_ID) ?? FREIGHTER_ID,
     modules: [
       new FreighterModule(),
       new xBullModule(),
@@ -40,6 +47,20 @@ export interface WalletState {
   selectWallet: (walletId: string) => Promise<void>
   disconnect: () => void
   signTransaction: (xdr: string) => Promise<string>
+  /**
+   * The account the wallet is on RIGHT NOW, reconciled with what we remembered.
+   *
+   * Call this before building anything that moves value. The restored address is
+   * a memory of a previous visit, and the user may have switched accounts in
+   * their extension since — in which case a deposit built from the remembered
+   * address escrows from, and pays the premium to, an account they are no longer
+   * looking at. It succeeds, too, because the kit is handed that address
+   * explicitly and the wallet signs for whichever of its accounts was named.
+   *
+   * Resolves to the live address (state and storage updated to match), or null
+   * if no wallet is connected.
+   */
+  syncAddress: () => Promise<string | null>
 }
 
 export function useWallet(): WalletState {
@@ -52,7 +73,7 @@ export function useWallet(): WalletState {
   // Restore address from last session + load wallet list.
   useEffect(() => {
     ensureInit()
-    const saved = localStorage.getItem('lusty_wallet_address')
+    const saved = localStorage.getItem(SAVED_ADDRESS)
     if (saved) {
       setAddress(saved)
       setConnected(true)
@@ -84,7 +105,8 @@ export function useWallet(): WalletState {
       if (address) {
         setAddress(address)
         setConnected(true)
-        localStorage.setItem('lusty_wallet_address', address)
+        localStorage.setItem(SAVED_ADDRESS, address)
+        localStorage.setItem(SAVED_WALLET_ID, walletId)
         setModalOpen(false)
         // Track wallet connection
         fetch('/api/users/connect', {
@@ -108,8 +130,21 @@ export function useWallet(): WalletState {
     }
     setAddress(null)
     setConnected(false)
-    localStorage.removeItem('lusty_wallet_address')
+    localStorage.removeItem(SAVED_ADDRESS)
+    localStorage.removeItem(SAVED_WALLET_ID)
   }, [])
+
+  const syncAddress = useCallback(async (): Promise<string | null> => {
+    if (!address) return null
+    ensureInit()
+    const { address: live } = await StellarWalletsKit.fetchAddress()
+    if (!live) return address
+    if (live !== address) {
+      setAddress(live)
+      localStorage.setItem(SAVED_ADDRESS, live)
+    }
+    return live
+  }, [address])
 
   const signTransaction = useCallback(
     async (xdr: string): Promise<string> => {
@@ -135,5 +170,6 @@ export function useWallet(): WalletState {
     selectWallet,
     disconnect,
     signTransaction,
+    syncAddress,
   }
 }
