@@ -126,7 +126,12 @@ signatures takes a round trip:
 
 1. Simulate `open` to learn which authorization entries it needs.
 2. Send those entries to `/api/vault/authorize`. The server **re-derives the
-   premium from the engine** — it never takes the client's number.
+   premium from the engine** — it never takes the client's number. The two
+   readings of spot are taken seconds apart, so a request may sit above the
+   fresh quote by at most `PREMIUM_SLIPPAGE_BPS` (default 25 bps of the
+   premium); further above it and the server refuses to co-sign. That allowance
+   is the protocol's worst-case overpayment on one position, and it is bounded
+   again on chain by `max_premium_bps` of the collateral behind it.
 3. The server signs **exactly one entry**: the quoter's. It does not touch the
    writer's.
 4. Rebuild the transaction carrying that signature, simulate again to price the

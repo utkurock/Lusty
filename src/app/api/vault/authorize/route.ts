@@ -39,10 +39,32 @@ const QUOTER_SECRET = process.env.VAULT_QUOTER_SECRET ?? ''
 // short enough that an unused signature expires rather than lingering.
 const SIGNATURE_LEDGERS = 100 // ≈ 8 minutes at 5s ledgers
 
-// The premium a caller may request, relative to the engine's own quote. Equal
-// is the norm; the tolerance only absorbs the float rounding between the
-// quote the UI rendered and the stroops it encoded.
-const PREMIUM_TOLERANCE = 1e-6
+// The premium a caller may request, relative to the engine's own quote.
+//
+// A quote is a snapshot and this endpoint reprices live, so the two readings of
+// spot are never the same reading. A covered call's premium is linear in spot
+// (capital = spot at the pinned rung), which made a float-rounding tolerance the
+// wrong bound entirely: one downward tick between the ladder the UI rendered and
+// the co-signature refused an honest deposit, and on a continuously-ticking feed
+// that is roughly every other attempt.
+//
+// So the bound is a slippage allowance, in basis points of the quote — the same
+// shape a swap uses, and for the same reason. It is also the protocol's
+// worst-case overpayment on one position, which is why it is stated in bps
+// rather than left implicit: 25 bps of the premium is a rounding error against
+// the contract's own `max_premium_bps` ceiling on the collateral behind it.
+//
+// The absolute floor stays, because a dust premium's bps allowance rounds to
+// less than the stroop the transaction actually encodes.
+const PREMIUM_SLIPPAGE_BPS = Number(process.env.PREMIUM_SLIPPAGE_BPS ?? 25)
+const PREMIUM_TOLERANCE_MIN = 1e-6
+
+function premiumTolerance(quoted: number): number {
+  const bps = isFinite(PREMIUM_SLIPPAGE_BPS) && PREMIUM_SLIPPAGE_BPS >= 0
+    ? PREMIUM_SLIPPAGE_BPS
+    : 25
+  return Math.max(PREMIUM_TOLERANCE_MIN, (quoted * bps) / 10_000)
+}
 
 const MIN_DAYS_TO_EXPIRY = 2
 const MAX_DAYS_TO_EXPIRY = 365
@@ -213,10 +235,14 @@ export async function POST(req: Request) {
 
     const units = coveredUnits(body.side, body.collateralAmount, body.strikePrice)
     const quoted = quote.userPremium * units
-    if (body.premium > quoted + PREMIUM_TOLERANCE) {
+    const tolerance = premiumTolerance(quoted)
+    if (body.premium > quoted + tolerance) {
       return NextResponse.json(
         {
-          error: `premium ${body.premium.toFixed(7)} exceeds the quote ${quoted.toFixed(7)}`,
+          error:
+            `premium ${body.premium.toFixed(7)} exceeds the quote ` +
+            `${quoted.toFixed(7)} by more than the ${PREMIUM_SLIPPAGE_BPS} bps ` +
+            `slippage allowance — the market moved, refresh the quote`,
           code: 'premium_above_quote',
         },
         { status: 409 },
