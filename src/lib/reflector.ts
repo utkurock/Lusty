@@ -9,6 +9,7 @@
 // Reads are free simulations (no tx submitted, no fees, no signing) — the
 // distributor key is never touched here.
 
+import { XLM, type UnderlyingAsset } from './assets'
 import {
   Account,
   BASE_FEE,
@@ -28,7 +29,10 @@ const RPC_URL =
 const ORACLE_ID =
   process.env.REFLECTOR_ORACLE_ID ??
   'CCYOZJCOPG34LLQQ7N24YXBM7LL62R7ONMZ3G6WZAAYPB5OYKOMJRN63'
-const FEED_SYMBOL = process.env.REFLECTOR_FEED_SYMBOL ?? 'XLM'
+// Default feed for callers that do not name an underlying. Per-asset feeds
+// live in the registry (lib/assets) — this stays only so the XLM rails read
+// exactly as they did before the registry existed.
+const DEFAULT_FEED_SYMBOL = XLM.feedSymbol
 // Feed parameters (constant per oracle deployment; see contracts/README.md).
 const DECIMALS = Number(process.env.REFLECTOR_DECIMALS ?? 14)
 const RESOLUTION_SECS = Number(process.env.REFLECTOR_RESOLUTION_SECS ?? 300)
@@ -86,12 +90,22 @@ async function simulateOracleCall(
   return { price, timestamp }
 }
 
-function feedAsset(): xdr.ScVal {
+function feedAsset(symbol: string): xdr.ScVal {
   // Reflector Asset enum: Other(Symbol) — encoded as a vec [variant, value].
   return xdr.ScVal.scvVec([
     xdr.ScVal.scvSymbol('Other'),
-    xdr.ScVal.scvSymbol(FEED_SYMBOL),
+    xdr.ScVal.scvSymbol(symbol),
   ])
+}
+
+/**
+ * Which feed a call reads. Every exported function takes the underlying as an
+ * optional argument so a BTC position cannot end up priced off the XLM feed by
+ * omission: the asset either travels with the call or the default is used, and
+ * the default is XLM by name rather than by accident.
+ */
+function feedOf(asset?: UnderlyingAsset): string {
+  return asset ? asset.feedSymbol : DEFAULT_FEED_SYMBOL
 }
 
 /**
@@ -99,11 +113,14 @@ function feedAsset(): xdr.ScVal {
  * grid — used for expiry-pinned settlement. Returns null if the oracle has
  * no record for that period (not yet recorded, or pruned past retention).
  */
-export async function reflectorPriceAt(atMs: number): Promise<number | null> {
+export async function reflectorPriceAt(
+  atMs: number,
+  asset?: UnderlyingAsset
+): Promise<number | null> {
   const tsSecs = Math.floor(atMs / 1000)
   const tsNorm = tsSecs - (tsSecs % RESOLUTION_SECS)
   const rec = await simulateOracleCall('price', [
-    feedAsset(),
+    feedAsset(feedOf(asset)),
     nativeToScVal(tsNorm, { type: 'u64' }),
   ])
   return rec === null ? null : rec.price
@@ -128,16 +145,22 @@ export async function reflectorPriceAt(atMs: number): Promise<number | null> {
  * right bound depends on the job: settlement tolerates up to an hour (it only
  * ever runs near expiry), live quoting does not. See spot.ts.
  */
-export async function reflectorLastPriceRecord(): Promise<ReflectorPrice | null> {
-  return simulateOracleCall('lastprice', [feedAsset()])
+export async function reflectorLastPriceRecord(
+  asset?: UnderlyingAsset
+): Promise<ReflectorPrice | null> {
+  return simulateOracleCall('lastprice', [feedAsset(feedOf(asset))])
 }
 
-export async function reflectorLastPrice(): Promise<number | null> {
-  const rec = await reflectorLastPriceRecord()
+export async function reflectorLastPrice(
+  asset?: UnderlyingAsset
+): Promise<number | null> {
+  const rec = await reflectorLastPriceRecord(asset)
   if (rec === null) return null
   const ageSecs = Math.floor(Date.now() / 1000) - rec.timestamp
   if (ageSecs > MAX_STALENESS_SECS) {
-    console.warn(`reflector: lastprice stale (${ageSecs}s old) — ignoring`)
+    console.warn(
+      `reflector: ${feedOf(asset)} lastprice stale (${ageSecs}s old) — ignoring`
+    )
     return null
   }
   return rec.price
@@ -158,9 +181,10 @@ export async function reflectorLastPrice(): Promise<number | null> {
  * "fresh-looking" live price.
  */
 export async function reflectorSettlementPrice(
-  expiryMs: number
+  expiryMs: number,
+  asset?: UnderlyingAsset
 ): Promise<number | null> {
-  const pinned = await reflectorPriceAt(expiryMs)
+  const pinned = await reflectorPriceAt(expiryMs, asset)
   if (pinned !== null) return pinned
 
   const sinceExpirySecs = Math.floor((Date.now() - expiryMs) / 1000)
@@ -169,5 +193,5 @@ export async function reflectorSettlementPrice(
     // longer a proxy for the expiry price. Refuse, don't guess.
     return null
   }
-  return reflectorLastPrice()
+  return reflectorLastPrice(asset)
 }

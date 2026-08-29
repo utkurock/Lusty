@@ -17,6 +17,7 @@ describe('pickSpot — source precedence', () => {
     const got = pickSpot(rec(0.188, 120), 0.191, NOW)
     expect(got).toEqual({
       price: 0.188,
+      symbol: 'XLM',
       source: 'reflector',
       asOf: (NOW_SECS - 120) * 1000,
     })
@@ -31,6 +32,17 @@ describe('pickSpot — source precedence', () => {
 
   it('returns null when every source is down — never invents a price', () => {
     expect(pickSpot(null, null, NOW)).toBeNull()
+  })
+})
+
+describe('pickSpot — which underlying it priced', () => {
+  it('labels the quote with the asset it was asked for, on either source', () => {
+    expect(pickSpot(rec(64_000, 60), null, NOW, 'BTC')?.symbol).toBe('BTC')
+    expect(pickSpot(null, 64_000, NOW, 'BTC')?.symbol).toBe('BTC')
+  })
+
+  it('defaults to XLM, so the existing callers keep their meaning', () => {
+    expect(pickSpot(rec(0.188, 60), null, NOW)?.symbol).toBe('XLM')
   })
 })
 

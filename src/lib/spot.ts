@@ -1,5 +1,5 @@
-// Live XLM/USD spot for the server rails.
-// =======================================
+// Live underlying/USD spot for the server rails.
+// ==============================================
 // Every server-side price — the quote ladder, the premium a deposit actually
 // pays, the swap rate — resolves through here. It used to be four verbatim
 // copies of a bare `fetch(binance)` that threw on any non-200, which made
@@ -26,10 +26,10 @@
 // MAX_STALENESS_SECS. Settlement keeps its own, looser bound in reflector.ts;
 // the two jobs deliberately do not share a number.
 
+import { XLM, type UnderlyingAsset } from './assets'
 import { reflectorLastPriceRecord } from './reflector'
 
-const BINANCE_TICKER_URL =
-  'https://api.binance.com/api/v3/ticker/price?symbol=XLMUSDT'
+const BINANCE_TICKER_URL = 'https://api.binance.com/api/v3/ticker/price'
 
 // How old a Reflector record may be and still price a live quote. Three
 // publish periods — tolerates a couple of missed updates without letting a
@@ -52,19 +52,24 @@ function num(raw: string | undefined, fallback: number): number {
 export type SpotSource = 'reflector' | 'binance'
 
 export interface SpotQuote {
-  /** XLM price in USD. */
+  /** The underlying's price in USD. */
   price: number
+  /** Which underlying it prices — a caller must never mix two feeds up. */
+  symbol: string
   /** Which feed produced it. */
   source: SpotSource
   /** Unix ms the price is as-of (oracle record time, or fetch time). */
   asOf: number
 }
 
-let cache: { value: SpotQuote; expires: number } | null = null
+// Cached per underlying. A single slot would hand a BTC caller the XLM price
+// that happened to be fetched 3 seconds earlier — the exact class of mix-up a
+// second underlying introduces, so the key is the asset, not the clock.
+const cache = new Map<string, { value: SpotQuote; expires: number }>()
 
-/** Drops the memoized price. Tests only. */
+/** Drops the memoized prices. Tests only. */
 export function resetSpotCache(): void {
-  cache = null
+  cache.clear()
 }
 
 /**
@@ -78,12 +83,14 @@ export function pickSpot(
   reflector: { price: number; timestamp: number } | null,
   binance: number | null,
   now: number,
+  symbol: string = XLM.symbol,
 ): SpotQuote | null {
   if (reflector && isFinite(reflector.price) && reflector.price > 0) {
     const ageSecs = Math.floor(now / 1000) - reflector.timestamp
     if (ageSecs <= MAX_STALENESS_SECS && ageSecs >= -MAX_FUTURE_SKEW_SECS) {
       return {
         price: reflector.price,
+        symbol,
         source: 'reflector',
         asOf: reflector.timestamp * 1000,
       }
@@ -93,26 +100,27 @@ export function pickSpot(
     )
   }
   if (binance !== null && isFinite(binance) && binance > 0) {
-    return { price: binance, source: 'binance', asOf: now }
+    return { price: binance, symbol, source: 'binance', asOf: now }
   }
   return null
 }
 
-async function fromReflector(): Promise<{
+async function fromReflector(asset: UnderlyingAsset): Promise<{
   price: number
   timestamp: number
 } | null> {
   try {
-    return await reflectorLastPriceRecord()
+    return await reflectorLastPriceRecord(asset)
   } catch (e) {
     console.warn('spot: reflector unavailable —', (e as Error)?.message)
     return null
   }
 }
 
-async function fromBinance(): Promise<number | null> {
+async function fromBinance(asset: UnderlyingAsset): Promise<number | null> {
   try {
-    const r = await fetch(BINANCE_TICKER_URL, { cache: 'no-store' })
+    const url = `${BINANCE_TICKER_URL}?symbol=${asset.binanceSymbol}`
+    const r = await fetch(url, { cache: 'no-store' })
     if (!r.ok) {
       console.warn(`spot: binance ticker ${r.status}`)
       return null
@@ -127,23 +135,36 @@ async function fromBinance(): Promise<number | null> {
 }
 
 /**
- * Live spot with its provenance. Throws only when every source is down —
- * callers should surface that as a 503-style "price feed unavailable" rather
- * than substituting a price of their own.
+ * Live spot for one underlying, with its provenance. Throws only when every
+ * source is down — callers should surface that as a 503-style "price feed
+ * unavailable" rather than substituting a price of their own.
  */
-export async function getSpotXlmUsd(now: number = Date.now()): Promise<SpotQuote> {
-  if (cache && cache.expires > now) return cache.value
+export async function getSpot(
+  asset: UnderlyingAsset = XLM,
+  now: number = Date.now(),
+): Promise<SpotQuote> {
+  const hit = cache.get(asset.symbol)
+  if (hit && hit.expires > now) return hit.value
 
   // Reflector first; Binance is only paid for when Reflector cannot answer.
-  const reflector = await fromReflector()
-  let picked = pickSpot(reflector, null, now)
-  if (!picked) picked = pickSpot(null, await fromBinance(), now)
+  const reflector = await fromReflector(asset)
+  let picked = pickSpot(reflector, null, now, asset.symbol)
+  if (!picked) {
+    picked = pickSpot(null, await fromBinance(asset), now, asset.symbol)
+  }
 
   if (!picked) {
-    throw new Error('price feed unavailable: reflector and binance both failed')
+    throw new Error(
+      `price feed unavailable for ${asset.symbol}: reflector and binance both failed`,
+    )
   }
-  cache = { value: picked, expires: now + CACHE_TTL_MS }
+  cache.set(asset.symbol, { value: picked, expires: now + CACHE_TTL_MS })
   return picked
+}
+
+/** The XLM rails, unchanged: same behaviour, now one asset among several. */
+export async function getSpotXlmUsd(now: number = Date.now()): Promise<SpotQuote> {
+  return getSpot(XLM, now)
 }
 
 /** Just the number, for the many callers that don't care where it came from. */

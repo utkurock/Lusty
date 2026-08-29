@@ -1,3 +1,4 @@
+import { XLM } from './assets'
 import { getPool, ensureSchema } from './db'
 import { upcomingExpiryDates, expiryLabel, expiryUtilization } from './expiries'
 
@@ -36,12 +37,10 @@ const EXPOSURE_GRACE_DAYS = Number(process.env.VAULT_EXPOSURE_GRACE_DAYS ?? 7)
 // expiries are open at once, each capped independently (call in XLM, put in
 // USD). A full expiry blocks only itself.
 export const EPOCHS_PER_MONTH = Number(process.env.VAULT_EPOCHS_PER_MONTH ?? 3)
-export const CALL_MONTHLY_CAP_XLM = Number(
-  process.env.VAULT_CALL_MONTHLY_CAP_XLM ?? 1_500_000
-)
-export const PUT_MONTHLY_CAP_USD = Number(
-  process.env.VAULT_PUT_MONTHLY_CAP_USD ?? 150_000
-)
+// XLM's own envelope, off the registry. Each underlying carries its caps
+// there, so BTC's capacity is a separate number rather than a share of this one.
+export const CALL_MONTHLY_CAP_XLM = XLM.callMonthlyCap
+export const PUT_MONTHLY_CAP_USD = XLM.putMonthlyCapUsd
 // Per-expiry cap = monthly budget / number of open expiries.
 export const CALL_EPOCH_CAP_XLM = CALL_MONTHLY_CAP_XLM / EPOCHS_PER_MONTH
 export const PUT_EPOCH_CAP_USD = PUT_MONTHLY_CAP_USD / EPOCHS_PER_MONTH
