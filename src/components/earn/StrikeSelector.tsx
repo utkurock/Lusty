@@ -506,8 +506,11 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
 
   return (
     <div className="space-y-7">
-      {/* Compact tab bar */}
-      <div className="light-card flex items-stretch font-mono text-caption relative overflow-hidden">
+      {/* Compact tab bar. It must not clip its own children: the expiry menu is
+          absolutely positioned inside it, and `overflow-hidden` cut every row
+          off below the bar — the list opened into nothing and only the expiry
+          already selected could be picked. */}
+      <div className="light-card flex items-stretch font-mono text-caption relative">
         <div className="flex items-center gap-2 px-4 border-r border-line-light">
           {assetSymbol === 'XLM' ? (
             // eslint-disable-next-line @next/next/no-img-element
