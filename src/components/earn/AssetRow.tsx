@@ -8,9 +8,15 @@ interface AssetRowProps {
   symbol: string
   name: string
   type: string
-  /** Undefined while the live quote is still loading. */
+  /** Undefined while the live quote is still loading, and also when it failed. */
   maxAPR?: number
   minAPR?: number
+  /**
+   * Whether the quote engine has answered yet. It is what separates the two
+   * meanings of an absent APR: before, the number is coming; after, the engine
+   * could not produce one.
+   */
+  quoted?: boolean
   href: string
   /** When set, the row is not navigable and the action is shown as disabled. */
   disabled?: boolean
@@ -24,12 +30,37 @@ export function AssetRow({
   type,
   maxAPR,
   minAPR,
+  quoted = false,
   href,
   disabled = false,
   disabledReason,
 }: AssetRowProps) {
   const router = useRouter()
-  const fmt = (v?: number) => (v == null ? '…' : formatAPR(v))
+
+  /**
+   * Three states, three different marks. A pulsing bar the width of the number
+   * it will become while the quote is in flight; an em dash once the engine has
+   * answered without one; the figure itself otherwise. The old placeholder was
+   * an ellipsis for both of the first two, so a quote that never arrived looked
+   * exactly like one that was about to.
+   */
+  const Apr = ({ value, className, width }: { value?: number; className: string; width: number }) => {
+    if (value != null) return <span className={className}>{formatAPR(value)}</span>
+    if (!quoted) {
+      return (
+        <span
+          className="skeleton"
+          style={{ width, height: '1em' }}
+          aria-label="pricing"
+        />
+      )
+    }
+    return (
+      <span className="text-ink-faint" title="The quote engine could not price this expiry.">
+        —
+      </span>
+    )
+  }
   return (
     <div
       role={disabled ? undefined : 'button'}
@@ -65,8 +96,12 @@ export function AssetRow({
           </div>
         </div>
         <div className="col-span-3 font-mono text-body text-ink-2">{type}</div>
-        <div className="col-span-2 num text-lead text-accent-green font-bold">{fmt(maxAPR)}</div>
-        <div className="col-span-1 num text-body text-accent-green/70">{fmt(minAPR)}</div>
+        <div className="col-span-2">
+          <Apr value={maxAPR} width={64} className="num text-lead text-accent-green font-bold" />
+        </div>
+        <div className="col-span-1">
+          <Apr value={minAPR} width={48} className="num text-body text-accent-green/70" />
+        </div>
         <div className="col-span-2 flex justify-end items-center gap-2">
           {disabled ? (
             <span
@@ -111,7 +146,7 @@ export function AssetRow({
             <div className="font-mono text-tiny text-ink-2 truncate">{name} · {type}</div>
           </div>
           <div className="text-right shrink-0">
-            <div className="num text-lead text-accent-green font-bold">{fmt(maxAPR)}</div>
+            <Apr value={maxAPR} width={64} className="num text-lead text-accent-green font-bold" />
             <div className="label">max apr</div>
           </div>
         </div>

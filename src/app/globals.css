@@ -482,6 +482,22 @@ html, body, .terminal-card, .light-card, .raised-card {
     color: var(--accent-green);
   }
 
+  /* Skeleton -----------------------------------------------------------------
+     A value that is on its way, shown as the shape it will take. It exists so
+     that 'loading' and 'unavailable' cannot look the same: a placeholder that
+     pulses is a promise, and a dash is an answer. */
+  .skeleton {
+    display: inline-block;
+    vertical-align: middle;
+    border-radius: var(--r-compact);
+    background: rgb(var(--surface-2));
+    animation: skeletonPulse 1.5s var(--ease-std) infinite;
+  }
+  @keyframes skeletonPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: .45; }
+  }
+
   /* Chips and badges -------------------------------------------------------- */
   .chip {
     display: inline-flex;

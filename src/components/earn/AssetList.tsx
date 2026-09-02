@@ -28,6 +28,10 @@ export function AssetList({ tab, onTabChange }: AssetListProps) {
   //   MIN = shortest expiry, deepest OTM      (lowest/safest yield on offer)
   const [callApr, setCallApr] = useState<AprRange | undefined>()
   const [putApr, setPutApr] = useState<AprRange | undefined>()
+  // Whether the quote engine has answered at all yet. Without this, an APR that
+  // is still on its way and one the engine could not produce render the same
+  // way, and the placeholder never resolves into anything.
+  const [quoted, setQuoted] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -56,6 +60,7 @@ export function AssetList({ tab, onTabChange }: AssetListProps) {
       if (cancelled) return
       setCallApr(c)
       setPutApr(p)
+      setQuoted(true)
     })
     return () => {
       cancelled = true
@@ -120,6 +125,7 @@ export function AssetList({ tab, onTabChange }: AssetListProps) {
             type="Covered Call"
             maxAPR={callApr?.max}
             minAPR={callApr?.min}
+            quoted={quoted}
             href="/earn/xlm"
             disabled={callsFull}
             disabledReason="Vault full"
@@ -131,10 +137,22 @@ export function AssetList({ tab, onTabChange }: AssetListProps) {
             type="Cash Secured Put"
             maxAPR={putApr?.max}
             minAPR={putApr?.min}
+            quoted={quoted}
             href="/earn/xlm?type=put"
             disabled={putsFull}
             disabledReason="Vault full"
           />
+        )}
+
+        {/* The engine answered and had nothing to offer. Say so once, under the
+            row, rather than leaving two columns of dashes to be read as zero
+            yield — and keep the row itself navigable, because the strike screen
+            reports the reason in full. */}
+        {quoted && !(tab === 'calls' ? callApr : putApr) && (
+          <div className="notice notice-quiet">
+            Live pricing is unavailable right now, so the offered range cannot be
+            shown. Open the asset to see what the quote engine reports.
+          </div>
         )}
       </div>
     </div>

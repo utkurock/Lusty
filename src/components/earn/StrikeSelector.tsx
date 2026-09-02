@@ -170,10 +170,15 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
     (signal?: AbortSignal) => {
       if (!expiryIso) return Promise.resolve()
       setQuoteLoading(true)
-      setQuoteError(null)
+      // The previous failure stays on screen until a retry actually succeeds.
+      // Clearing it here put the panel back on "Pricing strikes…" every 30s,
+      // and since a blocked upstream takes ~12s to fail, the screen spent its
+      // life looking like a request that was about to arrive rather than one
+      // that had already failed four times.
       return fetchLadder(type, expiryIso, signal)
         .then((ladder) => {
           setStrikes(ladder.strikes)
+          setQuoteError(null)
         })
         .catch((e) => {
           if (e?.name === 'AbortError') return
@@ -628,13 +633,16 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
         />
       )}
 
-      {quoteLoading && strikes.length === 0 && (
-        <div className="notice notice-quiet">Pricing strikes…</div>
-      )}
-      {quoteError && (
+      {/* A known failure outranks a retry in progress: once the engine has
+          refused, saying so is more use than showing the same spinner again. */}
+      {strikes.length === 0 && quoteError && (
         <div className="notice notice-warn">
-          Couldn&apos;t load live pricing: {quoteError}
+          Couldn&apos;t load live pricing: {quoteError}.{' '}
+          {quoteLoading ? 'Retrying…' : 'Retrying every 30s.'}
         </div>
+      )}
+      {strikes.length === 0 && !quoteError && quoteLoading && (
+        <div className="notice notice-quiet">Pricing strikes…</div>
       )}
 
       {error && (
