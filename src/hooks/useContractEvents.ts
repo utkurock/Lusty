@@ -3,6 +3,9 @@ import { useEffect, useState, useCallback } from 'react'
 
 export interface VaultEvent {
   kind: 'deposit' | 'settle' | 'fund'
+  /** 'chain' — read from the ledger. 'mirror' — recorded here at deposit time,
+      for history the RPC's ~7-day event window has already dropped. */
+  source?: 'chain' | 'mirror'
   id: string | null
   ledger: number
   at: string

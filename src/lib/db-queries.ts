@@ -149,6 +149,63 @@ export async function getPositionsForAddress(address: string): Promise<DbPositio
   })
 }
 
+// ── Activity mirror ────────────────────────────────────────────────
+//
+// Soroban RPC keeps roughly seven days of contract events, so a feed built on
+// getEvents alone goes blank on a vault whose last deposit is older than that —
+// which is what the dashboard showed: three open positions above an activity
+// panel reporting nothing had happened. Every deposit is also written here at
+// the time it lands, with its transaction hash, so this table is the history
+// the ledger's event window has already dropped.
+//
+// These rows are not a second source of truth. Each carries the hash of a real
+// transaction and is only ever used to fill in behind the live events; where
+// both have a hash, the on-chain event wins.
+
+export interface MirroredDeposit {
+  txHash: string | null
+  address: string
+  side: 'call' | 'put'
+  asset: string
+  collateral: number
+  premium: number
+  strikeUsd: number | null
+  positionId: number | null
+  at: string
+}
+
+export async function getRecentDeposits(limit = 25): Promise<MirroredDeposit[]> {
+  await ensureSchema()
+  const pool = getPool()
+  const res = await pool.query(
+    `select address, subtype, amount, asset, premium_amount, metadata, tx_hash, created_at
+       from transactions
+      where type = 'deposit'
+        and (subtype = 'call' or subtype = 'put')
+      order by created_at desc
+      limit $1`,
+    [Math.max(1, Math.min(limit, 100))]
+  )
+
+  return res.rows.map((r: any) => {
+    const meta = (r.metadata ?? {}) as Record<string, unknown>
+    const num = (v: unknown) => (typeof v === 'number' && isFinite(v) ? v : null)
+    return {
+      txHash: r.tx_hash ?? null,
+      address: r.address,
+      side: r.subtype as 'call' | 'put',
+      asset: r.asset ?? (r.subtype === 'call' ? 'XLM' : 'LUSD'),
+      collateral: num(meta.collateralAmount) ?? parseFloat(r.amount),
+      premium: r.premium_amount !== null ? parseFloat(r.premium_amount) : 0,
+      strikeUsd: num(meta.strikePrice),
+      positionId: Number.isInteger(meta.positionId)
+        ? (meta.positionId as number)
+        : null,
+      at: new Date(r.created_at).toISOString(),
+    }
+  })
+}
+
 // ── Leaderboard ────────────────────────────────────────────────────
 
 export interface LeaderRow {

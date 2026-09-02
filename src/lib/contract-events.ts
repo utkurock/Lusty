@@ -40,6 +40,13 @@ export type OptionSide = (typeof SIDES)[number]
 
 export interface VaultEvent {
   kind: 'deposit' | 'settle' | 'fund'
+  /**
+   * Where the row came from. 'chain' is an event read out of the ledger;
+   * 'mirror' is a deposit this application recorded when it landed, used only
+   * for history older than the RPC's event window. Both name a real
+   * transaction; only the first can carry a settlement or a pool top-up.
+   */
+  source?: 'chain' | 'mirror'
   id: string | null
   ledger: number
   at: string
@@ -68,6 +75,7 @@ function parseEvent(e: sorobanRpc.Api.EventResponse): VaultEvent | null {
     const name = String(topics[0])
     const data = scValToNative(e.value) as unknown[]
     const base = {
+      source: 'chain' as const,
       ledger: e.ledger,
       at: e.ledgerClosedAt,
       contractId: e.contractId?.contractId() ?? '',

@@ -13,6 +13,10 @@ function timeAgo(iso: string): string {
 }
 
 function label(e: VaultEvent): { tag: string; tone: string; text: string } {
+  // Positions written on the retired distributor rail carry no contract id.
+  // "#null" is not a position number, so those rows lead with the collateral.
+  const ref = e.id ? `#${e.id} · ` : ''
+
   if (e.kind === 'deposit') {
     // A call escrows the underlying, a put escrows cash — label each in the
     // unit it was actually posted in.
@@ -23,7 +27,7 @@ function label(e: VaultEvent): { tag: string; tone: string; text: string } {
     return {
       tag: put ? 'put' : 'call',
       tone: 'text-accent-green',
-      text: `#${e.id} · ${collateral} @ $${(e.strikeUsd ?? 0).toFixed(4)} · +$${(e.premiumCash ?? 0).toFixed(2)}`,
+      text: `${ref}${collateral} @ $${(e.strikeUsd ?? 0).toFixed(4)} · +$${(e.premiumCash ?? 0).toFixed(2)}`,
     }
   }
   if (e.kind === 'settle') {
@@ -31,7 +35,7 @@ function label(e: VaultEvent): { tag: string; tone: string; text: string } {
     return {
       tag: 'settle',
       tone: assigned ? 'text-brand' : 'text-ink',
-      text: `#${e.id} · ${e.outcome} @ $${(e.priceUsd ?? 0).toFixed(4)}`,
+      text: `${ref}${e.outcome} @ $${(e.priceUsd ?? 0).toFixed(4)}`,
     }
   }
   const underlying = e.pool === 'underlying'
@@ -44,20 +48,32 @@ function label(e: VaultEvent): { tag: string; tone: string; text: string } {
   }
 }
 
-// Live feed of the vault contract's on-chain events (deposit / settle / fund),
-// streamed straight from the ledger via Soroban RPC getEvents. This closes the
-// loop the contract opens with env.events().publish(...): emit on-chain →
-// stream → render.
+// The vault's activity: the contract's own events (deposit / settle / fund)
+// streamed from the ledger via Soroban RPC getEvents, backfilled from the
+// deposit mirror for anything older than the RPC's ~7-day retention window.
+//
+// Without the backfill this panel went blank on a vault whose last deposit was
+// a fortnight old — three open positions on the same screen, and a feed saying
+// nothing had ever happened. Every row still names a real transaction and links
+// to it; the mirror only supplies the ones the ledger's event window dropped.
 export function OnChainActivity() {
   const { events, loading } = useContractEvents()
+  const mirrored = events.filter((e) => e.source === 'mirror').length
 
   return (
     <div className="mt-10">
       <div className="mb-3 flex items-center justify-between">
         <div className="font-mono text-caption text-ink-2">~/on-chain activity</div>
-        <div className="font-mono text-tiny text-ink-2 flex items-center gap-1.5">
+        <div
+          className="font-mono text-tiny text-ink-2 flex items-center gap-1.5"
+          title={
+            mirrored > 0
+              ? 'Soroban RPC keeps about seven days of contract events. Older deposits are read from this app\u2019s own record of them; each still links to its transaction.'
+              : 'Streamed from the ledger via Soroban RPC getEvents.'
+          }
+        >
           <span className="w-1.5 h-1.5 rounded-full bg-accent-green animate-pulse" />
-          live · soroban events
+          {mirrored > 0 ? 'soroban events · mirrored history' : 'live · soroban events'}
         </div>
       </div>
 
@@ -70,7 +86,8 @@ export function OnChainActivity() {
 
         {!loading && events.length === 0 && (
           <div className="p-5 font-mono text-caption text-ink-2">
-            No recent on-chain events in the lookback window.
+            Nothing yet — no ledger events in the lookback window and no deposits
+            on record.
           </div>
         )}
 
@@ -83,8 +100,16 @@ export function OnChainActivity() {
             >
               <span
                 className={`shrink-0 uppercase tracking-wider text-micro ${l.tone}`}
+                title={
+                  e.source === 'mirror'
+                    ? 'Older than the RPC\u2019s event window — read from this app\u2019s record of the deposit.'
+                    : 'Read from the ledger.'
+                }
               >
                 {l.tag}
+                {e.source === 'mirror' && (
+                  <span className="text-ink-faint">*</span>
+                )}
               </span>
               <span className="num text-ink truncate flex-1">{l.text}</span>
               <span className="text-ink-2 shrink-0">{timeAgo(e.at)}</span>
