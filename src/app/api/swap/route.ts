@@ -33,8 +33,11 @@ interface SwapBody {
 }
 
 export async function POST(req: Request) {
+  // Hoisted so the catch below can name the funding transaction it failed on.
+  let bodyHashForLog: string | undefined
   try {
     const body = (await req.json()) as SwapBody
+    bodyHashForLog = typeof body?.txHash === 'string' ? body.txHash : undefined
 
     if (!isValidStellarAddress(body.address)) {
       return NextResponse.json({ error: 'invalid address' }, { status: 400 })
@@ -281,17 +284,18 @@ export async function POST(req: Request) {
     })
   } catch (e: any) {
     const extras = e?.response?.data?.extras
-    return NextResponse.json(
-      {
-        error: 'swap failed',
-        detail:
-          extras?.result_codes ??
-          e?.response?.data?.title ??
-          e?.message ??
-          'unknown',
-      },
-      { status: 500 }
+    const detail =
+      extras?.result_codes ?? e?.response?.data?.title ?? e?.message ?? 'unknown'
+    // A swap that gets this far has already taken the user's payment: the
+    // funding transaction is on the ledger and the payout is not. Returning the
+    // reason to the browser and keeping none of it server-side left those
+    // intakes with no trace at all — no row, no log, nothing that could later
+    // say whom the protocol owes. Log the funding hash with the reason.
+    console.error(
+      `swap: FAILED AFTER INTAKE — funding tx ${bodyHashForLog ?? 'unknown'} is on the ledger and the payout is not. Reason:`,
+      detail
     )
+    return NextResponse.json({ error: 'swap failed', detail }, { status: 500 })
   }
 }
 

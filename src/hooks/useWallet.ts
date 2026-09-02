@@ -84,14 +84,21 @@ export function useWallet(): WalletState {
         body: JSON.stringify({ address: saved }),
       }).catch(() => {})
     }
-    StellarWalletsKit.refreshSupportedWallets()
-      .then(setSupportedWallets)
-      .catch(() => {})
   }, [])
 
+  // The wallet list is loaded when the picker opens, not on every mount.
+  //
+  // refreshSupportedWallets() probes each installed module to ask whether it is
+  // available, and several extensions answer that probe by showing the user an
+  // approval dialog. Running it on mount meant every page load — every refresh —
+  // raised a wallet prompt for a question nobody had asked. The list is only
+  // needed by the connect modal, so it is fetched when that opens.
   const connect = useCallback(async () => {
     ensureInit()
     setModalOpen(true)
+    StellarWalletsKit.refreshSupportedWallets()
+      .then(setSupportedWallets)
+      .catch(() => {})
   }, [])
 
   const closeModal = useCallback(() => setModalOpen(false), [])

@@ -140,7 +140,24 @@ export default function SwapPage() {
       })
       const swapData = await swapRes.json()
       if (!swapRes.ok) {
-        throw new Error(swapData.error ?? 'Swap failed')
+        // The server puts the label in `error` and the reason in `detail`.
+        // Showing only the label turned every failure into the same four
+        // characterless words, while the payment that funded the swap had
+        // already left the wallet — the one moment the user most needs to be
+        // told what happened.
+        const detail =
+          typeof swapData.detail === 'string'
+            ? swapData.detail
+            : swapData.detail
+              ? JSON.stringify(swapData.detail)
+              : null
+        const reason = [swapData.error ?? 'Swap failed', detail]
+          .filter(Boolean)
+          .join(' — ')
+        throw new Error(
+          `${reason}. Your ${fromAsset} has already been sent and is held by the protocol; ` +
+            `it has not been lost. Keep this transaction hash: ${payHash}`
+        )
       }
 
       setStatus(`✓ Swapped ${parsed} ${fromAsset} → ${parseFloat(swapData.destAmount).toFixed(4)} ${toAsset}`)
