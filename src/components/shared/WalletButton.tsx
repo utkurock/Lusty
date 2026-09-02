@@ -48,7 +48,6 @@ export function WalletButton() {
           onClick={() => setOpen((v) => !v)}
           className="press h-10 px-4 bg-inverse text-cream font-mono text-body rounded-sm flex items-center gap-2 hover:bg-line-2 transition"
         >
-          <span className="w-2 h-2 bg-accent-green rounded-full" />
           {formatAddress(address)}
         </button>
 

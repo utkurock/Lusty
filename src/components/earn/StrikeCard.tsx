@@ -41,7 +41,7 @@ export function StrikeCard({ strike, apr, label, selected, onClick }: StrikeCard
         'font-mono text-caption',
         selected ? 'text-brand font-semibold' : 'text-ink-faint'
       )}>
-        {selected ? '● selected' : 'tap to select'}
+        {selected ? 'selected' : 'tap to select'}
       </div>
     </button>
   )
