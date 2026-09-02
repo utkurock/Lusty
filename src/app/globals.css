@@ -2,40 +2,103 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Lusty Design Tokens — RGB channels so Tailwind `/opacity` works.
-   :root = cream (light, default). html.dark = warm-black (dark). */
-:root {
-  --surface: 232 228 217;   /* #e8e4d9 page bg */
-  --surface-2: 212 207 194; /* #d4cfc2 */
-  --card: 240 236 227;      /* #f0ece3 light card */
-  --inverse: 26 26 26;      /* #1a1a1a dark panels */
-  --ink: 26 26 26;          /* #1a1a1a primary text */
-  --ink-2: 107 101 96;      /* #6b6560 secondary text */
-  --ink-3: 58 58 58;        /* #3a3a3a tertiary text */
-  --cream: 232 228 217;     /* #e8e4d9 text/ink on dark panels */
-  --line: 196 191 178;      /* #c4bfb2 soft border */
-  --line-2: 42 42 42;       /* #2a2a2a strong border */
+/* ---------------------------------------------------------------------------
+   Lusty Design Tokens
 
-  /* Accents — identical across themes */
+   Colour is RGB channels so Tailwind's `/opacity` modifier keeps working.
+   :root = cream (light, default). html.dark = warm-black (dark).
+
+   The structural layer below (surfaces, hairlines, radius, motion, shadow,
+   focus) follows one rule: elevation is three near-adjacent surfaces separated
+   by a hairline, never a contrast jump. A border is a tint of the ink, not a
+   colour of its own, so a card reads as lifted rather than outlined.
+--------------------------------------------------------------------------- */
+:root {
+  /* Surfaces — canvas -> card -> raised. Each step is a few points of value. */
+  --surface: 232 228 217;   /* #e8e4d9 canvas */
+  --surface-2: 212 207 194; /* #d4cfc2 sunken, tracks, wells */
+  --card: 240 236 227;      /* #f0ece3 card */
+  --raised: 246 243 236;    /* #f6f3ec menus, popovers, hovered rows */
+  --inverse: 26 26 26;      /* #1a1a1a dark panels inside the light theme */
+
+  --ink: 26 26 26;          /* #1a1a1a primary */
+  --ink-2: 107 101 96;      /* #6b6560 secondary */
+  --ink-3: 58 58 58;        /* #3a3a3a tertiary */
+  --ink-faint: 149 143 133; /* #958f85 labels, disabled, axis */
+  --cream: 232 228 217;     /* ink on dark panels */
+
+  /* Hairlines: a tint of ink over the canvas, matched by eye per theme. */
+  --line-light: 213 208 196;       /* ~6% ink  */
+  --line: 202 196 183;             /* ~10% ink */
+  --line-2: 42 42 42;              /* strong — edges of dark panels */
+  --line-interactive: 184 177 162; /* ~16% ink — hover and active edges */
+
+  /* Accents — identical across themes. Yellow is the brand. */
   --accent-green: #22c55e;
   --accent-red: #ef4444;
   --accent-yellow: #eab308;
+  --brand: #eab308;
+  --brand-fg: #1a1a1a;
+  --focus-ring: rgba(234, 179, 8, .3);
 
   --font-mono: 'JetBrains Mono', 'Courier New', monospace;
   --font-sans: 'Inter', system-ui, sans-serif;
+
+  /* Shadow pairs a hairline ring with a wide soft drop in one token, so a
+     floating surface never needs a border and a shadow declared separately. */
+  --shadow-drop: 0 6px 24px 0 rgba(38, 33, 24, .10);
+  --shadow-menu: 0 0 0 1px rgb(var(--line)), 0 6px 24px 0 rgba(38, 33, 24, .14);
+  --shadow-table: 0 0 0 1px rgb(var(--line-light)), 0 8px 24px 0 rgba(38, 33, 24, .08);
+  --shadow-button: 0 1px 2px 0 rgba(38, 33, 24, .12);
+  --glow: rgba(38, 33, 24, .05);
 }
 
 html.dark {
-  --surface: 16 15 13;      /* #100f0d warm black */
-  --surface-2: 26 24 20;    /* #1a1814 */
-  --card: 24 22 19;         /* #181613 */
+  --surface: 16 15 13;      /* #100f0d canvas */
+  --surface-2: 26 24 20;    /* #1a1814 sunken, tracks, wells */
+  --card: 26 25 22;         /* #1a1916 card */
+  --raised: 33 31 27;       /* #211f1b menus, popovers, hovered rows */
   --inverse: 33 31 26;      /* #211f1a elevated panel */
-  --ink: 232 228 217;       /* cream text */
-  --ink-2: 154 148 140;     /* #9a948c */
-  --ink-3: 184 178 168;     /* #b8b2a8 */
-  --cream: 232 228 217;     /* stays cream on dark panels */
-  --line: 42 39 35;         /* #2a2723 */
-  --line-2: 52 48 42;       /* #34302a */
+
+  --ink: 232 228 217;
+  --ink-2: 154 148 140;
+  --ink-3: 184 178 168;
+  --ink-faint: 106 101 94;  /* #6a655e */
+  --cream: 232 228 217;
+
+  --line-light: 30 28 25;       /* ~6% cream over canvas */
+  --line: 38 36 32;             /* ~9% */
+  --line-2: 52 48 42;
+  --line-interactive: 54 51 45; /* ~15% */
+
+  --focus-ring: rgba(234, 179, 8, .28);
+
+  --shadow-drop: 0 6px 32px 0 rgba(0, 0, 0, .45);
+  --shadow-menu: 0 0 0 1px rgb(var(--line-interactive)), 0 6px 32px 0 rgba(0, 0, 0, .5);
+  --shadow-table: 0 0 0 1px rgb(var(--line-light)), 0 8px 24px 0 rgba(0, 0, 0, .5);
+  --shadow-button: 0 2px 6px 0 rgba(0, 0, 0, .45);
+  --glow: rgba(0, 0, 0, .55);
+}
+
+/* Structure — theme-independent. ------------------------------------------ */
+:root {
+  --r: 8px;         /* the radius: cards, rows, buttons, menus */
+  --r-compact: 4px; /* chips, badges, inline marks */
+  /* Nested radius is derived, never guessed: a 3px inset inside an 8px box
+     wants 5px, not 8px. */
+  --r-inner: calc(var(--r) - 3px);
+
+  --row-h: 56px;    /* data row */
+  --thead-h: 50px;
+  --row-gap: 8px;   /* the gap that makes rows read as separate slabs */
+  --nav-h: 64px;
+
+  --dur: .2s;
+  --dur-fast: .15s;
+  --dur-press: .1s;
+  --ease-std: cubic-bezier(.4, 0, .2, 1);
+  --ease-entrance: cubic-bezier(.16, 1, .3, 1);
+  --press-scale: .99;
 }
 
 html, body {
@@ -44,11 +107,16 @@ html, body {
   font-family: var(--font-sans);
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
+  /* Body copy sits a touch tighter than the browser default; mono numerics
+     carry their own tracking below. */
+  letter-spacing: -.011em;
 }
 
 /* Smooth the cream <-> dark swap */
-html, body, .terminal-card, .light-card {
-  transition: background-color 200ms ease, color 200ms ease, border-color 200ms ease;
+html, body, .terminal-card, .light-card, .raised-card {
+  transition: background-color var(--dur) var(--ease-std),
+              color var(--dur) var(--ease-std),
+              border-color var(--dur) var(--ease-std);
 }
 
 ::selection {
@@ -60,44 +128,275 @@ html, body, .terminal-card, .light-card {
   color: rgb(var(--ink));
 }
 
-.font-mono, code, pre {
-  font-family: var(--font-mono);
+/* Everything below is component-layer CSS, not utilities: it is emitted before
+   Tailwind's utility layer so a one-off `text-brand` or `rounded-lg` on a card
+   still wins over the class it is layered on. */
+@layer components {
+  .font-mono, code, pre {
+    font-family: var(--font-mono);
+  }
+
+  /* Mono runs at the label sizes of this UI, where the default tracking is too
+     loose to line up with the sans beside it. */
+  .num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -.02em;
+  }
+
+  .apr {
+    font-family: var(--font-mono);
+    color: var(--accent-green);
+    font-weight: 700;
+    letter-spacing: -.02em;
+  }
+
+  /* The small uppercase label that names a value. One class instead of the
+     four-utility stack it replaces. */
+  .label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    line-height: 16px;
+    font-weight: 500;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: rgb(var(--ink-faint));
+  }
+
+  .dashed-row {
+    border-bottom: 1px dashed rgb(var(--line));
+  }
+
+  /* Surfaces ----------------------------------------------------------------
+     Three classes, one per elevation step. Each carries its own hairline, so a
+     component asks for a surface and gets the edge that belongs to it. */
+  .terminal-card {
+    background: rgb(var(--inverse));
+    color: rgb(var(--cream));
+    border: 1px solid rgb(var(--line-2));
+    border-radius: var(--r);
+  }
+
+  .light-card {
+    background: rgb(var(--card));
+    border: 1px solid rgb(var(--line-light));
+    border-radius: var(--r);
+  }
+
+  /* The step above a card: menus, popovers, anything that floats. */
+  .raised-card {
+    background: rgb(var(--raised));
+    border: 1px solid transparent;
+    border-radius: var(--r);
+    box-shadow: var(--shadow-menu);
+  }
+
+  /* A card that answers the pointer. Hover lifts the surface one step and firms
+     the hairline; it never changes hue. */
+  .card-interactive {
+    transition: background-color var(--dur-fast) var(--ease-std),
+                border-color var(--dur-fast) var(--ease-std),
+                box-shadow var(--dur-fast) var(--ease-std),
+                scale var(--dur-press) var(--ease-std);
+  }
+  .card-interactive:hover {
+    background: rgb(var(--raised));
+    border-color: rgb(var(--line-interactive));
+  }
+  .card-interactive:active {
+    scale: var(--press-scale);
+  }
+
+  /* Data tables --------------------------------------------------------------
+     Rows are separate rounded slabs, not cells in a ruled grid: the table is
+     `separate` with a vertical gap and the outer cells round off. The negative
+     top margin cancels the gap the browser adds above the head. */
+  .data-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0 var(--row-gap);
+    margin-top: calc(-1 * var(--row-gap));
+  }
+  .data-table thead th {
+    height: var(--thead-h);
+    background: rgb(var(--surface));
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: rgb(var(--ink-faint));
+    white-space: nowrap;
+    padding: 0 16px;
+    text-align: left;
+  }
+  .data-table tbody td {
+    height: var(--row-h);
+    padding: 0 16px;
+    background: rgb(var(--card));
+    white-space: nowrap;
+    transition: background-color var(--dur) var(--ease-std);
+  }
+  .data-table tbody tr td:first-child {
+    border-top-left-radius: var(--r);
+    border-bottom-left-radius: var(--r);
+  }
+  .data-table tbody tr td:last-child {
+    border-top-right-radius: var(--r);
+    border-bottom-right-radius: var(--r);
+  }
+  .data-table tbody tr:hover td {
+    background: rgb(var(--raised));
+  }
+  /* Row-level actions stay out of the way until the row is addressed. */
+  .row-actions {
+    opacity: 0;
+    transition: opacity var(--dur-fast) var(--ease-std);
+  }
+  tr:hover .row-actions,
+  tr:focus-within .row-actions,
+  .card-interactive:hover .row-actions,
+  .card-interactive:focus-within .row-actions,
+  .row-actions:focus,
+  .row-actions:focus-within,
+  .row-actions:has([data-open]) {
+    opacity: 1;
+  }
+
+  /* Press --------------------------------------------------------------------
+     Every control gives the same 100ms answer to a click. Small targets travel
+     further than large ones, which is what `--press-scale` is for. */
+  .press {
+    transition: scale var(--dur-press) var(--ease-std),
+                background-color var(--dur-fast) var(--ease-std),
+                border-color var(--dur-fast) var(--ease-std),
+                color var(--dur-fast) var(--ease-std),
+                box-shadow var(--dur-fast) var(--ease-std);
+  }
+  .press:active:not(:disabled) {
+    scale: var(--press-scale);
+  }
+  .press-sm { --press-scale: .96; }
+
+  /* Notices ------------------------------------------------------------------
+     Every inline message in the app was writing its own border/background/text
+     triple out of the same four tones. One class plus a tone gives them a
+     single formula: hairline of the tone at 35%, wash at 10%, text at full. */
+  .notice {
+    padding: 12px;
+    border: 1px solid;
+    border-radius: var(--r);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 16px;
+  }
+  .notice-quiet {
+    border-color: rgb(var(--line));
+    background: rgb(var(--card));
+    color: rgb(var(--ink-2));
+  }
+  .notice-warn {
+    border-color: rgba(234, 179, 8, .35);
+    background: rgba(234, 179, 8, .10);
+    color: var(--brand);
+  }
+  .notice-error {
+    border-color: rgba(239, 68, 68, .35);
+    background: rgba(239, 68, 68, .10);
+    color: var(--accent-red);
+  }
+  .notice-ok {
+    border-color: rgba(34, 197, 94, .35);
+    background: rgba(34, 197, 94, .10);
+    color: var(--accent-green);
+  }
+
+  /* Chips and badges -------------------------------------------------------- */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: var(--r-compact);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    line-height: 16px;
+    font-weight: 600;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    /* A hairline, not a fill: the chip has to read on the canvas and on a card,
+       and those two surfaces are a few points apart by design — any fill light
+       enough to show on one disappears on the other. */
+    background: transparent;
+    border: 1px solid rgb(var(--line));
+    color: rgb(var(--ink-2));
+  }
+  .chip-brand {
+    background: var(--brand);
+    border-color: var(--brand);
+    color: var(--brand-fg);
+  }
+
+  /* Focus --------------------------------------------------------------------
+     One formula everywhere: a 1px brand edge plus a soft ring. Never the UA
+     outline, and never only a colour change. */
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 1px solid var(--accent-yellow);
+    outline-offset: 1px;
+    box-shadow: 0 0 0 3px var(--focus-ring);
+    border-radius: var(--r-compact);
+  }
+
+  /* Page glow ----------------------------------------------------------------
+     A fixed vignette painted with a spread shadow rather than a gradient image:
+     it fades the viewport edges into the canvas at any size, costs no request,
+     and sits behind everything. */
+  .page-glow {
+    position: relative;
+  }
+  .page-glow::before {
+    content: '';
+    position: fixed;
+    top: 60px;
+    bottom: 60px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 70vw;
+    border-radius: var(--r);
+    box-shadow: 0 0 200px 160px var(--glow);
+    pointer-events: none;
+    z-index: -1;
+  }
+
+  @keyframes progressFill {
+    from { width: 0%; }
+  }
+  .animate-fill {
+    animation: progressFill 800ms var(--ease-entrance);
+  }
+
+  @keyframes riseIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: none; }
+  }
+  .animate-rise {
+    animation: riseIn .35s var(--ease-entrance) both;
+  }
 }
 
-.num {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-}
-
-.apr {
-  font-family: var(--font-mono);
-  color: var(--accent-green);
-  font-weight: 700;
-}
-
-.dashed-row {
-  border-bottom: 1px dashed rgb(var(--line));
-}
-
-.terminal-card {
-  background: rgb(var(--inverse));
-  color: rgb(var(--cream));
-  border: 1px solid rgb(var(--line-2));
-}
-
-.light-card {
-  background: rgb(var(--card));
-  border: 1px solid rgb(var(--line));
-}
-
-button:focus-visible, a:focus-visible {
-  outline: 2px solid var(--accent-yellow);
-  outline-offset: 2px;
-}
-
-@keyframes progressFill {
-  from { width: 0%; }
-}
-.animate-fill {
-  animation: progressFill 800ms ease-out;
+/* Every animation has an off switch. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .press:active:not(:disabled),
+  .card-interactive:active { scale: 1; }
 }
