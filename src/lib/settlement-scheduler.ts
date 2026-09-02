@@ -42,6 +42,14 @@ const FIRST_RUN_DELAY_MS = 60_000
 let started = false
 let running = false
 
+// Ids already reported as permanently unsettleable. Those positions are
+// retried every sweep on purpose — the oracle window is the feed's property,
+// not this code's, and being wrong about it must not strand a position — but
+// they must not reprint the same nine lines every quarter hour. A backlog that
+// scrolls past is one nobody reads, and this log is the only thing standing
+// between a late sweep and permanent loss.
+const reportedPermanent = new Set<number>()
+
 function enabled(): boolean {
   const flag = process.env.SETTLE_SWEEP_ENABLED
   if (flag != null) return flag === '1' || flag.toLowerCase() === 'true'
@@ -68,16 +76,27 @@ async function tick() {
     console.log(`settlement sweep: ${parts.join(' · ')}`)
 
     // Loud, and separately: past the oracle deadline no later sweep can help,
-    // so this is collateral awaiting a decision rather than a retry.
-    if (r.pastDeadline.length > 0) {
+    // so this is collateral awaiting a decision rather than a retry. Said once
+    // per id, at the moment it becomes true.
+    const fresh = r.pastDeadline.filter((id) => !reportedPermanent.has(id))
+    if (fresh.length > 0) {
       console.error(
-        `settlement sweep: ${r.pastDeadline.length} position(s) past the oracle deadline and no longer settleable: ${r.pastDeadline.join(', ')}`
+        `settlement sweep: ${fresh.length} position(s) past the oracle deadline and no longer settleable: ${fresh.join(', ')}`
       )
     }
+
     for (const f of r.failed) {
-      const how = f.permanent ? 'permanent' : 'retryable'
-      console.warn(`settlement sweep: #${f.id} failed (${how}): ${f.error}`)
+      if (f.permanent) {
+        if (reportedPermanent.has(f.id)) continue
+        reportedPermanent.add(f.id)
+        console.error(`settlement sweep: #${f.id} is permanently unsettleable: ${f.error}`)
+        continue
+      }
+      // Retryable, so worth repeating: the next tick may well fix it, and
+      // silence here would hide a sweep failing the same way every time.
+      console.warn(`settlement sweep: #${f.id} failed, will retry: ${f.error}`)
     }
+    for (const id of fresh) reportedPermanent.add(id)
   } catch (err) {
     console.error('settlement sweep: run failed', err)
   } finally {

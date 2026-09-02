@@ -34,14 +34,31 @@ const nextConfig = {
           },
         ],
       },
-      {
-        source: '/api/:path*',
-        headers: [
-          { key: 'Access-Control-Allow-Origin', value: process.env.CORS_ORIGIN || 'https://riskstellar.com' },
-          { key: 'Access-Control-Allow-Methods', value: 'GET, POST, OPTIONS' },
-          { key: 'Access-Control-Allow-Headers', value: 'Content-Type, x-admin-token' },
-        ],
-      },
+      // Cross-origin access to the API, only where a deployment asks for it.
+      //
+      // This block used to fall back to a hard-coded `https://riskstellar.com`
+      // — a domain from another project — whenever CORS_ORIGIN was unset. That
+      // is not a default, it is a grant: it told every browser that scripts on
+      // that origin may read the responses of this API, including the admin
+      // routes named in the allowed headers. Nothing here needs it either way,
+      // because the frontend is served from the same origin as the API, and a
+      // same-origin request never consults these headers.
+      //
+      // So there is no fallback. Set CORS_ORIGIN only if something outside this
+      // domain genuinely has to read the API.
+      ...(process.env.CORS_ORIGIN
+        ? [
+            {
+              source: '/api/:path*',
+              headers: [
+                { key: 'Access-Control-Allow-Origin', value: process.env.CORS_ORIGIN },
+                { key: 'Access-Control-Allow-Methods', value: 'GET, POST, OPTIONS' },
+                { key: 'Access-Control-Allow-Headers', value: 'Content-Type, x-admin-token' },
+                { key: 'Vary', value: 'Origin' },
+              ],
+            },
+          ]
+        : []),
     ]
   },
 }

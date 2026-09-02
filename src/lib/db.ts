@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { Pool } from 'pg'
 
 // Single pooled connection shared across route invocations.
@@ -11,13 +12,48 @@ declare global {
   var __pgSchemaInFlight: Promise<void> | undefined
 }
 
+/**
+ * TLS for the database connection.
+ *
+ * Supabase's pooler presents a self-signed chain, so verifying it against the
+ * system trust store fails and the usual workaround is
+ * DB_SSL_REJECT_UNAUTHORIZED=false. That keeps the connection encrypted but
+ * stops authenticating the server, which is the half that resists an attacker
+ * sitting in the path — every credential and every row in this database
+ * crosses that connection.
+ *
+ * The way out is to verify against Supabase's own CA instead of the system's:
+ * download prod-ca-2021.crt from Project Settings → Database → SSL
+ * Configuration and give it to the app as DB_SSL_CA (the PEM text) or
+ * DB_SSL_CA_FILE (a path). Verification then stays on and the self-signed
+ * chain is no longer a problem.
+ *
+ * Without a CA, the flag still decides — but disabling verification in
+ * production says so on every boot rather than passing unnoticed.
+ */
+function sslConfig() {
+  const caFile = process.env.DB_SSL_CA_FILE
+  const ca = process.env.DB_SSL_CA ?? (caFile ? readFileSync(caFile, 'utf8') : undefined)
+  if (ca) return { ca, rejectUnauthorized: true }
+
+  const verify = process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false'
+  if (!verify && process.env.NODE_ENV === 'production') {
+    console.warn(
+      'db: TLS certificate verification is OFF (DB_SSL_REJECT_UNAUTHORIZED=false). ' +
+        'The connection is encrypted but the server is not authenticated. ' +
+        'Set DB_SSL_CA or DB_SSL_CA_FILE to Supabase\u2019s prod-ca certificate to turn it back on.'
+    )
+  }
+  return { rejectUnauthorized: verify }
+}
+
 export function getPool(): Pool {
   if (!global.__pgPool) {
     const connectionString = process.env.DATABASE_URL
     if (!connectionString) throw new Error('DATABASE_URL not set')
     global.__pgPool = new Pool({
       connectionString,
-      ssl: { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false' },
+      ssl: sslConfig(),
       max: 3,
       // Supabase transaction pooler kills idle connections aggressively;
       // keep the pool small and timeouts tight so we fail fast instead of
