@@ -502,13 +502,13 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
   return (
     <div className="space-y-7">
       {/* Compact tab bar */}
-      <div className="light-card rounded-sm flex items-stretch font-mono text-xs relative">
-        <div className="flex items-center gap-2 px-4 border-r border-line">
+      <div className="light-card flex items-stretch font-mono text-caption relative overflow-hidden">
+        <div className="flex items-center gap-2 px-4 border-r border-line-light">
           {assetSymbol === 'XLM' ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src="/xlm.png" alt="XLM" className="w-6 h-6 rounded-full" />
           ) : (
-            <div className="w-6 h-6 rounded-full bg-inverse text-[#eab308] font-bold flex items-center justify-center text-[10px]">
+            <div className="w-6 h-6 rounded-full bg-inverse text-brand font-bold flex items-center justify-center text-micro">
               {assetSymbol[0]}
             </div>
           )}
@@ -517,17 +517,17 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
         <div className="flex items-center px-4 border-r border-line text-ink">
           {type === 'call' ? 'Covered call' : 'Cash secured put'}
         </div>
-        <div className="relative border-r border-line" ref={dropdownRef}>
+        <div className="relative border-r border-line-light" ref={dropdownRef}>
           <button
             type="button"
             onClick={() => setExpiryOpen((v) => !v)}
-            className="h-full flex items-center gap-1 px-4 text-ink font-semibold hover:bg-surface transition"
+            className="press h-full flex items-center gap-1 px-4 text-ink font-semibold hover:bg-raised transition"
           >
             {expiry?.label ?? '—'}
             <ChevronDown size={12} />
           </button>
           {expiryOpen && (
-            <div className="absolute left-0 top-full mt-1 z-20 min-w-[140px] rounded-sm border border-line bg-card shadow-md py-1">
+            <div className="raised-card absolute left-0 top-full mt-1 z-20 min-w-[150px] py-1">
               {expiries.map((e, i) => {
                 const eFull = fullByKey.get(e.date.toISOString().slice(0, 10)) ?? false
                 return (
@@ -535,14 +535,14 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
                     key={e.id}
                     onClick={() => { setSelectedExpiryIdx(i); setExpiryOpen(false) }}
                     className={
-                      'w-full text-left px-3 py-1.5 font-mono text-xs transition flex items-center justify-between gap-2 ' +
+                      'press w-full text-left px-3 py-1.5 font-mono text-caption transition flex items-center justify-between gap-2 ' +
                       (i === selectedExpiryIdx
-                        ? 'bg-inverse text-[#eab308]'
-                        : 'text-ink hover:bg-surface')
+                        ? 'bg-inverse text-brand'
+                        : 'text-ink hover:bg-raised')
                     }
                   >
                     <span>{e.label} · {e.daysToExpiry}d</span>
-                    {eFull && <span className="text-[#ef4444] font-semibold">FULL</span>}
+                    {eFull && <span className="text-accent-red font-semibold">FULL</span>}
                   </button>
                 )
               })}
@@ -552,29 +552,29 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
 
         <div className="flex-1" />
 
-        <div className="hidden sm:flex items-center gap-1.5 px-4 border-l border-line">
+        <div className="hidden sm:flex items-center gap-1.5 px-4 border-l border-line-light">
           <span className="num text-ink font-semibold">
             {xlmPrice ? formatUsdc(xlmPrice) : '—'}
           </span>
-          <span className={`num text-[10px] flex items-center gap-0.5 ${pricePositive ? 'text-[#22c55e]' : 'text-[#ef4444]'}`}>
+          <span className={`num text-micro flex items-center gap-0.5 ${pricePositive ? 'text-accent-green' : 'text-accent-red'}`}>
             {pricePositive ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
             {change24h.toFixed(2)}%
           </span>
         </div>
-        <div className="hidden md:flex items-center gap-2 px-4 border-l border-line">
+        <div className="hidden md:flex items-center gap-2 px-4 border-l border-line-light">
           <div className="relative w-8 h-8">
             <svg viewBox="0 0 32 32" className="w-8 h-8 -rotate-90">
               <circle cx="16" cy="16" r="13" fill="none" className="stroke-line" strokeWidth="3" />
               <circle
                 cx="16" cy="16" r="13" fill="none"
-                stroke={vaultFull ? '#ef4444' : '#eab308'} strokeWidth="3"
+                stroke={vaultFull ? 'var(--accent-red)' : 'var(--brand)'} strokeWidth="3"
                 strokeDasharray={`${epochUtil * 81.68} 81.68`}
                 strokeLinecap="round"
               />
             </svg>
           </div>
-          <div className="text-[10px] leading-tight">
-            <div className={`num font-semibold ${vaultFull ? 'text-[#ef4444]' : 'text-ink'}`}>
+          <div className="text-micro leading-tight">
+            <div className={`num font-semibold ${vaultFull ? 'text-accent-red' : 'text-ink'}`}>
               {vaultFull ? 'FULL' : `${(epochUtil * 100).toFixed(0)}%`}
             </div>
             <div className="text-ink-2">{vaultFull ? 'this expiry' : 'used'}</div>
@@ -582,7 +582,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
         </div>
       </div>
 
-      <div className="text-center text-[15px] text-ink">
+      <div className="text-center text-lead text-ink">
         Choose the price at which you are happy to{' '}
         <strong>{type === 'call' ? 'sell' : 'buy'} {assetSymbol}</strong> on{' '}
         <strong>{formatExpiry(expiry?.date ?? new Date())}</strong>
@@ -629,21 +629,21 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
       )}
 
       {quoteLoading && strikes.length === 0 && (
-        <div className="p-3 font-mono text-xs text-ink-2 rounded-sm">Pricing strikes…</div>
+        <div className="notice notice-quiet">Pricing strikes…</div>
       )}
       {quoteError && (
-        <div className="p-3 border border-[#f59e0b]/40 bg-[#f59e0b]/10 font-mono text-xs text-[#f59e0b] rounded-sm">
+        <div className="notice notice-warn">
           Couldn&apos;t load live pricing: {quoteError}
         </div>
       )}
 
       {error && (
-        <div className="p-3 border border-[#ef4444]/40 bg-[#ef4444]/10 font-mono text-xs text-[#ef4444] rounded-sm">
+        <div className="notice notice-error">
           {error}
         </div>
       )}
       {success && (
-        <div className="p-3 border border-[#22c55e]/40 bg-[#22c55e]/10 font-mono text-xs text-[#22c55e] rounded-sm flex items-center justify-between gap-3 flex-wrap">
+        <div className="notice notice-ok flex items-center justify-between gap-3 flex-wrap">
           <span>{success}</span>
           {successHash && (
             <a
@@ -659,7 +659,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
       )}
 
       {vaultFull && (
-        <div className="p-3 border border-[#ef4444]/40 bg-[#ef4444]/10 font-mono text-xs text-ink rounded-sm">
+        <div className="notice notice-error text-ink">
           This expiry&apos;s {type === 'call' ? 'covered-call' : 'cash-secured-put'} epoch is
           full — pick a different expiry above with open capacity. Depositing here
           would be rejected, so the button is disabled.
@@ -671,12 +671,12 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
       {!vaultFull && connected && usedThisExpiry > 0 && (
         <div
           className={
-            'p-3 border font-mono text-xs rounded-sm ' +
+            'notice ' +
             (remainingAllowance <= 0
-              ? 'border-[#ef4444]/40 bg-[#ef4444]/10 text-ink'
+              ? 'notice-error text-ink'
               : allowanceExceeded
-                ? 'border-[#f59e0b]/40 bg-[#f59e0b]/10 text-[#f59e0b]'
-                : 'border-line bg-card text-ink-2')
+                ? 'notice-warn'
+                : 'notice-quiet')
           }
         >
           {remainingAllowance <= 0 ? (
@@ -704,7 +704,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
       {/* Fail-closed notice: allowance couldn't be read, so deposits are paused
           rather than risk letting collateral in against an unknown allowance. */}
       {allowanceUnknown && (
-        <div className="p-3 border border-[#f59e0b]/40 bg-[#f59e0b]/10 font-mono text-xs text-[#f59e0b] rounded-sm">
+        <div className="notice notice-warn">
           Couldn&apos;t verify your per-expiry allowance right now, so deposits are
           paused — we never let collateral in without confirming you have room.
           Press the button to retry.

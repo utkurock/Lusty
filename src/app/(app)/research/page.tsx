@@ -26,13 +26,13 @@ interface NewsItem {
 function BiasChip({ bias }: { bias: 'bullish' | 'bearish' | 'neutral' }) {
   const cfg =
     bias === 'bullish'
-      ? { label: 'bullish', Icon: TrendingUp, color: 'text-[#22c55e] border-[#22c55e]/40 bg-[#22c55e]/10' }
+      ? { label: 'bullish', Icon: TrendingUp, color: 'text-accent-green border-accent-green/40 bg-accent-green/10' }
       : bias === 'bearish'
-      ? { label: 'bearish', Icon: TrendingDown, color: 'text-[#ef4444] border-[#ef4444]/40 bg-[#ef4444]/10' }
+      ? { label: 'bearish', Icon: TrendingDown, color: 'text-accent-red border-accent-red/40 bg-accent-red/10' }
       : { label: 'neutral', Icon: Minus, color: 'text-ink-2 border-line bg-card' }
   return (
     <span
-      className={`inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm border ${cfg.color}`}
+      className={`inline-flex items-center gap-1 font-mono text-micro uppercase tracking-wider px-2 py-0.5 rounded-sm border ${cfg.color}`}
     >
       <cfg.Icon size={10} />
       {cfg.label}
@@ -102,18 +102,18 @@ export default function ResearchPage() {
   }, [])
 
   return (
-    <main className="max-w-7xl mx-auto px-6 py-10 text-ink">
+    <main className="max-w-content mx-auto px-6 py-10 text-ink">
       {/* Market panel: chart + AI commentary + news */}
       <section className="mb-12">
         <div className="flex items-baseline justify-between mb-4">
           <div>
-            <div className="font-mono text-xs text-ink-2">~/research</div>
-            <h2 className="text-2xl font-bold text-ink mt-1">
+            <div className="font-mono text-caption text-ink-2">~/research</div>
+            <h2 className="font-display text-head-md text-ink mt-1">
               XLM research desk
             </h2>
           </div>
           {commentary && (
-            <div className="font-mono text-[11px] text-ink-2">
+            <div className="font-mono text-tiny text-ink-2">
               updated {timeAgo(commentary.generatedAt)} · next in {nextUpdateIn(commentary.generatedAt)}
             </div>
           )}
@@ -129,15 +129,15 @@ export default function ResearchPage() {
           <div className="light-card rounded-sm p-5 flex flex-col">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
-                <Sparkles size={14} className="text-[#eab308]" />
-                <div className="font-mono text-[11px] uppercase text-ink-2 tracking-wider">
+                <Sparkles size={14} className="text-brand" />
+                <div className="label">
                   Desk note
                 </div>
               </div>
               <button
                 onClick={loadCommentary}
                 disabled={commentaryLoading}
-                className="text-ink-2 hover:text-ink transition disabled:opacity-50"
+                className="press text-ink-2 hover:text-ink transition disabled:opacity-50"
                 aria-label="Refresh commentary"
               >
                 {commentaryLoading ? (
@@ -153,8 +153,8 @@ export default function ResearchPage() {
                 <div className="flex items-center gap-2 mb-1">
                   <BiasChip bias={commentary.bias} />
                   <span
-                    className={`num text-xs font-bold ${
-                      commentary.change24hPct >= 0 ? 'text-[#22c55e]' : 'text-[#ef4444]'
+                    className={`num text-caption font-bold ${
+                      commentary.change24hPct >= 0 ? 'text-accent-green' : 'text-accent-red'
                     }`}
                   >
                     ${commentary.price.toFixed(4)} ·{' '}
@@ -162,28 +162,28 @@ export default function ResearchPage() {
                     {commentary.change24hPct.toFixed(2)}%
                   </span>
                 </div>
-                <h3 className="font-bold text-ink text-[15px] mt-2 leading-snug">
+                <h3 className="font-display text-ink text-lead mt-2 leading-snug">
                   {commentary.headline}
                 </h3>
-                <ul className="mt-3 space-y-1.5 text-xs text-ink-3 font-mono leading-relaxed">
+                <ul className="mt-3 space-y-1.5 text-caption text-ink-3 font-mono leading-relaxed">
                   {commentary.bullets.map((b, i) => (
                     <li key={i} className="flex gap-2">
-                      <span className="text-[#eab308]">›</span>
+                      <span className="text-brand">›</span>
                       <span>{b}</span>
                     </li>
                   ))}
                 </ul>
                 <div className="mt-4 pt-3 border-t border-line border-dashed">
-                  <div className="font-mono text-[10px] uppercase text-ink-2 tracking-wider mb-1">
+                  <div className="label mb-1">
                     Suggestion
                   </div>
-                  <div className="text-xs text-ink leading-relaxed">
+                  <div className="text-caption text-ink leading-relaxed">
                     {commentary.suggestion}
                   </div>
                 </div>
               </>
             ) : (
-              <div className="flex-1 flex items-center justify-center text-xs text-ink-2 font-mono">
+              <div className="flex-1 flex items-center justify-center text-caption text-ink-2 font-mono">
                 {commentaryLoading ? 'loading…' : 'no data'}
               </div>
             )}
@@ -193,21 +193,21 @@ export default function ResearchPage() {
         {/* News feed */}
         <div className="mt-6">
           <div className="flex items-baseline justify-between mb-3">
-            <div className="font-mono text-xs uppercase text-ink-2 tracking-wider">
+            <div className="label">
               ~/news
             </div>
-            <div className="font-mono text-[10px] text-ink-2">
+            <div className="font-mono text-micro text-ink-2">
               Stellar / XLM / DeFi · auto-refresh 2m
             </div>
           </div>
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
             {news === null && (
-              <div className="col-span-full font-mono text-xs text-ink-2 light-card rounded-sm p-5">
+              <div className="col-span-full font-mono text-caption text-ink-2 light-card rounded-sm p-5">
                 Loading news…
               </div>
             )}
             {news && news.length === 0 && (
-              <div className="col-span-full font-mono text-xs text-ink-2 light-card rounded-sm p-5">
+              <div className="col-span-full font-mono text-caption text-ink-2 light-card rounded-sm p-5">
                 No news items right now.
               </div>
             )}
@@ -217,16 +217,16 @@ export default function ResearchPage() {
                 href={n.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="light-card rounded-sm p-4 hover:bg-surface transition group flex flex-col"
+                className="light-card card-interactive p-4 group flex flex-col"
               >
-                <div className="font-mono text-[10px] uppercase text-ink-2 tracking-wider mb-1 flex items-center justify-between">
+                <div className="label mb-1 flex items-center justify-between">
                   <span className="truncate">{n.source}</span>
                   <span>{timeAgo(n.publishedAt)}</span>
                 </div>
-                <div className="text-[13px] leading-snug text-ink group-hover:text-[#eab308] transition line-clamp-3">
+                <div className="text-caption leading-snug text-ink group-hover:text-brand transition line-clamp-3">
                   {n.title}
                 </div>
-                <div className="mt-auto pt-2 flex items-center gap-1 text-[10px] font-mono text-ink-2">
+                <div className="mt-auto pt-2 flex items-center gap-1 text-micro font-mono text-ink-2">
                   read
                   <ExternalLink size={10} />
                 </div>

@@ -24,22 +24,30 @@ export function Navbar() {
     return null
 
   return (
-    <header className="w-full border-b border-line bg-surface sticky top-0 z-40">
-      <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-        <Link href="/earn" className="font-mono font-bold text-xl tracking-tight text-ink">
-          lusty<span className="text-[#eab308]">_</span>
+    <header className="w-full border-b border-line-light bg-surface sticky top-0 z-40">
+      <div className="max-w-content mx-auto px-6 h-nav flex items-center justify-between gap-6">
+        <Link
+          href="/earn"
+          className="font-display text-head-sm text-ink press press-sm rounded-compact"
+        >
+          lusty<span className="text-brand">_</span>
         </Link>
 
-        <nav className="hidden md:flex items-center gap-8">
+        {/* The nav is a strip of pills: hover fills the surface one step up,
+            the current page keeps that fill. Nothing moves, nothing recolours. */}
+        <nav className="hidden md:flex items-center gap-1">
           {LINKS.map(l => {
             const active = pathname === l.href || (l.href !== '#' && pathname.startsWith(l.href))
             return (
               <Link
                 key={l.label}
                 href={l.href}
+                aria-current={active ? 'page' : undefined}
                 className={cn(
-                  'font-mono text-sm transition',
-                  active ? 'text-ink font-semibold' : 'text-ink-2 hover:text-ink'
+                  'press rounded-sm px-3 py-1.5 font-mono text-body',
+                  active
+                    ? 'bg-raised text-ink'
+                    : 'text-ink-2 hover:bg-raised hover:text-ink'
                 )}
               >
                 {l.label.toLowerCase()}
@@ -58,7 +66,8 @@ export function Navbar() {
           <ThemeToggle />
           <button
             aria-label="Toggle menu"
-            className="p-2"
+            aria-expanded={open}
+            className="press press-sm rounded-sm p-2 text-ink-2 hover:bg-raised hover:text-ink"
             onClick={() => setOpen(!open)}
           >
             {open ? <X size={20} /> : <Menu size={20} />}
@@ -67,18 +76,20 @@ export function Navbar() {
       </div>
 
       {open && (
-        <div className="md:hidden border-t border-line px-6 py-4 flex flex-col gap-4 bg-surface">
+        <div className="md:hidden border-t border-line-light bg-surface px-6 py-4 flex flex-col gap-1">
           {LINKS.map(l => (
             <Link
               key={l.label}
               href={l.href}
               onClick={() => setOpen(false)}
-              className="font-mono text-sm text-ink"
+              className="press rounded-sm px-3 py-2.5 font-mono text-body text-ink-2 hover:bg-raised hover:text-ink"
             >
               {l.label.toLowerCase()}
             </Link>
           ))}
-          <WalletButton />
+          <div className="pt-3">
+            <WalletButton />
+          </div>
         </div>
       )}
     </header>

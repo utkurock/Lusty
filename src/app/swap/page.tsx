@@ -165,19 +165,19 @@ export default function SwapPage() {
       : null
 
   return (
-    <div className="max-w-7xl mx-auto px-6 py-10">
+    <div className="max-w-content mx-auto px-6 py-10">
       <div className="max-w-xl mx-auto">
         <div className="mb-4 flex items-center justify-between">
           <div>
-            <div className="font-mono text-xs text-[#eab308]">~/swap</div>
-            <h1 className="text-3xl font-bold text-ink mt-1">Swap</h1>
-            <p className="font-mono text-xs text-ink-2 mt-1">
+            <div className="font-mono text-caption text-brand">~/swap</div>
+            <h1 className="font-display text-head-lg text-ink mt-1">Swap</h1>
+            <p className="font-mono text-caption text-ink-2 mt-1">
               Routed through the native Stellar DEX via path payments.
             </p>
           </div>
           <button
             onClick={() => setShowSlippage((v) => !v)}
-            className="p-2 rounded-sm border border-line bg-card hover:bg-surface transition"
+            className="press p-2 rounded-sm border border-line bg-card hover:bg-raised transition"
             aria-label="Slippage settings"
           >
             <Settings2 size={14} />
@@ -185,7 +185,7 @@ export default function SwapPage() {
         </div>
 
         {showSlippage && (
-          <div className="mb-4 light-card rounded-sm p-4 font-mono text-xs">
+          <div className="mb-4 light-card rounded-sm p-4 font-mono text-caption">
             <div className="text-ink-2 uppercase tracking-wider mb-2">
               Max slippage
             </div>
@@ -195,10 +195,10 @@ export default function SwapPage() {
                   key={v}
                   onClick={() => setSlippageBps(v)}
                   className={
-                    'px-3 py-1.5 rounded-sm border transition ' +
+                    'press px-3 py-1.5 rounded-sm border transition ' +
                     (slippageBps === v
-                      ? 'bg-inverse text-[#eab308] border-ink'
-                      : 'bg-card border-line text-ink hover:bg-surface')
+                      ? 'bg-inverse text-brand border-ink'
+                      : 'bg-card border-line text-ink hover:bg-raised')
                   }
                 >
                   {(v / 100).toFixed(2)}%
@@ -210,7 +210,7 @@ export default function SwapPage() {
 
         {/* From */}
         <div className="light-card rounded-sm p-5">
-          <div className="font-mono text-[11px] uppercase text-ink-2 tracking-wider mb-2">
+          <div className="label mb-2">
             You pay
           </div>
           <div className="flex items-center gap-3">
@@ -230,7 +230,7 @@ export default function SwapPage() {
         <div className="flex justify-center my-[-12px] relative z-10">
           <button
             onClick={flip}
-            className="w-9 h-9 rounded-full border border-line bg-surface text-ink flex items-center justify-center hover:bg-card transition"
+            className="press w-9 h-9 rounded-full border border-line bg-surface text-ink flex items-center justify-center hover:bg-card transition"
             aria-label="Flip direction"
           >
             <ArrowDown size={14} />
@@ -239,7 +239,7 @@ export default function SwapPage() {
 
         {/* To */}
         <div className="light-card rounded-sm p-5">
-          <div className="font-mono text-[11px] uppercase text-ink-2 tracking-wider mb-2">
+          <div className="label mb-2">
             You receive
           </div>
           <div className="flex items-center gap-3">
@@ -257,7 +257,7 @@ export default function SwapPage() {
         </div>
 
         {/* Quote details */}
-        <div className="mt-4 light-card rounded-sm p-4 font-mono text-xs space-y-2">
+        <div className="mt-4 light-card rounded-sm p-4 font-mono text-caption space-y-2">
           <Row label="Rate">
             {rate ? `1 ${fromAsset} ≈ ${rate} ${toAsset}` : '—'}
           </Row>
@@ -278,12 +278,12 @@ export default function SwapPage() {
         </div>
 
         {txError && (
-          <div className="mt-3 p-3 border border-[#ef4444]/40 bg-[#ef4444]/10 font-mono text-xs text-[#ef4444] rounded-sm">
+          <div className="notice notice-error mt-3">
             {txError}
           </div>
         )}
         {status && (
-          <div className="mt-3 p-3 border border-[#22c55e]/40 bg-[#22c55e]/10 font-mono text-xs text-[#22c55e] rounded-sm">
+          <div className="notice notice-ok mt-3">
             {status}
           </div>
         )}
@@ -291,7 +291,7 @@ export default function SwapPage() {
         <button
           onClick={handleSwap}
           disabled={submitting || (connected && (!quote || parsed <= 0))}
-          className="mt-6 w-full py-4 bg-inverse text-cream font-mono text-sm rounded-sm hover:bg-line-2 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          className="press mt-6 w-full py-4 bg-inverse text-cream font-mono text-body rounded-sm hover:bg-line-2 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
         >
           {submitting && <Loader2 size={14} className="animate-spin" />}
           {!connected
@@ -330,7 +330,7 @@ function AssetPicker({
     <div className="relative shrink-0">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 h-10 px-3 rounded-sm border border-line bg-card hover:bg-surface transition font-mono text-sm text-ink"
+        className="press flex items-center gap-2 h-10 px-3 rounded-sm border border-line bg-card hover:bg-raised transition font-mono text-body text-ink"
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
@@ -341,7 +341,7 @@ function AssetPicker({
         {value}
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-20 min-w-[120px] rounded-sm border border-line bg-card shadow-md py-1">
+        <div className="absolute right-0 top-full mt-1 z-20 min-w-[120px] raised-card py-1">
           {ASSETS.filter((a) => a !== exclude).map((a) => (
             <button
               key={a}
@@ -350,10 +350,10 @@ function AssetPicker({
                 setOpen(false)
               }}
               className={
-                'w-full text-left px-3 py-1.5 font-mono text-xs transition ' +
+                'press w-full text-left px-3 py-1.5 font-mono text-caption transition ' +
                 (a === value
-                  ? 'bg-inverse text-[#eab308]'
-                  : 'text-ink hover:bg-surface')
+                  ? 'bg-inverse text-brand'
+                  : 'text-ink hover:bg-raised')
               }
             >
               {a}

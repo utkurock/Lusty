@@ -94,7 +94,7 @@ export function FeedbackWidget() {
           card surface with a soft bg shift on hover. */}
       <button
         onClick={openWidget}
-        className="fixed bottom-6 left-6 z-40 h-10 px-3 rounded-sm border border-line bg-card hover:bg-surface text-ink font-mono text-sm flex items-center gap-2 shadow-sm transition"
+        className="press fixed bottom-6 left-6 z-40 h-10 px-3 rounded-sm border border-line bg-card hover:bg-raised text-ink font-mono text-body flex items-center gap-2 shadow-sm transition"
         title="Send feedback"
         aria-label="Send feedback"
       >
@@ -112,16 +112,16 @@ export function FeedbackWidget() {
       >
         {status === 'done' ? (
           <div className="flex flex-col items-center gap-3 py-6 text-center">
-            <div className="w-12 h-12 rounded-full bg-[#22c55e]/15 flex items-center justify-center">
-              <Check size={24} className="text-[#22c55e]" />
+            <div className="w-12 h-12 rounded-full bg-accent-green/15 flex items-center justify-center">
+              <Check size={24} className="text-accent-green" />
             </div>
-            <p className="font-mono text-sm text-ink">Thanks for the feedback!</p>
+            <p className="font-mono text-body text-ink">Thanks for the feedback!</p>
           </div>
         ) : (
           <div className="space-y-4">
             {/* Rating */}
             <div>
-              <label className="font-mono text-[11px] uppercase tracking-wider text-ink-2 mb-2 block">
+              <label className="label mb-2 block">
                 How is your experience?
               </label>
               <div className="flex gap-1">
@@ -132,14 +132,14 @@ export function FeedbackWidget() {
                     onClick={() => setRating(n)}
                     onMouseEnter={() => setHover(n)}
                     onMouseLeave={() => setHover(0)}
-                    className="p-1 transition hover:scale-110"
+                    className="press p-1 transition hover:scale-110"
                     aria-label={`${n} star${n > 1 ? 's' : ''}`}
                   >
                     <Star
                       size={24}
                       className={
                         (hover || rating) >= n
-                          ? 'text-[#eab308] fill-[#eab308]'
+                          ? 'text-brand fill-[#eab308]'
                           : 'text-line'
                       }
                     />
@@ -150,7 +150,7 @@ export function FeedbackWidget() {
 
             {/* Category */}
             <div>
-              <label className="font-mono text-[11px] uppercase tracking-wider text-ink-2 mb-2 block">
+              <label className="label mb-2 block">
                 Topic
               </label>
               <div className="flex flex-wrap gap-2">
@@ -159,10 +159,10 @@ export function FeedbackWidget() {
                     key={c.value}
                     type="button"
                     onClick={() => setCategory(c.value)}
-                    className={`px-3 py-1.5 rounded-sm border font-mono text-xs transition ${
+                    className={`press px-3 py-1.5 rounded-sm border font-mono text-caption transition ${
                       category === c.value
                         ? 'bg-inverse text-cream border-ink'
-                        : 'bg-card text-ink-2 border-line hover:bg-surface'
+                        : 'bg-card text-ink-2 border-line hover:bg-raised'
                     }`}
                   >
                     {c.label}
@@ -173,7 +173,7 @@ export function FeedbackWidget() {
 
             {/* Message */}
             <div>
-              <label className="font-mono text-[11px] uppercase tracking-wider text-ink-2 mb-2 block">
+              <label className="label mb-2 block">
                 Your message
               </label>
               <textarea
@@ -182,7 +182,7 @@ export function FeedbackWidget() {
                 rows={4}
                 maxLength={2000}
                 placeholder="What's working, what's confusing, what you'd love to see…"
-                className="w-full px-3 py-2 rounded-sm border border-line bg-card text-ink font-mono text-sm resize-none focus:outline-none focus:border-ink transition"
+                className="w-full px-3 py-2 rounded-sm border border-line bg-card text-ink font-mono text-body resize-none focus:outline-none focus:border-ink transition"
               />
             </div>
 
@@ -201,13 +201,13 @@ export function FeedbackWidget() {
             />
 
             {error && (
-              <p className="font-mono text-xs text-[#ef4444]">{error}</p>
+              <p className="font-mono text-caption text-accent-red">{error}</p>
             )}
 
             <button
               onClick={submit}
               disabled={status === 'submitting'}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-sm bg-inverse text-cream font-mono text-sm hover:opacity-90 disabled:opacity-50 transition"
+              className="press w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-sm bg-inverse text-cream font-mono text-body hover:opacity-90 disabled:opacity-50 transition"
             >
               {status === 'submitting' ? (
                 <>
@@ -220,7 +220,7 @@ export function FeedbackWidget() {
             </button>
 
             {!address && (
-              <p className="font-mono text-[11px] text-ink-2 text-center">
+              <p className="font-mono text-tiny text-ink-2 text-center">
                 Tip: connect your wallet so we can follow up.
               </p>
             )}

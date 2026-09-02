@@ -304,7 +304,7 @@ export function AdminOverlay() {
       {!open && (
         <button
           onClick={() => setOpen(true)}
-          className="fixed bottom-6 right-6 z-50 w-10 h-10 rounded-full bg-inverse text-[#eab308] flex items-center justify-center shadow-lg hover:scale-110 transition opacity-60 hover:opacity-100"
+          className="press fixed bottom-6 right-6 z-50 w-10 h-10 rounded-full bg-inverse text-brand flex items-center justify-center shadow-lg hover:scale-110 transition opacity-60 hover:opacity-100"
           title="Admin panel"
         >
           <Shield size={18} />
@@ -321,18 +321,18 @@ export function AdminOverlay() {
           />
 
           {/* Panel — slides from right */}
-          <div className="fixed top-0 right-0 z-50 h-full w-full max-w-3xl bg-card shadow-2xl overflow-y-auto">
+          <div className="scroll-slim fixed top-0 right-0 z-50 h-full w-full max-w-3xl bg-card shadow-2xl overflow-y-auto">
             {/* Header */}
             <div className="sticky top-0 bg-inverse px-6 py-4 flex items-center justify-between z-10">
               <div className="flex items-center gap-3">
-                <Shield size={20} className="text-[#eab308]" />
-                <span className="font-mono text-sm text-cream font-semibold">
+                <Shield size={20} className="text-brand" />
+                <span className="font-mono text-body text-cream font-semibold">
                   Admin Panel
                 </span>
               </div>
               <button
                 onClick={() => setOpen(false)}
-                className="text-cream/60 hover:text-cream transition"
+                className="press text-cream/60 hover:text-cream transition"
               >
                 <X size={20} />
               </button>
@@ -340,7 +340,7 @@ export function AdminOverlay() {
 
             <div className="p-6 space-y-6">
               {/* Tabs */}
-              <div className="flex flex-wrap gap-2 font-mono text-sm">
+              <div className="flex flex-wrap gap-2 font-mono text-body">
                 {([
                   { key: 'overview' as Tab, label: 'Overview', icon: BarChart3 },
                   { key: 'analytics' as Tab, label: 'Analytics', icon: Activity },
@@ -351,10 +351,10 @@ export function AdminOverlay() {
                   <button
                     key={key}
                     onClick={() => setTab(key)}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-sm border transition ${
+                    className={`press flex items-center gap-2 px-4 py-2 rounded-sm border transition ${
                       tab === key
                         ? 'bg-inverse text-cream border-ink'
-                        : 'bg-card text-ink-2 border-line hover:bg-surface'
+                        : 'bg-card text-ink-2 border-line hover:bg-raised'
                     }`}
                   >
                     <Icon size={14} />
@@ -370,15 +370,15 @@ export function AdminOverlay() {
                     { label: 'Total Users', value: stats.totalUsers.toLocaleString(), color: 'text-ink' },
                     { label: 'Total Transactions', value: stats.totalTransactions.toLocaleString(), color: 'text-ink' },
                     { label: 'Total Deposited', value: `$${stats.totalDeposited.toLocaleString()}`, color: 'text-ink' },
-                    { label: 'Total Premium Paid', value: `$${stats.totalPremium.toLocaleString()}`, color: 'text-[#22c55e]' },
-                    { label: 'Users (24h)', value: stats.last24hUsers.toLocaleString(), color: 'text-[#eab308]' },
-                    { label: 'Transactions (24h)', value: stats.last24hTransactions.toLocaleString(), color: 'text-[#eab308]' },
+                    { label: 'Total Premium Paid', value: `$${stats.totalPremium.toLocaleString()}`, color: 'text-accent-green' },
+                    { label: 'Users (24h)', value: stats.last24hUsers.toLocaleString(), color: 'text-brand' },
+                    { label: 'Transactions (24h)', value: stats.last24hTransactions.toLocaleString(), color: 'text-brand' },
                   ].map((s) => (
                     <div key={s.label} className="light-card rounded-sm p-5">
-                      <div className="font-mono text-[11px] uppercase tracking-wider text-ink-2 mb-1">
+                      <div className="label mb-1">
                         {s.label}
                       </div>
-                      <div className={`font-mono text-2xl font-bold ${s.color}`}>{s.value}</div>
+                      <div className={`font-mono text-head-md font-bold ${s.color}`}>{s.value}</div>
                     </div>
                   ))}
                 </div>
@@ -386,9 +386,9 @@ export function AdminOverlay() {
 
               {/* Users */}
               {tab === 'users' && (
-                <div className="light-card rounded-sm overflow-x-auto">
-                  <div className="min-w-[700px]">
-                    <div className="grid grid-cols-[1fr_90px_90px_60px_90px_90px_70px] px-5 py-3 border-b border-line font-mono text-[11px] uppercase tracking-wider text-ink-2">
+                <div className="scroll-slim overflow-x-auto">
+                  <div className="min-w-[700px] space-y-2">
+                    <div className="label grid grid-cols-[1fr_90px_90px_60px_90px_90px_70px] px-5">
                       <div>wallet</div>
                       <div className="text-right">first seen</div>
                       <div className="text-right">last seen</div>
@@ -405,33 +405,33 @@ export function AdminOverlay() {
                     {!loading && users.map((u) => (
                       <div
                         key={u.address}
-                        className="grid grid-cols-[1fr_90px_90px_60px_90px_90px_70px] items-center px-5 py-3 dashed-row hover:bg-surface transition"
+                        className="light-card card-interactive grid grid-cols-[1fr_90px_90px_60px_90px_90px_70px] items-center px-5 py-3"
                       >
-                        <div className="font-mono text-xs text-ink truncate">
+                        <div className="font-mono text-caption text-ink truncate">
                           {formatAddress(u.address)}
                         </div>
-                        <div className="text-right font-mono text-[11px] text-ink-2">
+                        <div className="text-right font-mono text-tiny text-ink-2">
                           {new Date(u.firstSeen).toLocaleDateString()}
                         </div>
-                        <div className="text-right font-mono text-[11px] text-ink-2">
+                        <div className="text-right font-mono text-tiny text-ink-2">
                           {new Date(u.lastSeen).toLocaleDateString()}
                         </div>
-                        <div className="text-right num text-xs text-ink-2">
+                        <div className="text-right num text-caption text-ink-2">
                           {u.connectCount}
                         </div>
-                        <div className="text-right num text-xs text-ink">
+                        <div className="text-right num text-caption text-ink">
                           ${u.totalDeposited.toLocaleString()}
                         </div>
-                        <div className="text-right num text-xs text-[#22c55e]">
+                        <div className="text-right num text-caption text-accent-green">
                           ${u.totalPremium.toLocaleString()}
                         </div>
-                        <div className="text-right num text-xs font-semibold text-ink">
+                        <div className="text-right num text-caption font-semibold text-ink">
                           {u.points.toLocaleString()}
                         </div>
                       </div>
                     ))}
                     {!loading && users.length === 0 && (
-                      <div className="px-5 py-10 text-center font-mono text-xs text-ink-2">
+                      <div className="px-5 py-10 text-center font-mono text-caption text-ink-2">
                         No users yet
                       </div>
                     )}
@@ -450,7 +450,7 @@ export function AdminOverlay() {
                         setTxTypeFilter(e.target.value)
                         setTxsPage(0)
                       }}
-                      className="font-mono text-xs px-3 py-1.5 rounded-sm border border-line bg-card text-ink"
+                      className="font-mono text-caption px-3 py-1.5 rounded-sm border border-line bg-card text-ink"
                     >
                       <option value="">All types</option>
                       <option value="deposit">Deposits</option>
@@ -458,9 +458,9 @@ export function AdminOverlay() {
                       <option value="faucet">Faucet</option>
                     </select>
                   </div>
-                  <div className="light-card rounded-sm overflow-x-auto">
-                    <div className="min-w-[700px]">
-                      <div className="grid grid-cols-[90px_1fr_70px_50px_90px_60px_100px] px-5 py-3 border-b border-line font-mono text-[11px] uppercase tracking-wider text-ink-2">
+                  <div className="scroll-slim overflow-x-auto">
+                    <div className="min-w-[700px] space-y-2">
+                      <div className="label grid grid-cols-[90px_1fr_70px_50px_90px_60px_100px] px-5">
                         <div>time</div>
                         <div>wallet</div>
                         <div>type</div>
@@ -477,9 +477,9 @@ export function AdminOverlay() {
                       {!loading && txs.map((tx) => (
                         <div
                           key={tx.id}
-                          className="grid grid-cols-[90px_1fr_70px_50px_90px_60px_100px] items-center px-5 py-3 dashed-row hover:bg-surface transition"
+                          className="light-card card-interactive grid grid-cols-[90px_1fr_70px_50px_90px_60px_100px] items-center px-5 py-3"
                         >
-                          <div className="font-mono text-[11px] text-ink-2">
+                          <div className="font-mono text-tiny text-ink-2">
                             {new Date(tx.createdAt).toLocaleString('tr-TR', {
                               month: '2-digit',
                               day: '2-digit',
@@ -487,30 +487,30 @@ export function AdminOverlay() {
                               minute: '2-digit',
                             })}
                           </div>
-                          <div className="font-mono text-xs text-ink truncate">
+                          <div className="font-mono text-caption text-ink truncate">
                             {formatAddress(tx.address)}
                           </div>
-                          <div className="font-mono text-xs">
+                          <div className="font-mono text-caption">
                             <span
-                              className={`px-1.5 py-0.5 rounded-sm text-[10px] uppercase ${
+                              className={`px-1.5 py-0.5 rounded-sm text-micro uppercase ${
                                 tx.type === 'deposit'
-                                  ? 'bg-[#22c55e]/15 text-[#22c55e]'
+                                  ? 'bg-accent-green/15 text-accent-green'
                                   : tx.type === 'claim'
-                                  ? 'bg-[#eab308]/15 text-[#eab308]'
+                                  ? 'bg-brand/15 text-brand'
                                   : 'bg-ink-2/15 text-ink-2'
                               }`}
                             >
                               {tx.type}
                             </span>
                           </div>
-                          <div className="font-mono text-[11px] text-ink-2">
+                          <div className="font-mono text-tiny text-ink-2">
                             {tx.subtype ?? '—'}
                           </div>
-                          <div className="text-right num text-xs text-ink">
+                          <div className="text-right num text-caption text-ink">
                             {tx.amount.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                           </div>
-                          <div className="font-mono text-[11px] text-ink-2">{tx.asset}</div>
-                          <div className="font-mono text-[11px] text-ink-2 truncate">
+                          <div className="font-mono text-tiny text-ink-2">{tx.asset}</div>
+                          <div className="font-mono text-tiny text-ink-2 truncate">
                             {tx.txHash ? (
                               <a
                                 href={`https://stellar.expert/explorer/testnet/tx/${tx.txHash}`}
@@ -527,7 +527,7 @@ export function AdminOverlay() {
                         </div>
                       ))}
                       {!loading && txs.length === 0 && (
-                        <div className="px-5 py-10 text-center font-mono text-xs text-ink-2">
+                        <div className="px-5 py-10 text-center font-mono text-caption text-ink-2">
                           No transactions yet
                         </div>
                       )}
@@ -552,23 +552,23 @@ export function AdminOverlay() {
                         {[
                           { label: 'Page Views', value: analytics.pageViews.toLocaleString(), color: 'text-ink' },
                           { label: 'Unique Sessions', value: analytics.uniqueSessions.toLocaleString(), color: 'text-ink' },
-                          { label: 'Visitors (24h)', value: analytics.uniqueVisitors24h.toLocaleString(), color: 'text-[#eab308]' },
+                          { label: 'Visitors (24h)', value: analytics.uniqueVisitors24h.toLocaleString(), color: 'text-brand' },
                           { label: 'Wallet Connects', value: analytics.walletConnects.toLocaleString(), color: 'text-ink' },
-                          { label: 'Unique Depositors', value: analytics.actions.uniqueDepositors.toLocaleString(), color: 'text-[#22c55e]' },
+                          { label: 'Unique Depositors', value: analytics.actions.uniqueDepositors.toLocaleString(), color: 'text-accent-green' },
                           { label: 'Total Events', value: analytics.totalEvents.toLocaleString(), color: 'text-ink-2' },
                         ].map((s) => (
                           <div key={s.label} className="light-card rounded-sm p-5">
-                            <div className="font-mono text-[11px] uppercase tracking-wider text-ink-2 mb-1">
+                            <div className="label mb-1">
                               {s.label}
                             </div>
-                            <div className={`font-mono text-2xl font-bold ${s.color}`}>{s.value}</div>
+                            <div className={`font-mono text-head-md font-bold ${s.color}`}>{s.value}</div>
                           </div>
                         ))}
                       </div>
 
                       {/* Daily page views (last 14 days) */}
                       <div className="light-card rounded-sm p-5">
-                        <div className="font-mono text-[11px] uppercase tracking-wider text-ink-2 mb-4">
+                        <div className="label mb-4">
                           Page views · last 14 days
                         </div>
                         <div className="flex items-end gap-1.5 h-32">
@@ -579,12 +579,12 @@ export function AdminOverlay() {
                               <div key={d.day} className="flex-1 flex flex-col items-center gap-1 group">
                                 <div className="relative w-full flex items-end h-full">
                                   <div
-                                    className="w-full bg-[#eab308]/70 group-hover:bg-[#eab308] rounded-t-sm transition"
+                                    className="w-full bg-brand/70 group-hover:bg-brand rounded-t-sm transition"
                                     style={{ height: `${pct}%`, minHeight: d.pageViews > 0 ? '4px' : '0' }}
                                     title={`${d.day}: ${d.pageViews} views, ${d.sessions} sessions`}
                                   />
                                 </div>
-                                <div className="font-mono text-[9px] text-ink-2">
+                                <div className="font-mono text-micro text-ink-2">
                                   {d.day.slice(5)}
                                 </div>
                               </div>
@@ -596,10 +596,10 @@ export function AdminOverlay() {
                       {/* Action funnel + events split */}
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="light-card rounded-sm p-5">
-                          <div className="font-mono text-[11px] uppercase tracking-wider text-ink-2 mb-3">
+                          <div className="label mb-3">
                             On-chain actions
                           </div>
-                          <div className="space-y-2 font-mono text-sm">
+                          <div className="space-y-2 font-mono text-body">
                             {[
                               { label: 'Deposits', value: analytics.actions.deposits },
                               { label: 'Claims', value: analytics.actions.claims },
@@ -614,10 +614,10 @@ export function AdminOverlay() {
                           </div>
                         </div>
                         <div className="light-card rounded-sm p-5">
-                          <div className="font-mono text-[11px] uppercase tracking-wider text-ink-2 mb-3">
+                          <div className="label mb-3">
                             Top events
                           </div>
-                          <div className="space-y-2 font-mono text-sm">
+                          <div className="space-y-2 font-mono text-body">
                             {analytics.eventsByName.slice(0, 6).map((e) => (
                               <div key={e.event} className="flex items-center justify-between">
                                 <span className="text-ink-2 truncate">{e.event}</span>
@@ -634,10 +634,10 @@ export function AdminOverlay() {
                       {/* Top paths */}
                       {analytics.topPaths.length > 0 && (
                         <div className="light-card rounded-sm p-5">
-                          <div className="font-mono text-[11px] uppercase tracking-wider text-ink-2 mb-3">
+                          <div className="label mb-3">
                             Top pages
                           </div>
-                          <div className="space-y-2 font-mono text-sm">
+                          <div className="space-y-2 font-mono text-body">
                             {analytics.topPaths.map((p) => (
                               <div key={p.path} className="flex items-center justify-between">
                                 <span className="text-ink-2 truncate">{p.path}</span>
@@ -658,29 +658,29 @@ export function AdminOverlay() {
                   {feedbackSummary && (
                     <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                       <div className="light-card rounded-sm p-5">
-                        <div className="font-mono text-[11px] uppercase tracking-wider text-ink-2 mb-1">
+                        <div className="label mb-1">
                           Total Feedback
                         </div>
-                        <div className="font-mono text-2xl font-bold text-ink">
+                        <div className="font-mono text-head-md font-bold text-ink">
                           {feedbackSummary.total.toLocaleString()}
                         </div>
                       </div>
                       <div className="light-card rounded-sm p-5">
-                        <div className="font-mono text-[11px] uppercase tracking-wider text-ink-2 mb-1">
+                        <div className="label mb-1">
                           Avg Rating
                         </div>
-                        <div className="font-mono text-2xl font-bold text-[#eab308] flex items-center gap-1">
+                        <div className="font-mono text-head-md font-bold text-brand flex items-center gap-1">
                           {feedbackSummary.avgRating ?? '—'}
                           {feedbackSummary.avgRating !== null && (
-                            <Star size={18} className="fill-[#eab308] text-[#eab308]" />
+                            <Star size={18} className="fill-[#eab308] text-brand" />
                           )}
                         </div>
                       </div>
                       <div className="light-card rounded-sm p-5">
-                        <div className="font-mono text-[11px] uppercase tracking-wider text-ink-2 mb-1">
+                        <div className="label mb-1">
                           Rated
                         </div>
-                        <div className="font-mono text-2xl font-bold text-ink">
+                        <div className="font-mono text-head-md font-bold text-ink">
                           {feedbackSummary.ratedCount.toLocaleString()}
                         </div>
                       </div>
@@ -694,28 +694,28 @@ export function AdminOverlay() {
                       </div>
                     )}
                     {!loading && feedback.map((f) => (
-                      <div key={f.id} className="px-5 py-4 dashed-row">
+                      <div key={f.id} className="light-card px-5 py-4">
                         <div className="flex items-center justify-between mb-1.5">
                           <div className="flex items-center gap-2">
                             {f.rating && (
                               <div className="flex items-center gap-0.5">
                                 {Array.from({ length: f.rating }).map((_, i) => (
-                                  <Star key={i} size={12} className="fill-[#eab308] text-[#eab308]" />
+                                  <Star key={i} size={12} className="fill-[#eab308] text-brand" />
                                 ))}
                               </div>
                             )}
                             {f.category && (
-                              <span className="px-1.5 py-0.5 rounded-sm text-[10px] uppercase bg-ink-2/15 text-ink-2 font-mono">
+                              <span className="label px-1.5 py-0.5 rounded-sm bg-ink-2/15">
                                 {f.category}
                               </span>
                             )}
                           </div>
-                          <span className="font-mono text-[11px] text-ink-2">
+                          <span className="font-mono text-tiny text-ink-2">
                             {new Date(f.createdAt).toLocaleString()}
                           </span>
                         </div>
-                        <p className="text-sm text-ink whitespace-pre-wrap break-words">{f.message}</p>
-                        <div className="font-mono text-[11px] text-ink-2 mt-1.5">
+                        <p className="text-body text-ink whitespace-pre-wrap break-words">{f.message}</p>
+                        <div className="font-mono text-tiny text-ink-2 mt-1.5">
                           {f.address ? formatAddress(f.address) : 'anonymous'}
                           {f.path && <span> · {f.path}</span>}
                           {f.ip && <span> · {f.ip}</span>}
@@ -723,7 +723,7 @@ export function AdminOverlay() {
                       </div>
                     ))}
                     {!loading && feedback.length === 0 && (
-                      <div className="px-5 py-10 text-center font-mono text-xs text-ink-2">
+                      <div className="px-5 py-10 text-center font-mono text-caption text-ink-2">
                         No feedback yet
                       </div>
                     )}
@@ -752,11 +752,11 @@ function Pagination({
 }) {
   if (total <= pageSize) return null
   return (
-    <div className="px-5 py-3 flex items-center justify-end gap-3 font-mono text-[11px] text-ink-2">
+    <div className="px-5 py-3 flex items-center justify-end gap-3 font-mono text-tiny text-ink-2">
       <button
         onClick={() => setPage(Math.max(0, page - 1))}
         disabled={page === 0}
-        className="w-8 h-8 flex items-center justify-center rounded-sm border border-line bg-card text-ink hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed transition"
+        className="press w-8 h-8 flex items-center justify-center rounded-sm border border-line bg-card text-ink hover:bg-raised disabled:opacity-30 disabled:cursor-not-allowed transition"
       >
         <ChevronLeft size={14} />
       </button>
@@ -766,7 +766,7 @@ function Pagination({
       <button
         onClick={() => setPage(Math.min(Math.ceil(total / pageSize) - 1, page + 1))}
         disabled={(page + 1) * pageSize >= total}
-        className="w-8 h-8 flex items-center justify-center rounded-sm border border-line bg-card text-ink hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed transition"
+        className="press w-8 h-8 flex items-center justify-center rounded-sm border border-line bg-card text-ink hover:bg-raised disabled:opacity-30 disabled:cursor-not-allowed transition"
       >
         <ChevronRight size={14} />
       </button>

@@ -15,9 +15,9 @@ export function EarnButton({ onClick, loading, disabled, label = 'Earn upfront n
       onClick={onClick}
       disabled={disabled || loading}
       className={cn(
-        'w-full h-14 font-mono text-sm font-semibold rounded-sm transition flex items-center justify-center gap-2',
-        'bg-inverse text-cream hover:bg-line-2',
-        (disabled || loading) && 'opacity-50 cursor-not-allowed hover:bg-inverse'
+        'press w-full h-14 font-mono text-body font-semibold rounded-sm flex items-center justify-center gap-2',
+        'bg-inverse text-cream hover:shadow-drop',
+        (disabled || loading) && 'opacity-50 cursor-not-allowed hover:shadow-none'
       )}
     >
       {loading && <Loader2 size={16} className="animate-spin" />}

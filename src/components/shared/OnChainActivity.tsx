@@ -22,7 +22,7 @@ function label(e: VaultEvent): { tag: string; tone: string; text: string } {
       : `${(e.amount ?? 0).toLocaleString()} XLM`
     return {
       tag: put ? 'put' : 'call',
-      tone: 'text-[#22c55e]',
+      tone: 'text-accent-green',
       text: `#${e.id} · ${collateral} @ $${(e.strikeUsd ?? 0).toFixed(4)} · +$${(e.premiumCash ?? 0).toFixed(2)}`,
     }
   }
@@ -30,7 +30,7 @@ function label(e: VaultEvent): { tag: string; tone: string; text: string } {
     const assigned = e.outcome === 'assigned'
     return {
       tag: 'settle',
-      tone: assigned ? 'text-[#eab308]' : 'text-ink',
+      tone: assigned ? 'text-brand' : 'text-ink',
       text: `#${e.id} · ${e.outcome} @ $${(e.priceUsd ?? 0).toFixed(4)}`,
     }
   }
@@ -54,22 +54,22 @@ export function OnChainActivity() {
   return (
     <div className="mt-10">
       <div className="mb-3 flex items-center justify-between">
-        <div className="font-mono text-xs text-ink-2">~/on-chain activity</div>
-        <div className="font-mono text-[11px] text-ink-2 flex items-center gap-1.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-[#22c55e] animate-pulse" />
+        <div className="font-mono text-caption text-ink-2">~/on-chain activity</div>
+        <div className="font-mono text-tiny text-ink-2 flex items-center gap-1.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-accent-green animate-pulse" />
           live · soroban events
         </div>
       </div>
 
-      <div className="light-card rounded-sm divide-y divide-line">
+      <div className="light-card divide-y divide-line-light">
         {loading && events.length === 0 && (
-          <div className="p-5 font-mono text-xs text-ink-2">
+          <div className="p-5 font-mono text-caption text-ink-2">
             Reading ledger events…
           </div>
         )}
 
         {!loading && events.length === 0 && (
-          <div className="p-5 font-mono text-xs text-ink-2">
+          <div className="p-5 font-mono text-caption text-ink-2">
             No recent on-chain events in the lookback window.
           </div>
         )}
@@ -79,10 +79,10 @@ export function OnChainActivity() {
           return (
             <div
               key={`${e.txHash ?? e.ledger}-${e.kind}-${e.id}-${i}`}
-              className="px-5 py-3 flex items-center gap-3 font-mono text-xs"
+              className="px-5 py-3 flex items-center gap-3 font-mono text-caption"
             >
               <span
-                className={`shrink-0 uppercase tracking-wider text-[10px] ${l.tone}`}
+                className={`shrink-0 uppercase tracking-wider text-micro ${l.tone}`}
               >
                 {l.tag}
               </span>

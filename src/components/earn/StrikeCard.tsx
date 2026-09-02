@@ -17,26 +17,29 @@ export function StrikeCard({ strike, apr, label, selected, onClick }: StrikeCard
       type="button"
       onClick={onClick}
       className={cn(
-        'relative flex flex-col justify-between p-5 rounded-sm transition text-left min-h-[150px]',
-        'border-2',
+        /* Selection is a ring, not a second border width: swapping border-2 for
+           a shadow ring keeps the card the same size selected or not, so the
+           ladder does not shift by 1px as you move across it. */
+        'press relative flex flex-col justify-between p-5 rounded-sm text-left min-h-[150px] border',
         selected
-          ? 'border-[#eab308] bg-[#eab308]/10'
-          : 'border-line bg-card hover:border-ink-2'
+          ? 'border-brand bg-brand/10 shadow-[0_0_0_1px_var(--brand)]'
+          : 'light-card card-interactive'
       )}
+      aria-pressed={selected}
     >
       <div className="flex justify-between items-start">
-        <span className="font-mono text-[11px] uppercase text-ink-2">Strike</span>
+        <span className="label">Strike</span>
         <APRBadge apr={apr} size="sm" />
       </div>
 
       <div className="my-2">
-        <div className="font-mono text-2xl font-bold text-ink num">{formatUsdc(strike)}</div>
-        <div className="font-mono text-[11px] text-ink-2 mt-1">{label}</div>
+        <div className="font-display text-head-md text-ink num">{formatUsdc(strike)}</div>
+        <div className="font-mono text-tiny text-ink-2 mt-1">{label}</div>
       </div>
 
       <div className={cn(
-        'font-mono text-xs',
-        selected ? 'text-[#eab308] font-semibold' : 'text-ink-2'
+        'font-mono text-caption',
+        selected ? 'text-brand font-semibold' : 'text-ink-faint'
       )}>
         {selected ? '● selected' : 'tap to select'}
       </div>

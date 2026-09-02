@@ -32,16 +32,16 @@ export function WalletConnectModal() {
         {/* Header */}
         <div className="px-5 py-4 border-b border-line-2 flex items-center justify-between">
           <div>
-            <div className="font-mono text-[11px] text-[#eab308] uppercase tracking-wider">
+            <div className="font-mono text-tiny text-brand uppercase tracking-wider">
               ~/connect
             </div>
-            <div className="font-mono text-base text-cream font-bold mt-0.5">
+            <div className="font-mono text-lead text-cream font-bold mt-0.5">
               Choose a wallet
             </div>
           </div>
           <button
             onClick={closeModal}
-            className="w-8 h-8 rounded-sm flex items-center justify-center text-cream/60 hover:text-cream hover:bg-line-2 transition"
+            className="press w-8 h-8 rounded-sm flex items-center justify-center text-cream/60 hover:text-cream hover:bg-line-2 transition"
             aria-label="Close"
           >
             <X size={16} />
@@ -51,7 +51,7 @@ export function WalletConnectModal() {
         {/* Wallet list */}
         <div className="bg-card divide-y divide-line divide-dashed">
           {supportedWallets.length === 0 && (
-            <div className="px-5 py-6 font-mono text-xs text-ink-2 text-center">
+            <div className="px-5 py-6 font-mono text-caption text-ink-2 text-center">
               Loading wallets…
             </div>
           )}
@@ -69,9 +69,9 @@ export function WalletConnectModal() {
                   else if (w.url) window.open(w.url, '_blank', 'noopener,noreferrer')
                 }}
                 className={
-                  'w-full flex items-center gap-3 px-5 py-4 transition text-left group ' +
+                  'press w-full flex items-center gap-3 px-5 py-4 transition text-left group ' +
                   (available
-                    ? 'hover:bg-surface cursor-pointer'
+                    ? 'hover:bg-raised cursor-pointer'
                     : 'cursor-pointer opacity-70 hover:opacity-100')
                 }
               >
@@ -83,22 +83,22 @@ export function WalletConnectModal() {
                     className="w-9 h-9 rounded-sm bg-inverse p-1 shrink-0"
                   />
                 ) : (
-                  <div className="w-9 h-9 rounded-sm bg-inverse text-[#eab308] font-mono font-bold flex items-center justify-center shrink-0">
+                  <div className="w-9 h-9 rounded-sm bg-inverse text-brand font-mono font-bold flex items-center justify-center shrink-0">
                     {w.name[0]}
                   </div>
                 )}
 
                 <div className="flex-1 min-w-0">
-                  <div className="font-mono text-sm font-semibold text-ink truncate">
+                  <div className="font-mono text-body font-semibold text-ink truncate">
                     {w.name}
                   </div>
-                  <div className="font-mono text-[11px] text-ink-2">
+                  <div className="font-mono text-tiny text-ink-2">
                     {available ? w.type : 'Not installed'}
                   </div>
                 </div>
 
                 {!available && (
-                  <div className="flex items-center gap-1 text-[11px] font-mono text-[#eab308]">
+                  <div className="flex items-center gap-1 text-tiny font-mono text-brand">
                     install
                     <ExternalLink size={11} />
                   </div>
@@ -109,7 +109,7 @@ export function WalletConnectModal() {
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3 border-t border-line bg-surface flex items-center justify-between font-mono text-[11px] text-ink-2">
+        <div className="px-5 py-3 border-t border-line bg-surface flex items-center justify-between font-mono text-tiny text-ink-2">
           <span>Stellar testnet only</span>
           {loading && (
             <span className="flex items-center gap-1.5 text-ink">

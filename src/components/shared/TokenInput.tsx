@@ -47,17 +47,19 @@ export function TokenInput({
     <div className="w-full">
       {label && (
         <div className="flex justify-between items-baseline mb-2">
-          <label className="font-mono text-xs uppercase text-ink-2">{label}</label>
+          <label className="label">{label}</label>
           {balance !== undefined && (
-            <span className="font-mono text-xs text-ink-2">
+            <span className="font-mono text-caption text-ink-2">
               balance: <span className="num text-ink">{balance.toLocaleString()}</span>
             </span>
           )}
         </div>
       )}
+      {/* The field is a well, and focus lifts it: the ring lands on the wrapper
+          rather than the bare input, so the whole control answers the caret. */}
       <div
-        className={`flex items-center gap-2 bg-card border rounded-sm p-4 ${
-          belowMin || aboveMax ? 'border-[#ef4444]' : 'border-line'
+        className={`flex items-center gap-2 bg-card border rounded-sm p-4 transition-colors duration-fast ease-std focus-within:border-brand ${
+          belowMin || aboveMax ? 'border-accent-red' : 'border-line-light'
         }`}
       >
         <input
@@ -66,7 +68,7 @@ export function TokenInput({
           value={value}
           onChange={handleChange}
           placeholder="0.00"
-          className="flex-1 bg-transparent outline-none font-mono text-2xl text-ink placeholder-line"
+          className="flex-1 bg-transparent outline-none focus-visible:outline-none focus-visible:shadow-none font-mono text-head-md text-ink placeholder-ink-faint/50"
         />
         {(onMax || max !== undefined) && (
           <button
@@ -75,17 +77,17 @@ export function TokenInput({
               if (onMax) onMax()
               else if (max !== undefined) onChange(String(max))
             }}
-            className="font-mono text-xs px-2 py-1 border border-line rounded-sm hover:bg-surface"
+            className="press font-mono text-caption px-2 py-1 border border-line rounded-sm hover:bg-raised"
           >
             max
           </button>
         )}
         {symbolSlot ?? (
-          <div className="font-mono text-sm font-semibold text-ink">{symbol}</div>
+          <div className="font-mono text-body font-semibold text-ink">{symbol}</div>
         )}
       </div>
 
-      <div className="flex justify-between mt-2 font-mono text-[10px] text-ink-2">
+      <div className="flex justify-between mt-2 font-mono text-micro text-ink-2">
         <span>
           {min !== undefined && max !== undefined && (
             <>
@@ -103,7 +105,7 @@ export function TokenInput({
       </div>
 
       {(belowMin || aboveMax) && (
-        <div className="mt-1 font-mono text-[10px] text-[#ef4444]">
+        <div className="mt-1 font-mono text-micro text-accent-red">
           {belowMin
             ? `minimum deposit is ${min!.toLocaleString()} ${symbol}`
             : `maximum deposit is ${max!.toLocaleString()} ${symbol}`}

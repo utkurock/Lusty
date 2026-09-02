@@ -14,7 +14,7 @@ export function ThemeToggle({ className }: { className?: string }) {
       aria-label={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
       title={isDark ? 'Light mode' : 'Dark mode'}
       className={cn(
-        'p-2 rounded-sm border border-line text-ink-2 hover:text-ink hover:bg-card transition',
+        'press p-2 rounded-sm border border-line text-ink-2 hover:text-ink hover:bg-card transition',
         className
       )}
     >

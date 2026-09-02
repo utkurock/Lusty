@@ -4,24 +4,24 @@ import Link from 'next/link'
 const H2 = ({ id, children }: { id: string; children: React.ReactNode }) => (
   <h2
     id={id}
-    className="scroll-mt-24 text-2xl font-bold text-ink mt-14 mb-4 pb-2 border-b border-line"
+    className="font-display scroll-mt-24 text-head-md text-ink mt-14 mb-4 pb-2 border-b border-line"
   >
     {children}
   </h2>
 )
 const H3 = ({ children }: { children: React.ReactNode }) => (
-  <h3 className="text-lg font-bold text-ink mt-7 mb-2">{children}</h3>
+  <h3 className="font-display text-head-sm text-ink mt-7 mb-2">{children}</h3>
 )
 const P = ({ children }: { children: React.ReactNode }) => (
   <p className="leading-relaxed text-ink-2 my-3">{children}</p>
 )
 const Code = ({ children }: { children: React.ReactNode }) => (
-  <code className="px-1.5 py-0.5 bg-card border border-line rounded text-[13px] font-mono text-ink">
+  <code className="px-1.5 py-0.5 bg-card border border-line rounded text-caption font-code text-ink">
     {children}
   </code>
 )
 const Pre = ({ children }: { children: React.ReactNode }) => (
-  <pre className="bg-inverse text-cream p-4 rounded text-xs leading-relaxed overflow-x-auto my-4 font-mono whitespace-pre">
+  <pre className="scroll-slim bg-inverse text-cream p-4 rounded text-caption leading-relaxed overflow-x-auto my-4 font-code whitespace-pre">
     {children}
   </pre>
 )
@@ -31,16 +31,16 @@ const List = ({ children }: { children: React.ReactNode }) => (
   </ul>
 )
 const Today = ({ children }: { children: React.ReactNode }) => (
-  <div className="my-5 rounded-lg border-l-4 border-ink bg-card p-4 text-[14px] leading-relaxed text-ink-2">
-    <div className="font-mono text-[11px] uppercase tracking-wider text-ink font-bold mb-1.5">
+  <div className="my-5 rounded-lg border-l-4 border-ink bg-card p-4 text-body leading-relaxed text-ink-2">
+    <div className="font-mono text-tiny uppercase tracking-wider text-ink font-bold mb-1.5">
       Live today
     </div>
     {children}
   </div>
 )
 const Next = ({ children }: { children: React.ReactNode }) => (
-  <div className="my-5 rounded-lg border-l-4 border-[#eab308] bg-card p-4 text-[14px] leading-relaxed text-ink-2">
-    <div className="font-mono text-[11px] uppercase tracking-wider text-[#eab308] font-bold mb-1.5">
+  <div className="my-5 rounded-lg border-l-4 border-brand bg-card p-4 text-body leading-relaxed text-ink-2">
+    <div className="font-mono text-tiny uppercase tracking-wider text-brand font-bold mb-1.5">
       This grant (Tranche 1–2)
     </div>
     {children}
@@ -62,14 +62,14 @@ const TOC = [
 
 export default function ArchitecturePage() {
   return (
-    <div className="max-w-7xl mx-auto px-6 py-10 grid lg:grid-cols-[260px_1fr] gap-10">
+    <div className="max-w-content mx-auto px-6 py-10 grid lg:grid-cols-[260px_1fr] gap-10">
       {/* TOC */}
       <nav className="hidden lg:block">
         <div className="sticky top-24">
-          <div className="font-mono text-[11px] uppercase tracking-wider text-ink-2 mb-3">
+          <div className="label mb-3">
             Contents
           </div>
-          <ul className="space-y-1.5 text-sm">
+          <ul className="space-y-1.5 text-body">
             {TOC.map(([id, label]) => (
               <li key={id}>
                 <a
@@ -86,10 +86,10 @@ export default function ArchitecturePage() {
 
       {/* Body */}
       <article className="min-w-0">
-        <div className="font-mono text-[11px] uppercase tracking-wider text-[#eab308] font-bold mb-2">
+        <div className="font-mono text-tiny uppercase tracking-wider text-brand font-bold mb-2">
           Technical Architecture
         </div>
-        <h1 className="text-4xl font-bold text-ink mb-3">
+        <h1 className="font-display text-head-lg text-ink mb-3">
           Lusty on Stellar
         </h1>
         <p className="text-lg text-ink-2 leading-relaxed">
@@ -102,7 +102,7 @@ export default function ArchitecturePage() {
 
         <div className="mt-8 rounded-lg overflow-hidden border border-line bg-inverse text-cream aspect-[16/6] flex flex-col items-center justify-center font-mono">
           <div className="text-5xl tracking-[0.3em] font-bold">lusty</div>
-          <div className="mt-4 text-xs tracking-[0.25em] text-[#eab308]">
+          <div className="mt-4 text-caption tracking-[0.25em] text-brand">
             SOROBAN · REFLECTOR · STELLAR CLASSIC
           </div>
         </div>
@@ -181,7 +181,7 @@ export default function ArchitecturePage() {
           The vault is a Rust/Soroban contract (<Code>contracts/vault</Code>).
           It escrows collateral, pays premiums from a cash pool, and settles
           positions. It is deployed on testnet and its WASM is reproducible from
-          source. See <a href="#contract" className="text-[#eab308] underline">section 4</a>.
+          source. See <a href="#contract" className="text-brand underline">section 4</a>.
         </P>
 
         <H3>Reflector oracle (the integration target)</H3>
@@ -192,7 +192,7 @@ export default function ArchitecturePage() {
           <Code>price(asset, timestamp)</Code>; on the server rail the same feed
           is read through Soroban RPC simulation. This is the building block the
           grant integrates against, and the integration is live, not planned.
-          See <a href="#oracle" className="text-[#eab308] underline">section 5</a>.
+          See <a href="#oracle" className="text-brand underline">section 5</a>.
         </P>
 
         <H3>Stellar Asset Contract (SAC)</H3>
@@ -471,11 +471,11 @@ LUSD distributor           GBAIN6CHZJGBL365JNXSRQEKALXYTWKXANQZ3RBM7AGUEYYKLJJ6S
           Reflector feed.
         </P>
 
-        <div className="mt-14 pt-6 border-t border-line flex items-center justify-between text-sm">
+        <div className="mt-14 pt-6 border-t border-line flex items-center justify-between text-body">
           <Link href="/docs" className="text-ink-2 hover:text-ink transition">
             ← Product docs
           </Link>
-          <Link href="/earn" className="text-[#eab308] hover:underline">
+          <Link href="/earn" className="text-brand hover:underline">
             Open the app →
           </Link>
         </div>
