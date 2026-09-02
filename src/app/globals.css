@@ -313,6 +313,74 @@ html, body, .terminal-card, .light-card, .raised-card {
   }
   .press-sm { --press-scale: .96; }
 
+  /* Scrollbars ---------------------------------------------------------------
+     A scroll container inside the layout gets the app's own bar, not the
+     platform's: the default is a 16px grey slab with a boxed track that reads
+     as a piece of chrome dropped on top of the page. This one is a 6px thumb
+     on no track — the same hairline family as every other edge — so the
+     sidebar's scroll position is legible without a second visual system.
+
+     Only opted-in containers are restyled. The window's own scrollbar stays
+     native, because that one belongs to the browser and people aim at it.
+
+     Both syntaxes are declared and they do NOT stack: current Chrome and
+     Firefox honour `scrollbar-width` / `scrollbar-color` and then ignore the
+     ::-webkit rules entirely, so the standard pair has to be right on its own.
+     The ::-webkit block below is the fallback for engines that never shipped
+     the standard properties. */
+  .scroll-slim {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--ink-faint)) transparent;
+  }
+  .scroll-slim::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  .scroll-slim::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  /* The thumb is inset by a transparent border rather than sized down, so the
+     grab target stays a comfortable 10px while the bar reads as 6px. */
+  .scroll-slim::-webkit-scrollbar-thumb {
+    background-color: rgb(var(--ink-faint));
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  .scroll-slim::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(var(--ink-2));
+  }
+  .scroll-slim::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  /* Fade the scrollable edges into the page so a cut-off row reads as 'more
+     below' rather than as a crop.
+
+     The two bands are variables, not constants, because a fixed mask dims the
+     first and last items even when they are fully in view — the end of a list
+     is not the same as a list continuing past the edge. `useScrollFade` sets
+     each band to 0 at the end it has reached. With both at 0 the gradient is
+     opaque from the first pixel, so nothing is masked at all. */
+  .scroll-fade-y {
+    --fade-top: 0px;
+    --fade-bottom: 0px;
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      transparent 0,
+      #000 var(--fade-top),
+      #000 calc(100% - var(--fade-bottom)),
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      to bottom,
+      transparent 0,
+      #000 var(--fade-top),
+      #000 calc(100% - var(--fade-bottom)),
+      transparent 100%
+    );
+  }
+
   /* Notices ------------------------------------------------------------------
      Every inline message in the app was writing its own border/background/text
      triple out of the same four tones. One class plus a tone gives them a

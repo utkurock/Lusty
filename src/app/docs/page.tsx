@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Copy, ChevronRight, ChevronLeft } from 'lucide-react'
+import { useScrollFade } from '@/components/shared/useScrollFade'
 
 interface Section {
   id: string
@@ -24,17 +25,17 @@ const P = ({ children }: { children: React.ReactNode }) => (
 )
 
 const H = ({ children }: { children: React.ReactNode }) => (
-  <h3 className="text-lg font-bold text-ink mt-6 mb-2">{children}</h3>
+  <h3 className="font-display text-head-sm text-ink mt-6 mb-2">{children}</h3>
 )
 
 const Code = ({ children }: { children: React.ReactNode }) => (
-  <code className="px-1.5 py-0.5 bg-card border border-line rounded text-[13px] font-mono">
+  <code className="px-1.5 py-0.5 bg-card border border-line rounded text-caption font-code">
     {children}
   </code>
 )
 
 const Pre = ({ children }: { children: React.ReactNode }) => (
-  <pre className="bg-inverse text-cream p-4 rounded text-xs overflow-x-auto my-4 font-mono">
+  <pre className="scroll-slim bg-inverse text-cream p-4 rounded text-caption overflow-x-auto my-4 font-code">
     {children}
   </pre>
 )
@@ -46,8 +47,8 @@ const List = ({ children }: { children: React.ReactNode }) => (
 // Honest-framing callouts: clearly separate what runs today from the
 // trustless Soroban + Reflector architecture, which is T2/T3 roadmap work.
 const Today = ({ children }: { children: React.ReactNode }) => (
-  <div className="my-4 rounded-lg border-l-4 border-ink bg-card p-4 text-[14px] leading-relaxed">
-    <div className="font-mono text-[11px] uppercase tracking-wider text-ink font-bold mb-1.5">
+  <div className="my-4 rounded-lg border-l-4 border-ink bg-card p-4 text-body leading-relaxed">
+    <div className="font-mono text-tiny uppercase tracking-wider text-ink font-bold mb-1.5">
       Where Lusty is today
     </div>
     {children}
@@ -55,8 +56,8 @@ const Today = ({ children }: { children: React.ReactNode }) => (
 )
 
 const Roadmap = ({ children }: { children: React.ReactNode }) => (
-  <div className="my-4 rounded-lg border-l-4 border-[#eab308] bg-card p-4 text-[14px] leading-relaxed">
-    <div className="font-mono text-[11px] uppercase tracking-wider text-[#eab308] font-bold mb-1.5">
+  <div className="my-4 rounded-lg border-l-4 border-brand bg-card p-4 text-body leading-relaxed">
+    <div className="font-mono text-tiny uppercase tracking-wider text-brand font-bold mb-1.5">
       Roadmap — T2 / T3
     </div>
     {children}
@@ -79,7 +80,7 @@ const GROUPS: Group[] = [
           <>
             <div className="my-6 rounded-lg overflow-hidden border border-line bg-inverse text-cream aspect-[16/7] flex flex-col items-center justify-center font-mono">
               <div className="text-5xl tracking-[0.3em] font-bold">lusty</div>
-              <div className="mt-4 text-xs tracking-[0.25em] text-[#eab308]">
+              <div className="mt-4 text-caption tracking-[0.25em] text-brand">
                 THE STELLAR OPTIONS YIELD LAYER
               </div>
             </div>
@@ -965,7 +966,7 @@ APR_quoted   = APR_fair × time_factor × util_factor`}
             </P>
             <a
               href="/architecture"
-              className="inline-flex items-center gap-2 mt-2 h-10 px-4 bg-inverse text-cream font-mono text-sm rounded-sm hover:bg-line-2 transition"
+              className="inline-flex items-center gap-2 mt-2 h-10 px-4 bg-inverse text-cream font-mono text-body rounded-sm hover:bg-line-2 transition"
             >
               Open the architecture document →
             </a>
@@ -1502,6 +1503,11 @@ export default function DocsPage() {
     window.addEventListener('hashchange', applyHash)
     return () => window.removeEventListener('hashchange', applyHash)
   }, [])
+  // The nav scrolls independently of the page, so its edge fade follows its own
+  // scroll position rather than the window's.
+  const navRef = useRef<HTMLElement>(null)
+  useScrollFade(navRef)
+
   const activeIdx = Math.max(0, allItems.findIndex((s) => s.id === activeId))
   const active = allItems[activeIdx]
   const prev = activeIdx > 0 ? allItems[activeIdx - 1] : null
@@ -1509,9 +1515,12 @@ export default function DocsPage() {
 
   return (
     <div className="bg-surface min-h-screen text-ink">
-      <div className="max-w-7xl mx-auto px-6 py-10 grid lg:grid-cols-[260px_1fr] gap-10">
+      <div className="max-w-content mx-auto px-6 py-10 grid lg:grid-cols-[260px_1fr] gap-10">
         {/* Sidebar */}
-        <aside className="font-mono text-xs space-y-6 lg:sticky lg:top-20 lg:self-start lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto pr-2">
+        {/* The nav is taller than the viewport, so it scrolls on its own. Slim
+            bar, and the ends fade into the page so a half-visible item reads as
+            "keep going" instead of as a crop. */}
+        <aside ref={navRef} className="scroll-slim scroll-fade-y font-mono text-caption space-y-6 lg:sticky lg:top-20 lg:self-start lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto pr-3 pb-14">
           {GROUPS.map((g) => (
             <div key={g.id}>
               <div className="uppercase text-ink-2 mb-2 tracking-wider">
@@ -1525,9 +1534,9 @@ export default function DocsPage() {
                       <button
                         onClick={() => selectSection(s.id)}
                         className={
-                          'w-full text-left py-1.5 px-2 rounded-md transition ' +
+                          'press w-full text-left py-1.5 px-2 rounded-md transition ' +
                           (isActive
-                            ? 'bg-inverse text-[#eab308]'
+                            ? 'bg-inverse text-brand'
                             : 'text-ink-3 hover:bg-card')
                         }
                       >
@@ -1542,9 +1551,9 @@ export default function DocsPage() {
 
           <a
             href="/architecture"
-            className="mt-2 flex items-center justify-between border border-line bg-card hover:bg-surface rounded-md px-3 py-2.5 text-ink-2 hover:text-ink transition"
+            className="mt-2 flex items-center justify-between border border-line bg-card hover:bg-raised rounded-md px-3 py-2.5 text-ink-2 hover:text-ink transition"
           >
-            <span className="font-mono text-xs">architecture</span>
+            <span className="font-mono text-caption">architecture</span>
             <ChevronRight size={14} />
           </a>
         </aside>
@@ -1552,25 +1561,25 @@ export default function DocsPage() {
         {/* Article */}
         <article className="min-w-0">
           <div className="flex items-center justify-between mb-4">
-            <div className="text-[#eab308] font-mono text-xs font-bold tracking-wider">
+            <div className="text-brand font-mono text-caption font-bold tracking-wider">
               {active.eyebrow}
             </div>
             <button
               onClick={copyLink}
               title="Copy a link to this section"
-              className="flex items-center gap-1.5 text-xs border border-line bg-card hover:bg-surface rounded-md px-3 py-1.5 font-mono text-ink-3 transition"
+              className="press flex items-center gap-1.5 text-caption border border-line bg-card hover:bg-raised rounded-md px-3 py-1.5 font-mono text-ink-3 transition"
             >
               <Copy size={12} />
               {copied ? 'Copied' : 'Copy link'}
             </button>
           </div>
 
-          <h1 className="text-4xl font-bold mb-3">{active.title}</h1>
+          <h1 className="font-display text-head-lg mb-3">{active.title}</h1>
           {active.tagline && (
             <p className="text-ink-2 text-lg mb-2">{active.tagline}</p>
           )}
 
-          <div className="mt-6 space-y-4 text-[15px] leading-relaxed text-ink-3">
+          <div className="mt-6 space-y-4 text-lead leading-relaxed text-ink-3">
             {active.body}
           </div>
 
@@ -1578,14 +1587,14 @@ export default function DocsPage() {
             {prev ? (
               <button
                 onClick={() => selectSection(prev.id)}
-                className="group flex items-center gap-3 text-left border border-line bg-card hover:bg-surface rounded-lg p-4 transition"
+                className="press group flex items-center gap-3 text-left border border-line bg-card hover:bg-raised rounded-lg p-4 transition"
               >
                 <ChevronLeft
                   size={20}
                   className="text-ink-2 group-hover:text-ink transition shrink-0"
                 />
                 <div className="min-w-0 flex-1">
-                  <div className="font-mono text-[11px] uppercase tracking-wider text-ink-2">
+                  <div className="label">
                     Previous
                   </div>
                   <div className="font-semibold text-ink truncate">
@@ -1599,10 +1608,10 @@ export default function DocsPage() {
             {next ? (
               <button
                 onClick={() => selectSection(next.id)}
-                className="group flex items-center gap-3 text-right border border-line bg-card hover:bg-surface rounded-lg p-4 transition sm:col-start-2"
+                className="press group flex items-center gap-3 text-right border border-line bg-card hover:bg-raised rounded-lg p-4 transition sm:col-start-2"
               >
                 <div className="min-w-0 flex-1">
-                  <div className="font-mono text-[11px] uppercase tracking-wider text-ink-2">
+                  <div className="label">
                     Next
                   </div>
                   <div className="font-semibold text-ink truncate">
