@@ -2,6 +2,18 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Jeko sets the entire interface — headings, body, labels and figures alike.
+   Only the full cut is loaded: the demo weights in /jekofont map 73 glyphs
+   (letters, digits, and two marks), so a single comma would fall back
+   mid-word. Code keeps a monospace of its own, see --font-code. */
+@font-face {
+  font-family: 'Jeko';
+  src: url('/fonts/jeko-bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* ---------------------------------------------------------------------------
    Lusty Design Tokens
 
@@ -41,8 +53,18 @@
   --brand-fg: #1a1a1a;
   --focus-ring: rgba(234, 179, 8, .3);
 
-  --font-mono: 'JetBrains Mono', 'Courier New', monospace;
-  --font-sans: 'Inter', system-ui, sans-serif;
+  /* Jeko sets the whole interface — display, body and the terminal voice alike.
+     Inter stays only as the fallback that renders while the face loads.
+
+     One consequence is load-bearing: the usable cut is 700 and there is no
+     other, so weight can no longer carry hierarchy here. Size and colour do it
+     instead, which is why the scale is tracked and the ink has four steps. */
+  --font-display: 'Jeko', 'Inter', system-ui, sans-serif;
+  --font-mono: 'Jeko', 'Inter', system-ui, sans-serif;
+  --font-sans: 'Jeko', 'Inter', system-ui, sans-serif;
+  /* Code keeps a real monospace: indentation, contract addresses and hashes are
+     read by column, and a proportional face breaks that. */
+  --font-code: 'JetBrains Mono', 'Courier New', monospace;
 
   /* Shadow pairs a hairline ring with a wide soft drop in one token, so a
      floating surface never needs a border and a shadow declared separately. */
@@ -132,15 +154,29 @@ html, body, .terminal-card, .light-card, .raised-card {
    Tailwind's utility layer so a one-off `text-brand` or `rounded-lg` on a card
    still wins over the class it is layered on. */
 @layer components {
-  .font-mono, code, pre {
+  .font-mono {
     font-family: var(--font-mono);
   }
 
-  /* Mono runs at the label sizes of this UI, where the default tracking is too
-     loose to line up with the sans beside it. */
+  code, pre, .font-code {
+    font-family: var(--font-code);
+  }
+
+  /* Display voice. Jeko is drawn tight and heavy, so it wants negative tracking
+     at headline sizes and none of the extra weight Tailwind would add. */
+  .font-display {
+    font-family: var(--font-display);
+    font-weight: 700;
+    letter-spacing: -.02em;
+  }
+
+  /* Figures. Jeko's digits are proportional — no `tnum` in the font and widths
+     from 379 to 641 units — so a column of numbers no longer aligns on the
+     decimal. Right-align the cell and the eye still reads down the column;
+     `tabular-nums` is not declared because it would be a promise the face
+     cannot keep. */
   .num {
     font-family: var(--font-mono);
-    font-variant-numeric: tabular-nums;
     letter-spacing: -.02em;
   }
 
@@ -157,7 +193,6 @@ html, body, .terminal-card, .light-card, .raised-card {
     font-family: var(--font-mono);
     font-size: 10px;
     line-height: 16px;
-    font-weight: 500;
     letter-spacing: .08em;
     text-transform: uppercase;
     color: rgb(var(--ink-faint));

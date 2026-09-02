@@ -24,6 +24,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             __html: `try{if(localStorage.getItem('lusty-theme')==='dark')document.documentElement.classList.add('dark')}catch(e){}`,
           }}
         />
+        {/* Jeko is self-hosted and sets every heading above the fold, so it is
+            the one face worth preloading; Inter and JetBrains Mono swap in
+            from Google without a layout shift that matters. */}
+        <link
+          rel="preload"
+          href="/fonts/jeko-bold.woff2"
+          as="font"
+          type="font/woff2"
+          crossOrigin="anonymous"
+        />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link

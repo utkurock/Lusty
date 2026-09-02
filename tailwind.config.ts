@@ -40,9 +40,14 @@ const config: Config = {
         'accent-red': '#ef4444',
         'accent-yellow': '#eab308',
       },
+      /* One face across the interface. `mono` is kept as a name because 239
+         call sites use it, but it now resolves to Jeko like everything else;
+         `code` is the only real monospace left, for code and hashes. */
       fontFamily: {
-        mono: ['JetBrains Mono', 'Courier New', 'monospace'],
-        sans: ['Inter', 'system-ui', 'sans-serif'],
+        display: ['Jeko', 'Inter', 'system-ui', 'sans-serif'],
+        mono: ['Jeko', 'Inter', 'system-ui', 'sans-serif'],
+        sans: ['Jeko', 'Inter', 'system-ui', 'sans-serif'],
+        code: ['JetBrains Mono', 'Courier New', 'monospace'],
       },
       /* A small scale, tightly tracked. Sizes below 16px get negative tracking
          so they set as densely as the numerals beside them; the display sizes
