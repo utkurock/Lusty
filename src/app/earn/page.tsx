@@ -64,20 +64,23 @@ export default function EarnPage() {
         </div>
       </section>
 
-      {side && vaultStats && (
-        <section>
-          <EpochCapProgress
-            utilized={side.utilized}
-            cap={side.cap}
-            unit={isCalls ? 'XLM' : 'USD'}
-            label={isCalls ? 'covered calls' : 'cash secured puts'}
-            segments={segments}
-          />
-        </section>
-      )}
-
+      {/* Capacity belongs under the tab that selects the side it measures, not
+          above it — and in the same section as the asset it gates. */}
       <section>
-        <AssetList tab={tab} onTabChange={setTab} />
+        <AssetList
+          tab={tab}
+          onTabChange={setTab}
+          capacity={
+            side && vaultStats ? (
+              <EpochCapProgress
+                utilized={side.utilized}
+                cap={side.cap}
+                unit={isCalls ? 'XLM' : 'USD'}
+                segments={segments}
+              />
+            ) : undefined
+          }
+        />
       </section>
     </div>
   )

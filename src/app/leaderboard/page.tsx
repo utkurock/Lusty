@@ -4,8 +4,6 @@ import { useEffect, useMemo, useState, useCallback } from 'react'
 import { useWalletContext } from '@/providers/WalletProvider'
 import { formatAddress } from '@/lib/utils'
 import { Trophy, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
-import { Panel } from '@/components/shared/Panel'
-import { StatStrip } from '@/components/shared/StatStrip'
 import { EmptyState } from '@/components/shared/EmptyState'
 
 interface LeaderRow {
@@ -230,42 +228,10 @@ export default function LeaderboardPage() {
         </div>
       </section>
 
-      {/* Where this wallet stands, before the board it stands in. The figures
-          are the same ones the pinned row carries, read across instead of
-          along, and they say "—" rather than 0 when the wallet is not on the
-          board yet. */}
-      {connected && (
-        <Panel
-          title="Your standing"
-          note={yourRow ? `wallet ${formatAddress(address ?? '')}` : 'not on the board yet'}
-        >
-          <StatStrip
-            stats={[
-              {
-                label: 'Rank',
-                value: yourRow ? `#${yourRow.rank}` : '—',
-                sub: yourRow ? `of ${total.toLocaleString()} wallets` : 'deposit once to enter',
-              },
-              {
-                label: 'Points',
-                value: yourRow ? yourRow.points.toLocaleString() : '—',
-                tone: 'brand',
-              },
-              {
-                label: 'Volume',
-                value: yourRow ? `$${yourRow.totalDeposited.toLocaleString()}` : '—',
-                sub: 'collateral deposited',
-              },
-              {
-                label: 'Upfront',
-                value: yourRow ? `$${yourRow.totalPremium.toLocaleString()}` : '—',
-                tone: 'green',
-                sub: 'paid to this wallet',
-              },
-            ]}
-          />
-        </Panel>
-      )}
+      {/* No standing panel above the board: the pinned YOU row already carries
+          the same rank, points, volume and upfront, in the columns the rest of
+          the table is read in. Printing them twice made the board start halfway
+          down the page. */}
 
       {/* Leaderboard table */}
       <section>

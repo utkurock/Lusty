@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { ReactNode, useEffect, useState } from 'react'
 import { AssetRow } from './AssetRow'
 import { cn } from '@/lib/utils'
 import { useVaultStats } from '@/hooks/useVaultStats'
@@ -11,6 +11,9 @@ export type Tab = 'calls' | 'puts'
 interface AssetListProps {
   tab: Tab
   onTabChange: (tab: Tab) => void
+  /** This side's remaining capacity. It lives inside the section because the
+      tab above chooses which side it describes. */
+  capacity?: ReactNode
 }
 
 // How long the headline range may keep a placeholder on screen. A healthy
@@ -23,7 +26,7 @@ interface AprRange {
   min: number
 }
 
-export function AssetList({ tab, onTabChange }: AssetListProps) {
+export function AssetList({ tab, onTabChange, capacity }: AssetListProps) {
   const { stats } = useVaultStats()
 
   // Real APR range from the quote engine (same engine that pays the premium),
@@ -128,6 +131,8 @@ export function AssetList({ tab, onTabChange }: AssetListProps) {
           ))}
         </div>
       </div>
+
+      {capacity && <div className="mb-6">{capacity}</div>}
 
       <div className="space-y-2">
         <div className="hidden md:grid grid-cols-12 px-5 label">

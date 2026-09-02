@@ -9,19 +9,25 @@ interface EpochCapProgressProps {
   utilized: number
   cap: number
   unit?: 'XLM' | 'USD'
-  label: string
   segments: EpochSegment[]
 }
 
+/**
+ * How much of this side's capacity is already sold, one expiry per bar.
+ *
+ * The block used to say the same number four ways: a header with the monthly
+ * cap, a note with the per-epoch cap, a bar per epoch, a total bar summing
+ * them, and two footnotes restating the total as a percentage. The bars are the
+ * only part that shows anything the sentence above cannot, so the total is now
+ * a line of text and the epochs are the graphic.
+ */
 export function EpochCapProgress({
   utilized,
   cap,
   unit = 'XLM',
-  label,
   segments,
 }: EpochCapProgressProps) {
   const rawPct = cap > 0 ? (utilized / cap) * 100 : 0
-  const barPct = Math.min(100, rawPct)
   const full = rawPct >= 100
 
   const fmt = (n: number) =>
@@ -31,36 +37,40 @@ export function EpochCapProgress({
 
   return (
     <div className="w-full">
-      <div className="flex items-center justify-between mb-3 flex-wrap gap-1">
-        <div className="label">
-          Monthly capacity · {fmt(cap)} · {label}
-        </div>
-        <div className="font-mono text-caption text-ink-2">
-          {segments.length} epochs open · each {fmt(cap / Math.max(1, segments.length))}
+      <div className="flex items-baseline justify-between gap-x-6 gap-y-1 flex-wrap mb-2">
+        <div className="label">Capacity</div>
+        <div className="font-mono text-tiny text-ink-2">
+          <span className="num text-ink font-semibold">{fmt(utilized)}</span> of{' '}
+          <span className="num">{fmt(cap)}</span> sold
+          {full ? (
+            <span className="text-accent-red font-semibold"> — all epochs full</span>
+          ) : (
+            <span className="num"> · {rawPct.toFixed(1)}%</span>
+          )}
         </div>
       </div>
 
       {/* Bars sit in a sunken well rather than on a bordered plate: the track is
           the surface below the card, so the fill reads as depth, not paint. */}
       {segments.length > 0 && (
-        <div className="flex gap-2 mb-2">
+        <div className="flex gap-2">
           {segments.map((s, i) => {
             const segPct = s.cap > 0 ? (s.utilized / s.cap) * 100 : 0
             const segBar = Math.min(100, segPct)
             return (
               <div
                 key={i}
-                className="relative flex-1 h-12 rounded-sm overflow-hidden bg-surface-2"
+                className="relative flex-1 h-10 rounded-sm overflow-hidden bg-surface-2"
               >
                 <div
-                  className={`absolute inset-y-0 left-0 transition-all duration-700 ease-std ${s.full ? 'bg-accent-red/85' : 'bg-accent-green/85'}`}
+                  className={`absolute inset-y-0 left-0 animate-fill transition-all duration-700 ease-std ${s.full ? 'bg-accent-red/85' : 'bg-accent-green/85'}`}
                   style={{ width: `${segBar}%` }}
                 />
-                <div className="absolute inset-0 flex flex-col items-center justify-center font-mono leading-tight">
+                <div className="absolute inset-0 flex items-center justify-center gap-2 font-mono">
                   <span className="text-micro uppercase tracking-[0.08em] text-ink font-semibold">
-                    Epoch {i + 1} · {s.label}
+                    {s.label}
                   </span>
-                  <span className="num text-micro text-ink">
+                  <span className="num text-micro text-ink-2">
                     {s.full ? 'FULL' : `${segPct.toFixed(0)}%`}
                   </span>
                 </div>
@@ -69,21 +79,6 @@ export function EpochCapProgress({
           })}
         </div>
       )}
-
-      <div className="relative h-11 bg-surface-2 rounded-sm overflow-hidden">
-        <div
-          className={`absolute inset-y-0 left-0 animate-fill transition-all duration-700 ease-std ${full ? 'bg-accent-red/85' : 'bg-accent-green/85'}`}
-          style={{ width: `${barPct}%` }}
-        />
-        <div className="absolute inset-0 flex items-center justify-center font-mono text-body font-semibold text-ink">
-          {fmt(utilized)} / {fmt(cap)} sold{full ? ' — all epochs full' : ''}
-        </div>
-      </div>
-
-      <div className="flex justify-between mt-2 font-mono text-caption text-ink-2">
-        <span className="num">{rawPct.toFixed(2)}% of monthly capacity</span>
-        <span>combined across {segments.length || '—'} epochs</span>
-      </div>
     </div>
   )
 }
