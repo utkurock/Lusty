@@ -13,6 +13,11 @@ interface AssetListProps {
   onTabChange: (tab: Tab) => void
 }
 
+// How long the headline range may keep a placeholder on screen. A healthy
+// quote answers in under five seconds; a blocked one takes about twelve to
+// fail, and nobody should watch a skeleton for that long to learn nothing.
+const QUOTE_DEADLINE_MS = 9_000
+
 interface AprRange {
   max: number
   min: number
@@ -28,10 +33,14 @@ export function AssetList({ tab, onTabChange }: AssetListProps) {
   //   MIN = shortest expiry, deepest OTM      (lowest/safest yield on offer)
   const [callApr, setCallApr] = useState<AprRange | undefined>()
   const [putApr, setPutApr] = useState<AprRange | undefined>()
-  // Whether the quote engine has answered at all yet. Without this, an APR that
-  // is still on its way and one the engine could not produce render the same
-  // way, and the placeholder never resolves into anything.
-  const [quoted, setQuoted] = useState(false)
+  // Whether the quote engine has answered for each side yet. Without this, an
+  // APR that is still on its way and one the engine could not produce render
+  // the same way, and the placeholder never resolves into anything.
+  //
+  // Per side, not one flag for both: the two sides are quoted independently and
+  // the screen only ever shows one of them, so making the visible tab wait on
+  // the hidden one is a placeholder held up by a request nobody is looking at.
+  const [answered, setAnswered] = useState({ call: false, put: false })
 
   useEffect(() => {
     let cancelled = false
@@ -45,7 +54,12 @@ export function AssetList({ tab, onTabChange }: AssetListProps) {
 
     const ladder = async (side: 'call' | 'put', expiry: string): Promise<number[] | undefined> => {
       try {
-        const aprs = (await fetchLadder(side, expiry)).strikes.map((s) => s.apr)
+        // The headline range is a summary, not the money path — it is worth
+        // less than a placeholder that sits there. An upstream the engine
+        // cannot reach takes about twelve seconds to give up, so waiting for
+        // that is waiting to be told nothing.
+        const signal = AbortSignal.timeout(QUOTE_DEADLINE_MS)
+        const aprs = (await fetchLadder(side, expiry, signal)).strikes.map((s) => s.apr)
         return aprs.length > 0 ? aprs : undefined
       } catch {
         return undefined
@@ -56,12 +70,18 @@ export function AssetList({ tab, onTabChange }: AssetListProps) {
       if (!longL || !shortL) return undefined
       return { max: Math.max(...longL), min: Math.min(...shortL) }
     }
-    Promise.all([range('call'), range('put')]).then(([c, p]) => {
+
+    range('call').then((r) => {
       if (cancelled) return
-      setCallApr(c)
-      setPutApr(p)
-      setQuoted(true)
+      setCallApr(r)
+      setAnswered((a) => ({ ...a, call: true }))
     })
+    range('put').then((r) => {
+      if (cancelled) return
+      setPutApr(r)
+      setAnswered((a) => ({ ...a, put: true }))
+    })
+
     return () => {
       cancelled = true
     }
@@ -125,7 +145,7 @@ export function AssetList({ tab, onTabChange }: AssetListProps) {
             type="Covered Call"
             maxAPR={callApr?.max}
             minAPR={callApr?.min}
-            quoted={quoted}
+            quoted={answered.call}
             href="/earn/xlm"
             disabled={callsFull}
             disabledReason="Vault full"
@@ -137,7 +157,7 @@ export function AssetList({ tab, onTabChange }: AssetListProps) {
             type="Cash Secured Put"
             maxAPR={putApr?.max}
             minAPR={putApr?.min}
-            quoted={quoted}
+            quoted={answered.put}
             href="/earn/xlm?type=put"
             disabled={putsFull}
             disabledReason="Vault full"
@@ -148,7 +168,8 @@ export function AssetList({ tab, onTabChange }: AssetListProps) {
             row, rather than leaving two columns of dashes to be read as zero
             yield — and keep the row itself navigable, because the strike screen
             reports the reason in full. */}
-        {quoted && !(tab === 'calls' ? callApr : putApr) && (
+        {(tab === 'calls' ? answered.call : answered.put) &&
+          !(tab === 'calls' ? callApr : putApr) && (
           <div className="notice notice-quiet">
             Live pricing is unavailable right now, so the offered range cannot be
             shown. Open the asset to see what the quote engine reports.
