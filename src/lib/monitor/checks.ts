@@ -1,5 +1,6 @@
 import { Horizon } from '@stellar/stellar-sdk'
 import { getPool, ensureSchema } from '@/lib/db'
+import { scanForSettlement } from '@/lib/settlement'
 import { computeOpenBuckets, CALL_EPOCH_CAP_XLM } from '@/lib/vault-state'
 import { LUSD_DISTRIBUTOR } from '@/lib/lusd'
 import type { Alert } from './notify'
@@ -196,6 +197,70 @@ async function checkVolSpike(): Promise<Alert | null> {
 }
 
 /**
+ * Is anything expired and still open?
+ *
+ * The check that was missing. Settlement is time-limited: past roughly a day
+ * after expiry the oracle no longer has the price, the contract refuses, and
+ * the collateral is escrowed with nothing able to release it. Nine positions
+ * reached that state over three weeks without a single alert, because nothing
+ * here was looking.
+ *
+ * Two severities, because they ask for opposite responses. A position that is
+ * expired but still inside the window means the sweep is late — fix the sweep.
+ * A position past the window means the sweep is already too late — that
+ * collateral needs a decision, and no amount of retrying will produce one.
+ */
+async function checkSettlementBacklog(): Promise<Alert | null> {
+  try {
+    const scan = await scanForSettlement()
+    if (scan.candidates.length === 0) return null
+
+    const stranded = scan.pastDeadline
+    const pending = scan.candidates.filter((c) => !c.pastDeadline)
+
+    if (stranded.length > 0) {
+      return {
+        severity: 'critical',
+        title: 'Collateral stranded — settlement missed its window',
+        message:
+          `${stranded.length} expired position(s) are past the oracle's history window. ` +
+          `The contract can no longer price them, there is no admin path to release escrow, ` +
+          `and their collateral is locked permanently. Ids: ${stranded.join(', ')}.`,
+        fields: [
+          { label: 'stranded', value: String(stranded.length) },
+          { label: 'also_due', value: String(pending.length) },
+        ],
+      }
+    }
+
+    const soonest = pending.reduce(
+      (min, c) => Math.min(min, c.settleBy.getTime()),
+      Infinity
+    )
+    const hoursLeft = Math.max(0, (soonest - Date.now()) / 3_600_000)
+
+    return {
+      severity: 'warning',
+      title: 'Settlement sweep is behind',
+      message:
+        `${pending.length} position(s) have expired and are not settled. ` +
+        `The earliest becomes unsettleable in ${hoursLeft.toFixed(1)}h, after which its ` +
+        `collateral is locked for good.`,
+      fields: [
+        { label: 'due', value: String(pending.length) },
+        { label: 'hours_to_deadline', value: hoursLeft.toFixed(1) },
+      ],
+    }
+  } catch (e: any) {
+    return {
+      severity: 'critical',
+      title: 'Settlement scan failed',
+      message: `Could not read the vault's positions: ${e?.message ?? 'unknown'}. Whether anything is due to settle is unknown.`,
+    }
+  }
+}
+
+/**
  * Run every check. Order-independent; failures inside a check are converted to
  * alerts by the check itself, so this never throws.
  */
@@ -205,6 +270,7 @@ export async function runMonitorChecks(): Promise<Alert[]> {
     checkDb(),
     checkCapBreach(),
     checkVolSpike(),
+    checkSettlementBacklog(),
   ])
   return settled.filter((a): a is Alert => a !== null)
 }

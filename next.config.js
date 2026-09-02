@@ -1,6 +1,11 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Runs src/instrumentation.ts once per server process. The settlement sweep
+  // starts there: it must run whether or not anyone visits the site.
+  experimental: {
+    instrumentationHook: true,
+  },
   async headers() {
     return [
       {

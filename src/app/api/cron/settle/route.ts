@@ -1,18 +1,12 @@
 import { NextResponse } from 'next/server'
-import { Keypair } from '@stellar/stellar-sdk'
 import { intParam } from '@/lib/utils'
-import {
-  scanForSettlement,
-  runSettlement,
-  DEFAULT_SCAN_LIMIT,
-  DEFAULT_SETTLE_LIMIT,
-} from '@/lib/settlement'
+import { DEFAULT_SCAN_LIMIT, DEFAULT_SETTLE_LIMIT } from '@/lib/settlement'
+import { sweepOnce } from '@/lib/settlement-sweep'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
 const CRON_SECRET = process.env.CRON_SECRET ?? ''
-const RUNNER_SECRET = process.env.SETTLE_RUNNER_SECRET ?? ''
 
 /**
  * Scheduled settlement sweep. Nothing in this repository schedules it: the
@@ -61,12 +55,16 @@ const RUNNER_SECRET = process.env.SETTLE_RUNNER_SECRET ?? ''
  * anything. It needs no runner key, which makes it the safe way to check the
  * sweep against a live vault.
  *
- * On scheduling, because it has already been got wrong once: this route was
- * written against a `vercel.json` cron entry, and the application is deployed
- * to a self-hosted Coolify instance, which never reads that file. The entry
- * scheduled nothing and its presence claimed otherwise, so it was removed and
- * the schedule now lives with the deployment. The endpoint is indifferent to
- * who calls it — any timer that can send the secret over HTTP will do.
+ * On scheduling, because it has already been got wrong twice: this route was
+ * first written against a `vercel.json` cron entry, and the application is
+ * deployed to a self-hosted Coolify instance, which never reads that file. The
+ * entry was removed and the schedule was moved to the deployment — where it was
+ * then never created, and nine positions stranded while nothing swept.
+ *
+ * So the sweep no longer depends on this route being called at all: the server
+ * runs it on an interval of its own (lib/settlement-scheduler.ts), and both
+ * paths share one implementation in lib/settlement-sweep.ts. This endpoint
+ * remains for an external timer, and for running a sweep by hand.
  */
 async function handle(req: Request) {
   if (!CRON_SECRET) {
@@ -92,58 +90,8 @@ async function handle(req: Request) {
   )
 
   try {
-    const scan = await scanForSettlement({ from, limit: scanLimit })
-
-    // The scan is the honest part of the response either way: it says what it
-    // looked at and what it did not, so a caller can tell "nothing to settle"
-    // apart from "did not get that far".
-    const report = {
-      ok: true,
-      dryRun,
-      scannedAt: new Date().toISOString(),
-      scan: {
-        cursor: scan.cursor,
-        scanned: scan.scanned,
-        nextId: scan.nextId,
-        nextCursor: scan.nextCursor,
-        unexamined: scan.unexamined,
-        unreadable: scan.unreadable,
-      },
-      due: scan.candidates.map((c) => ({
-        id: c.id,
-        side: c.side,
-        strike: c.strike,
-        collateral: c.collateral,
-        expiry: c.expiry.toISOString(),
-        settleBy: c.settleBy.toISOString(),
-        pastDeadline: c.pastDeadline,
-      })),
-      // Hoisted out of `due` because it is the one thing in this response a
-      // human has to act on: these will not close by being left alone.
-      pastDeadline: scan.pastDeadline,
-    }
-
-    if (dryRun) return NextResponse.json(report)
-
-    if (!RUNNER_SECRET) {
-      // Not an error: a deployment may want the scan without a signing key.
-      // Say so rather than reporting a clean sweep that never happened.
-      return NextResponse.json({
-        ...report,
-        settled: [],
-        failed: [],
-        deferred: scan.candidates.map((c) => c.id),
-        note: 'SETTLE_RUNNER_SECRET not configured — scanned only, nothing submitted',
-      })
-    }
-
-    const run = await runSettlement(
-      scan.candidates,
-      Keypair.fromSecret(RUNNER_SECRET),
-      settleLimit
-    )
-
-    return NextResponse.json({ ...report, ...run })
+    const report = await sweepOnce({ dryRun, from, scanLimit, settleLimit })
+    return NextResponse.json(report)
   } catch (e: any) {
     return NextResponse.json(
       { error: 'settlement sweep failed', detail: e?.message ?? 'unknown' },
