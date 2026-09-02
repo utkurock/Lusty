@@ -25,9 +25,9 @@ export default function EarnPage() {
   )
 
   return (
-    <div className="max-w-7xl mx-auto px-6 py-10 space-y-10">
+    <div className="page-glow max-w-content mx-auto px-6 py-10 space-y-8">
       <section
-        className="terminal-card rounded-sm p-10 md:p-14 relative overflow-hidden bg-inverse"
+        className="terminal-card p-10 md:p-14 relative overflow-hidden bg-inverse shadow-table animate-rise"
       >
         <div
           className="absolute inset-0 pointer-events-none"
@@ -42,21 +42,21 @@ export default function EarnPage() {
         <div className="absolute inset-0 pointer-events-none bg-gradient-to-r from-inverse via-inverse/70 to-transparent" />
         <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6 relative">
           <div className="max-w-2xl">
-            <div className="font-mono text-xs text-[#eab308] mb-3">~/lusty</div>
-            <h1 className="text-4xl md:text-6xl font-bold text-cream leading-tight">
+            <div className="font-mono text-caption text-brand mb-3">~/lusty</div>
+            <h1 className="font-display text-hero md:text-hero-lg text-cream">
               Earn yield<br />upfront.
             </h1>
-            <p className="mt-4 font-mono text-sm text-cream/70 max-w-md">
+            <p className="mt-5 font-mono text-body text-cream/70 max-w-md">
               Choose an asset. Pick your strike. Receive upfront now.
             </p>
           </div>
 
           <div className="text-right">
-            <div className="font-mono text-[11px] uppercase text-cream/50">XLM / USD</div>
-            <div className="num text-3xl font-bold text-cream">
+            <div className="label text-cream/50">XLM / USD</div>
+            <div className="num text-head-lg font-bold text-cream mt-1">
               {loading ? '—' : formatUsdc(price)}
             </div>
-            <div className={`num text-sm mt-1 flex items-center gap-1 justify-end ${positive ? 'text-[#22c55e]' : 'text-[#ef4444]'}`}>
+            <div className={`num text-body mt-1 flex items-center gap-1 justify-end ${positive ? 'text-accent-green' : 'text-accent-red'}`}>
               {positive ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
               {change24h.toFixed(2)}% 24h
             </div>

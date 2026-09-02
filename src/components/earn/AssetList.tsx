@@ -73,33 +73,39 @@ export function AssetList({ tab, onTabChange }: AssetListProps) {
     stats.buckets.every((b) => b.putFull)
 
   return (
-    <div className="terminal-card rounded-sm overflow-hidden">
-      <div className="px-6 py-3 border-b border-line-2 flex items-center justify-between">
-        <div className="font-mono text-sm text-cream">~/assets</div>
-        <div className="flex gap-1">
-          <button
-            onClick={() => onTabChange('calls')}
-            className={cn(
-              'font-mono text-xs px-3 py-1 rounded-sm transition',
-              tab === 'calls' ? 'bg-[#eab308] text-ink' : 'text-cream hover:bg-line-2'
-            )}
-          >
-            covered calls
-          </button>
-          <button
-            onClick={() => onTabChange('puts')}
-            className={cn(
-              'font-mono text-xs px-3 py-1 rounded-sm transition',
-              tab === 'puts' ? 'bg-[#eab308] text-ink' : 'text-cream hover:bg-line-2'
-            )}
-          >
-            cash secured puts
-          </button>
+    <div>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div className="font-mono text-body text-ink-2">~/assets</div>
+        {/* Segmented control: the track is the sunken surface, the selected
+            side is the raised one. Only the chip moves, the strip does not. */}
+        <div
+          role="tablist"
+          className="inline-flex gap-1 p-1 rounded-sm bg-surface-2"
+        >
+          {([
+            ['calls', 'covered calls'],
+            ['puts', 'cash secured puts'],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              role="tab"
+              aria-selected={tab === value}
+              onClick={() => onTabChange(value)}
+              className={cn(
+                'press press-sm font-mono text-caption px-3 py-1.5 rounded-inner',
+                tab === value
+                  ? 'bg-brand text-ink shadow-button'
+                  : 'text-ink-2 hover:text-ink'
+              )}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       </div>
 
-      <div className="bg-card">
-        <div className="hidden md:grid grid-cols-12 px-6 py-3 font-mono text-[11px] uppercase text-ink-2 dashed-row">
+      <div className="space-y-2">
+        <div className="hidden md:grid grid-cols-12 px-5 label">
           <div className="col-span-4">Asset</div>
           <div className="col-span-3">Type</div>
           <div className="col-span-2">Max APR</div>
