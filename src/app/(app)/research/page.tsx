@@ -19,6 +19,9 @@ import {
 
 interface Commentary {
   generatedAt: number
+  /** 'gemini' when a model wrote it; 'rules' or 'static' when it was
+      synthesised locally because the model was unreachable. */
+  source?: string
   price: number
   change24hPct: number
   bias: 'bullish' | 'bearish' | 'neutral'
@@ -170,7 +173,7 @@ export default function ResearchPage() {
         >
           {commentary ? (
             <>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <BiasChip bias={commentary.bias} />
                 <span
                   className={`num text-caption font-bold ${
@@ -181,6 +184,17 @@ export default function ResearchPage() {
                   {commentary.change24hPct >= 0 ? '+' : ''}
                   {commentary.change24hPct.toFixed(2)}%
                 </span>
+                {/* Say when the note was not written by the model. Every desk
+                    note from April to September was this fallback, printed
+                    under an AI label, and nothing on the page said so. */}
+                {commentary.source && commentary.source !== 'gemini' && (
+                  <span
+                    className="font-mono text-micro uppercase tracking-wider px-2 py-0.5 rounded-sm border border-line text-ink-2"
+                    title="Written from the market data by a fixed rule, not by the model — the model was unreachable."
+                  >
+                    rule-based
+                  </span>
+                )}
               </div>
               <h3 className="font-display text-ink text-lead mt-3 leading-snug">
                 {commentary.headline}
@@ -203,7 +217,9 @@ export default function ResearchPage() {
                   book. Say so where it is read, not in a footer nobody scrolls
                   to. */}
               <div className="font-mono text-tiny text-ink-faint mt-auto pt-6">
-                Generated from live market data. Not financial advice.
+                {commentary.source === 'gemini'
+                  ? 'Written by a model from live market data. Not financial advice.'
+                  : 'Derived from live market data by a fixed rule. Not financial advice.'}
               </div>
             </>
           ) : (

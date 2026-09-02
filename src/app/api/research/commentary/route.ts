@@ -191,9 +191,29 @@ function ruleBasedCommentary(t: Ticker): Commentary {
   return { bias, headline, bullets, suggestion }
 }
 
+/**
+ * The model behind the desk note.
+ *
+ * Pinned, not `-latest`: an alias moves under you, and a note whose voice and
+ * cost change without a deploy is one nobody can account for. Overridable by
+ * env so a retirement can be answered without shipping code — which matters,
+ * because the last one was not answered at all. Every desk note in the database
+ * from April to September came from the rule-based fallback: the pinned model
+ * had been withdrawn, the call 404'd, and the failure path returned null in
+ * silence, so the panel kept printing a template under an AI label.
+ *
+ * Flash-Lite is the cheap line and the note is one small request an hour, so
+ * the larger Flash models buy nothing here — they also spend thinking tokens on
+ * a task that is four fields of JSON.
+ */
+const GEMINI_MODEL = process.env.GEMINI_MODEL ?? 'gemini-3.1-flash-lite'
+
 async function geminiCommentary(t: Ticker, tech: TechSnapshot | null): Promise<Commentary | null> {
   const key = process.env.GEMINI_API_KEY
-  if (!key) return null
+  if (!key) {
+    console.warn('commentary: GEMINI_API_KEY not set — falling back to rules')
+    return null
+  }
 
   const techBlock = tech
     ? `
@@ -228,11 +248,13 @@ Market data:
 - 24h quote volume: ${(t.quoteVolume24h / 1_000_000).toFixed(1)}M USDT
 ${techBlock}
 
+Write every string in English. The interface is English-only, and the note is rendered verbatim beside prices and tickers — a reply in another language would be shipped to the screen as-is. English is the language of the prompt, not an instruction the model has been given, and that is not the same guarantee.
+
 Tone: dry, professional, buy-side desk. Describe what the tape is doing. Just the JSON.`
 
   try {
     const r = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${key}`,
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -243,10 +265,29 @@ Tone: dry, professional, buy-side desk. Describe what the tape is doing. Just th
         cache: 'no-store',
       }
     )
-    if (!r.ok) return null
+    // Every one of these used to be a bare `return null`. That is how a model
+    // retirement went unnoticed for five months: the fallback is good enough to
+    // look deliberate, so nothing downstream could tell a working integration
+    // from a dead one.
+    if (!r.ok) {
+      const detail = await r.text().catch(() => '')
+      console.error(
+        `commentary: ${GEMINI_MODEL} returned ${r.status} — falling back to rules. ${detail.slice(0, 300)}`
+      )
+      return null
+    }
     const j = await r.json()
-    const text: string | undefined = j?.candidates?.[0]?.content?.parts?.[0]?.text
-    if (!text) return null
+    // Newer models return the answer alongside a thought signature in the same
+    // parts array, so take the first part that actually carries text rather
+    // than assuming it is the first part.
+    const parts: any[] = j?.candidates?.[0]?.content?.parts ?? []
+    const text: string | undefined = parts.find((p) => typeof p?.text === 'string')?.text
+    if (!text) {
+      console.error(
+        `commentary: ${GEMINI_MODEL} returned no text part (finishReason=${j?.candidates?.[0]?.finishReason ?? 'none'}) — falling back to rules`
+      )
+      return null
+    }
     const parsed = JSON.parse(text)
     if (
       !parsed ||
@@ -255,6 +296,9 @@ Tone: dry, professional, buy-side desk. Describe what the tape is doing. Just th
       !Array.isArray(parsed.bullets) ||
       typeof parsed.suggestion !== 'string'
     ) {
+      console.error(
+        `commentary: ${GEMINI_MODEL} returned JSON that did not match the expected shape — falling back to rules`
+      )
       return null
     }
     return {
@@ -263,7 +307,8 @@ Tone: dry, professional, buy-side desk. Describe what the tape is doing. Just th
       bullets: parsed.bullets.map((b: any) => String(b)).slice(0, 5),
       suggestion: parsed.suggestion,
     }
-  } catch {
+  } catch (err) {
+    console.error(`commentary: ${GEMINI_MODEL} call failed — falling back to rules`, err)
     return null
   }
 }
