@@ -40,3 +40,14 @@ trench*.md
 # wind-down artefacts (wallet-level data, local only)
 scripts/.wind-down-*.json
 scripts/compensate-stranded.mjs
+
+# design scratch — screenshots and notes, local only
+docs/design-references/
+screenshots/
+
+# font sources; only the subsetted web font under public/fonts ships
+jekofont/
+
+# stray env copies
+.env.local.txt
+.env.*.bak
