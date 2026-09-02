@@ -44,18 +44,25 @@ export default function LeaderboardPage() {
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [yourRow, setYourRow] = useState<LeaderRow | null>(null)
+  // A board that could not be read is not an empty board. Swallowing the
+  // failure and leaving `rows` empty rendered "No participants yet." over 217
+  // wallets — and only on devices with no cached copy to fall back on, which is
+  // why it looked like a device problem.
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   const fetchLeaderboard = useCallback(async () => {
     setLoading(true)
     try {
       const res = await fetch(`/api/leaderboard?limit=200`)
-      const data = await res.json()
-      if (data.ok) {
-        setRows(data.rows)
-        setTotal(data.total)
+      const data = await res.json().catch(() => null)
+      if (!res.ok || !data?.ok || !Array.isArray(data.rows)) {
+        throw new Error(data?.error ?? `leaderboard unavailable (${res.status})`)
       }
-    } catch {
-      // ignore
+      setRows(data.rows)
+      setTotal(data.total)
+      setLoadError(null)
+    } catch (e: any) {
+      setLoadError(e?.message ?? 'could not reach the leaderboard')
     } finally {
       setLoading(false)
     }
@@ -257,8 +264,13 @@ export default function LeaderboardPage() {
             <div className="text-right">upfront</div>
           </div>
 
-          {/* Pinned "you" row above #1 */}
-          {yourRow && (
+          {/* The pinned row is for when your own row is somewhere you cannot see
+              it. Once it is on the page in front of you — highlighted, in rank
+              order — pinning a second copy above #1 says the same thing twice. */}
+          {yourRow &&
+            !sorted
+              .slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE)
+              .some((r) => r.address === yourRow.address) && (
             <div className="grid grid-cols-[56px_1fr_120px_140px_140px] items-center px-5 h-row rounded-sm border border-brand bg-brand/10 shadow-button">
               <div className="font-mono text-caption text-brand font-bold">YOU</div>
               <div className="font-mono text-caption text-ink truncate flex items-center gap-2">
@@ -283,7 +295,14 @@ export default function LeaderboardPage() {
             </div>
           )}
 
-          {!loading && sorted.length === 0 && (
+          {!loading && loadError && rows.length === 0 && (
+            <div className="notice notice-warn">
+              Couldn&apos;t load the leaderboard: {loadError}. It retries every two
+              minutes, and reopening the tab retries immediately.
+            </div>
+          )}
+
+          {!loading && !loadError && sorted.length === 0 && (
             <div className="light-card">
               <EmptyState
                 icon={Trophy}
@@ -292,14 +311,28 @@ export default function LeaderboardPage() {
               />
             </div>
           )}
-          {!loading && sorted.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE).map((row) => (
+          {!loading && sorted.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE).map((row) => {
+            const isYou = !!address && row.address === address
+            return (
             <div
               key={row.address}
-              className="light-card card-interactive grid grid-cols-[56px_1fr_120px_140px_140px] items-center px-5 h-row"
+              className={
+                'card-interactive grid grid-cols-[56px_1fr_120px_140px_140px] items-center px-5 h-row ' +
+                (isYou
+                  /* Your own row, marked where it belongs rather than lifted
+                     out of the order — the rank beside it is the point. */
+                  ? 'rounded-sm border border-brand bg-brand/10 shadow-button'
+                  : 'light-card')
+              }
             >
               <Rank rank={row.rank} />
-              <div className="font-mono text-caption text-ink truncate">
+              <div className="font-mono text-caption text-ink truncate flex items-center gap-2">
                 {formatAddress(row.address)}
+                {isYou && (
+                  <span className="font-mono text-micro uppercase tracking-wider text-brand font-bold">
+                    you
+                  </span>
+                )}
               </div>
               <div className="text-right num text-body text-ink font-semibold">
                 {row.points.toLocaleString()}
@@ -311,7 +344,8 @@ export default function LeaderboardPage() {
                 ${row.totalPremium.toLocaleString()}
               </div>
             </div>
-          ))}
+            )
+          })}
 
           </div>
         </div>
