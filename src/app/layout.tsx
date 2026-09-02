@@ -16,12 +16,14 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" className="dark">
       <head>
-        {/* Apply stored theme before paint to avoid a flash of the wrong theme */}
+        {/* Dark ships on the element itself, so the first paint is already the
+            default theme. This only has to undo it for the wallets that chose
+            light — the reverse order flashed cream on every dark visit. */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `try{if(localStorage.getItem('lusty-theme')==='dark')document.documentElement.classList.add('dark')}catch(e){}`,
+            __html: `try{if(localStorage.getItem('lusty-theme')==='light')document.documentElement.classList.remove('dark')}catch(e){}`,
           }}
         />
         {/* Jeko is self-hosted and sets every heading above the fold, so it is

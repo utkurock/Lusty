@@ -18,7 +18,8 @@
    Lusty Design Tokens
 
    Colour is RGB channels so Tailwind's `/opacity` modifier keeps working.
-   :root = cream (light, default). html.dark = warm-black (dark).
+   html.dark = warm-black (the default). :root = cream, kept for the wallets
+   that opt into light and applied by removing the class.
 
    The structural layer below (surfaces, hairlines, radius, motion, shadow,
    focus) follows one rule: elevation is three near-adjacent surfaces separated
