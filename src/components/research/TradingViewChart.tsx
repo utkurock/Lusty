@@ -4,7 +4,8 @@ import { useTheme } from '@/providers/ThemeProvider'
 
 // Lightweight TradingView embed. We inject the official tv.js script once
 // per page and spawn an advanced chart widget pointing at XLM/USDT on
-// Binance. Styled to blend with the cream theme.
+// Binance. It carries no card of its own — the panel it sits in is the card,
+// and a second border inside that one only reads as a seam.
 export function TradingViewChart({
   symbol = 'BINANCE:XLMUSDT',
   interval = '60',
@@ -43,7 +44,8 @@ export function TradingViewChart({
         save_image: false,
         allow_symbol_change: true,
         calendar: false,
-        backgroundColor: theme === 'dark' ? '#181613' : '#f0ece3',
+        // Match the sunken well the chart sits in, so the widget has no edge.
+        backgroundColor: theme === 'dark' ? '#1a1814' : '#d4cfc2',
         gridColor: theme === 'dark' ? 'rgba(52, 48, 42, 0.6)' : 'rgba(196, 191, 178, 0.5)',
         container_id: containerRef.current!.id,
         studies: ['MASimple@tv-basicstudies'],
@@ -60,7 +62,7 @@ export function TradingViewChart({
     <div
       id="lusty_tv_chart"
       ref={containerRef}
-      className="w-full light-card rounded-sm overflow-hidden"
+      className="w-full rounded-sm overflow-hidden bg-surface-2"
       style={{ height }}
     />
   )

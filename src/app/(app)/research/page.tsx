@@ -1,8 +1,21 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { TradingViewChart } from '@/components/research/TradingViewChart'
-import { RefreshCw, ExternalLink, Sparkles, Loader2, TrendingUp, TrendingDown, Minus } from 'lucide-react'
+import { PageHeader } from '@/components/shared/PageHeader'
+import { Panel } from '@/components/shared/Panel'
+import { EmptyState } from '@/components/shared/EmptyState'
+import {
+  RefreshCw,
+  ExternalLink,
+  Loader2,
+  TrendingUp,
+  TrendingDown,
+  Minus,
+  Newspaper,
+  ArrowRight,
+} from 'lucide-react'
 
 interface Commentary {
   generatedAt: number
@@ -103,37 +116,39 @@ export default function ResearchPage() {
 
   return (
     <main className="max-w-content mx-auto px-6 py-10 text-ink">
-      {/* Market panel: chart + AI commentary + news */}
-      <section className="mb-12">
-        <div className="flex items-baseline justify-between mb-4">
-          <div>
-            <div className="font-mono text-caption text-ink-2">~/research</div>
-            <h2 className="font-display text-head-md text-ink mt-1">
-              XLM research desk
-            </h2>
-          </div>
-          {commentary && (
-            <div className="font-mono text-tiny text-ink-2">
-              updated {timeAgo(commentary.generatedAt)} · next in {nextUpdateIn(commentary.generatedAt)}
-            </div>
-          )}
-        </div>
+      {/* Same header, panels and empty state as the dashboard and leaderboard.
+          The desk is a page of this app, not a widget board bolted onto it. */}
+      <PageHeader
+        path="~/research"
+        title="XLM research desk"
+        subtitle="The live tape, an hourly note on what it means for premium sellers, and the Stellar headlines behind it."
+        action={
+          <Link href="/earn" className="btn btn-primary press">
+            Earn upfront
+            <ArrowRight size={14} />
+          </Link>
+        }
+      />
 
-        <div className="grid lg:grid-cols-3 gap-4">
-          {/* Chart */}
-          <div className="lg:col-span-2">
-            <TradingViewChart />
-          </div>
+      <div className="grid lg:grid-cols-3 gap-4 items-start">
+        <Panel
+          className="lg:col-span-2 min-w-0"
+          title="XLM / USDT · 1h"
+          note="Binance spot · TradingView"
+        >
+          <TradingViewChart />
+        </Panel>
 
-          {/* AI commentary */}
-          <div className="light-card rounded-sm p-5 flex flex-col">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Sparkles size={14} className="text-brand" />
-                <div className="label">
-                  Desk note
-                </div>
-              </div>
+        <Panel
+          title="Desk note"
+          action={
+            <div className="flex items-center gap-3">
+              {commentary && (
+                <span className="font-mono text-tiny text-ink-2">
+                  {timeAgo(commentary.generatedAt)} · next in{' '}
+                  {nextUpdateIn(commentary.generatedAt)}
+                </span>
+              )}
               <button
                 onClick={loadCommentary}
                 disabled={commentaryLoading}
@@ -147,71 +162,72 @@ export default function ResearchPage() {
                 )}
               </button>
             </div>
-
-            {commentary ? (
-              <>
-                <div className="flex items-center gap-2 mb-1">
-                  <BiasChip bias={commentary.bias} />
-                  <span
-                    className={`num text-caption font-bold ${
-                      commentary.change24hPct >= 0 ? 'text-accent-green' : 'text-accent-red'
-                    }`}
-                  >
-                    ${commentary.price.toFixed(4)} ·{' '}
-                    {commentary.change24hPct >= 0 ? '+' : ''}
-                    {commentary.change24hPct.toFixed(2)}%
-                  </span>
-                </div>
-                <h3 className="font-display text-ink text-lead mt-2 leading-snug">
-                  {commentary.headline}
-                </h3>
-                <ul className="mt-3 space-y-1.5 text-caption text-ink-3 font-mono leading-relaxed">
-                  {commentary.bullets.map((b, i) => (
-                    <li key={i} className="flex gap-2">
-                      <span className="text-brand">›</span>
-                      <span>{b}</span>
-                    </li>
-                  ))}
-                </ul>
-                <div className="mt-4 pt-3 border-t border-line border-dashed">
-                  <div className="label mb-1">
-                    Suggestion
-                  </div>
-                  <div className="text-caption text-ink leading-relaxed">
-                    {commentary.suggestion}
-                  </div>
-                </div>
-              </>
-            ) : (
-              <div className="flex-1 flex items-center justify-center text-caption text-ink-2 font-mono">
-                {commentaryLoading ? 'loading…' : 'no data'}
+          }
+        >
+          {commentary ? (
+            <>
+              <div className="flex items-center gap-2">
+                <BiasChip bias={commentary.bias} />
+                <span
+                  className={`num text-caption font-bold ${
+                    commentary.change24hPct >= 0 ? 'text-accent-green' : 'text-accent-red'
+                  }`}
+                >
+                  ${commentary.price.toFixed(4)} ·{' '}
+                  {commentary.change24hPct >= 0 ? '+' : ''}
+                  {commentary.change24hPct.toFixed(2)}%
+                </span>
               </div>
-            )}
-          </div>
-        </div>
+              <h3 className="font-display text-ink text-lead mt-3 leading-snug">
+                {commentary.headline}
+              </h3>
+              <ul className="mt-3 space-y-1.5 text-caption text-ink-3 font-mono leading-relaxed">
+                {commentary.bullets.map((b, i) => (
+                  <li key={i} className="flex gap-2">
+                    <span className="text-brand">›</span>
+                    <span>{b}</span>
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-4 pt-3 border-t border-line border-dashed">
+                <div className="label mb-1">Suggestion</div>
+                <div className="text-caption text-ink leading-relaxed">
+                  {commentary.suggestion}
+                </div>
+              </div>
+              {/* A desk note is a reading of the tape, not advice about your
+                  book. Say so where it is read, not in a footer nobody scrolls
+                  to. */}
+              <div className="font-mono text-tiny text-ink-faint mt-4">
+                Generated from live market data. Not financial advice.
+              </div>
+            </>
+          ) : (
+            <div className="font-mono text-caption text-ink-2 py-6 text-center">
+              {commentaryLoading ? 'loading…' : 'No desk note right now.'}
+            </div>
+          )}
+        </Panel>
+      </div>
 
-        {/* News feed */}
-        <div className="mt-6">
-          <div className="flex items-baseline justify-between mb-3">
-            <div className="label">
-              ~/news
-            </div>
-            <div className="font-mono text-micro text-ink-2">
-              Stellar / XLM / DeFi · auto-refresh 2m
-            </div>
+      <Panel
+        className="mt-4"
+        title="~/news"
+        note="Stellar / XLM / DeFi · auto-refresh 2m"
+      >
+        {news === null ? (
+          <div className="font-mono text-caption text-ink-2 py-6 text-center">
+            Loading news…
           </div>
+        ) : news.length === 0 ? (
+          <EmptyState
+            icon={Newspaper}
+            title="No headlines right now."
+            hint="The feed is polled every two minutes; anything new lands here on its own."
+          />
+        ) : (
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {news === null && (
-              <div className="col-span-full font-mono text-caption text-ink-2 light-card rounded-sm p-5">
-                Loading news…
-              </div>
-            )}
-            {news && news.length === 0 && (
-              <div className="col-span-full font-mono text-caption text-ink-2 light-card rounded-sm p-5">
-                No news items right now.
-              </div>
-            )}
-            {news?.slice(0, 9).map((n) => (
+            {news.slice(0, 9).map((n) => (
               <a
                 key={n.id}
                 href={n.url}
@@ -219,9 +235,9 @@ export default function ResearchPage() {
                 rel="noopener noreferrer"
                 className="light-card card-interactive p-4 group flex flex-col"
               >
-                <div className="label mb-1 flex items-center justify-between">
+                <div className="label mb-1 flex items-center justify-between gap-2">
                   <span className="truncate">{n.source}</span>
-                  <span>{timeAgo(n.publishedAt)}</span>
+                  <span className="shrink-0">{timeAgo(n.publishedAt)}</span>
                 </div>
                 <div className="text-caption leading-snug text-ink group-hover:text-brand transition line-clamp-3">
                   {n.title}
@@ -233,10 +249,8 @@ export default function ResearchPage() {
               </a>
             ))}
           </div>
-        </div>
-      </section>
-
+        )}
+      </Panel>
     </main>
   )
 }
-
