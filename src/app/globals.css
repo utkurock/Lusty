@@ -381,6 +381,74 @@ html, body, .terminal-card, .light-card, .raised-card {
     );
   }
 
+  /* Buttons ------------------------------------------------------------------
+     Two variants and no more: the one thing a screen wants you to do, and
+     everything else. A third weight would only blur which is which. */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 40px;
+    padding: 0 20px;
+    border-radius: var(--r);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 500;
+    letter-spacing: -.016em;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .btn:disabled {
+    opacity: .5;
+    cursor: not-allowed;
+  }
+  .btn-primary {
+    background: rgb(var(--inverse));
+    color: rgb(var(--cream));
+    border: 1px solid transparent;
+  }
+  .btn-primary:hover:not(:disabled) {
+    box-shadow: var(--shadow-drop);
+  }
+  .btn-ghost {
+    background: rgb(var(--card));
+    color: rgb(var(--ink));
+    border: 1px solid rgb(var(--line));
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background: rgb(var(--raised));
+    border-color: rgb(var(--line-interactive));
+  }
+
+  /* Segmented control ---------------------------------------------------------
+     A sunken track with one raised chip in it. The track never moves, so the
+     row of options does not reflow when the selection changes. */
+  .segmented {
+    display: inline-flex;
+    gap: 4px;
+    padding: 4px;
+    border-radius: var(--r);
+    background: rgb(var(--surface-2));
+  }
+  .segmented > button {
+    padding: 6px 12px;
+    border-radius: var(--r-inner);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 16px;
+    color: rgb(var(--ink-2));
+    white-space: nowrap;
+  }
+  .segmented > button:hover:not([aria-selected='true']) {
+    color: rgb(var(--ink));
+  }
+  .segmented > button[aria-selected='true'] {
+    background: rgb(var(--card));
+    color: rgb(var(--ink));
+    box-shadow: var(--shadow-button);
+  }
+
   /* Notices ------------------------------------------------------------------
      Every inline message in the app was writing its own border/background/text
      triple out of the same four tones. One class plus a tone gives them a

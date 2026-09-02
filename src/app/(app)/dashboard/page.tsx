@@ -3,8 +3,12 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useWalletContext } from '@/providers/WalletProvider'
 import { formatUsdc, formatXlm } from '@/lib/utils'
-import { ExternalLink, Loader2 } from 'lucide-react'
+import { ExternalLink, Loader2, Wallet, LayoutList, ArrowRight } from 'lucide-react'
 import { OnChainActivity } from '@/components/shared/OnChainActivity'
+import { Panel } from '@/components/shared/Panel'
+import { StatStrip } from '@/components/shared/StatStrip'
+import { EmptyState } from '@/components/shared/EmptyState'
+import { PageHeader } from '@/components/shared/PageHeader'
 
 // Mirrors DbPosition from the /api/vault/positions response. Positions are read
 // from contract state and mirrored in the shared DB, so they show from any
@@ -121,60 +125,40 @@ function RiskPanel({ portfolio }: { portfolio: Portfolio }) {
         : 'positions could not be priced'
 
   return (
-    <div className="light-card rounded-sm p-5 mb-3">
-      <div className="flex items-baseline justify-between flex-wrap gap-x-6 gap-y-1 mb-4">
-        <div className="font-mono text-[11px] uppercase text-ink-2 tracking-wider">
-          Portfolio risk
-        </div>
-        <div className="font-mono text-[11px] text-ink-2">
-          you wrote these options, so your book carries the opposite sign to the
-          option itself
-        </div>
-      </div>
-
+    <Panel
+      title="Portfolio risk"
+      note="you wrote these options, so your book carries the opposite sign to the option itself"
+    >
       {g ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-          <div>
-            <div className="font-mono text-[11px] uppercase text-ink-2 tracking-wider">
-              Net delta
-            </div>
-            <div className="num text-xl font-bold text-ink mt-0.5">
-              {signed(g.netDelta)}{' '}
-              <span className="text-sm font-normal text-ink-2">XLM</span>
-            </div>
-            <div className="font-mono text-[11px] text-ink-2 mt-1">
-              {g.netDelta < 0 ? 'short' : 'long'} the underlying · the same
-              directional exposure as holding{' '}
-              {signed(g.netDelta, 0)} XLM
-            </div>
-          </div>
-
-          <div>
-            <div className="font-mono text-[11px] uppercase text-ink-2 tracking-wider">
-              Net vega
-            </div>
-            <div className="num text-xl font-bold text-ink mt-0.5">
-              {signed(g.netVega / 100)}{' '}
-              <span className="text-sm font-normal text-ink-2">USD / vol pt</span>
-            </div>
-            <div className="font-mono text-[11px] text-ink-2 mt-1">
-              {g.netVega < 0 ? 'short' : 'long'} volatility · P&L per 1 point of
-              implied vol
-            </div>
-          </div>
-
+        <>
+          <StatStrip
+            stats={[
+              {
+                label: 'Net delta',
+                value: signed(g.netDelta),
+                unit: 'XLM',
+                sub: `${g.netDelta < 0 ? 'short' : 'long'} the underlying · the same directional exposure as holding ${signed(g.netDelta, 0)} XLM`,
+              },
+              {
+                label: 'Net vega',
+                value: signed(g.netVega / 100),
+                unit: 'USD / vol pt',
+                sub: `${g.netVega < 0 ? 'short' : 'long'} volatility · P&L per 1 point of implied vol`,
+              },
+            ]}
+          />
           {g.pricedPositions < portfolio.counts.open && (
-            <div className="sm:col-span-2 font-mono text-[11px] text-[#eab308]">
+            <div className="font-mono text-tiny text-brand mt-4">
               priced {g.pricedPositions} of {portfolio.counts.open} open
               positions — the rest could not be priced and are not in these
               totals
             </div>
           )}
-        </div>
+        </>
       ) : (
-        <div className="font-mono text-xs text-ink-2">Not shown — {absence}.</div>
+        <div className="font-mono text-caption text-ink-2">Not shown — {absence}.</div>
       )}
-    </div>
+    </Panel>
   )
 }
 
@@ -209,41 +193,28 @@ function ExposurePanel({ portfolio }: { portfolio: Portfolio }) {
   if (buckets.length === 0) return null
 
   return (
-    <div className="light-card rounded-sm p-5 mb-3">
-      <div className="flex items-baseline justify-between flex-wrap gap-x-6 gap-y-1 mb-4">
-        <div className="font-mono text-[11px] uppercase text-ink-2 tracking-wider">
-          Asset exposure
-        </div>
-        <div className="font-mono text-[11px] text-ink-2">
-          calls lock XLM, puts lock cash — separate tokens, so there is no
-          combined total
-        </div>
-      </div>
+    <Panel
+      title="Asset exposure"
+      note="calls lock XLM, puts lock cash — separate tokens, so there is no combined total"
+    >
+      <StatStrip
+        className="mb-6"
+        stats={[
+          {
+            label: 'Locked in calls',
+            value: amount(portfolio.collateral.callXlm),
+            unit: 'XLM',
+          },
+          {
+            label: 'Locked in puts',
+            value: `$${amount(portfolio.collateral.putUsd)}`,
+          },
+        ]}
+      />
 
-      <div className="grid grid-cols-2 gap-5 mb-5">
-        <div>
-          <div className="font-mono text-[11px] uppercase text-ink-2 tracking-wider">
-            Locked in calls
-          </div>
-          <div className="num text-xl font-bold text-ink mt-0.5">
-            {amount(portfolio.collateral.callXlm)}{' '}
-            <span className="text-sm font-normal text-ink-2">XLM</span>
-          </div>
-        </div>
-        <div>
-          <div className="font-mono text-[11px] uppercase text-ink-2 tracking-wider">
-            Locked in puts
-          </div>
-          <div className="num text-xl font-bold text-ink mt-0.5">
-            <span className="text-sm font-normal text-ink-2">$</span>
-            {amount(portfolio.collateral.putUsd)}
-          </div>
-        </div>
-      </div>
-
-      <div className="overflow-x-auto">
+      <div className="scroll-slim overflow-x-auto">
         <div className="min-w-[560px]">
-          <div className="grid grid-cols-[1.1fr_0.9fr_0.9fr_0.8fr_1.1fr] gap-3 font-mono text-[11px] uppercase text-ink-2 tracking-wider pb-2 border-b border-line">
+          <div className="label grid grid-cols-[1.1fr_0.9fr_0.9fr_0.8fr_1.1fr] gap-3 pb-2">
             <div>Expiry</div>
             <div className="text-right">Calls (XLM)</div>
             <div className="text-right">Puts (USD)</div>
@@ -259,26 +230,26 @@ function ExposurePanel({ portfolio }: { portfolio: Portfolio }) {
             return (
               <div
                 key={b.expiryIso}
-                className="grid grid-cols-[1.1fr_0.9fr_0.9fr_0.8fr_1.1fr] gap-3 py-2.5 border-b border-line last:border-0 items-baseline"
+                className="grid grid-cols-[1.1fr_0.9fr_0.9fr_0.8fr_1.1fr] gap-3 py-2.5 border-b border-line-light last:border-0 items-baseline"
               >
                 <div>
-                  <div className="font-mono text-xs text-ink">{b.expiryLabel}</div>
-                  <div className="font-mono text-[11px] text-ink-2">
+                  <div className="font-mono text-caption text-ink">{b.expiryLabel}</div>
+                  <div className="font-mono text-tiny text-ink-2">
                     {due
                       ? 'awaiting settlement'
                       : `in ${Math.ceil(b.daysToExpiry)}d · ${b.positions} position${b.positions === 1 ? '' : 's'}`}
                   </div>
                 </div>
-                <div className="num text-xs text-ink text-right">
+                <div className="num text-caption text-ink text-right">
                   {b.callCollateralXlm > 0 ? amount(b.callCollateralXlm) : '—'}
                 </div>
-                <div className="num text-xs text-ink text-right">
+                <div className="num text-caption text-ink text-right">
                   {b.putCollateralUsd > 0 ? amount(b.putCollateralUsd) : '—'}
                 </div>
-                <div className="num text-xs text-[#22c55e] text-right">
+                <div className="num text-caption text-accent-green text-right">
                   ${amount(b.premiumUsd, 4)}
                 </div>
-                <div className="num text-[11px] text-ink-2 text-right">
+                <div className="num text-tiny text-ink-2 text-right">
                   {callPct === null && putPct === null ? (
                     'unknown'
                   ) : (
@@ -295,13 +266,13 @@ function ExposurePanel({ portfolio }: { portfolio: Portfolio }) {
       </div>
 
       {buckets.some((b) => b.vault) && (
-        <div className="font-mono text-[11px] text-ink-2 mt-3">
+        <div className="font-mono text-tiny text-ink-2 mt-3">
           Vault load is every writer&apos;s collateral at that expiry against the
           contract&apos;s own per-expiry cap, read from contract state — not your
           share.
         </div>
       )}
-    </div>
+    </Panel>
   )
 }
 
@@ -352,100 +323,76 @@ export default function DashboardPage() {
   )
 
   return (
-    <div className="max-w-7xl mx-auto px-6 py-10">
-      <div className="mb-8 flex items-end justify-between flex-wrap gap-4">
-        <div>
-          <div className="font-mono text-xs text-ink-2">~/dashboard</div>
-          <h1 className="text-3xl font-bold text-ink mt-1">Your positions</h1>
-        </div>
-        {connected && positions.length > 0 && (
-          <div className="flex gap-6 font-mono text-xs">
-            <div>
-              <div className="text-ink-2 uppercase tracking-wider">
-                Open positions
-              </div>
-              <div className="num text-xl font-bold text-ink">
-                {positions.filter((p) => !p.settled).length}
-              </div>
-            </div>
-            <div>
-              <div className="text-ink-2 uppercase tracking-wider">
-                Upfront earned
-              </div>
-              <div className="num text-xl font-bold text-[#22c55e]">
-                ${totalPremium.toFixed(2)}
-              </div>
-            </div>
-            <div>
-              <div className="text-ink-2 uppercase tracking-wider">
-                Notional
-              </div>
-              <div className="num text-xl font-bold text-ink">
-                ${totalNotional.toFixed(2)}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
+    <div className="max-w-content mx-auto px-6 py-10">
+      {/* Title on the left, the one action this page leads to on the right —
+          from here, the only thing to do next is open another position. */}
+      <PageHeader
+        path="~/dashboard"
+        title="Your positions"
+        action={
+          <Link href="/earn" className="btn btn-primary press">
+            Earn upfront
+            <ArrowRight size={14} />
+          </Link>
+        }
+      />
 
       {toast && (
         <div
           className={
-            'mb-4 p-3 border rounded-sm font-mono text-xs ' +
-            (toast.kind === 'ok'
-              ? 'border-[#22c55e]/40 bg-[#22c55e]/10 text-[#22c55e]'
-              : 'border-[#ef4444]/40 bg-[#ef4444]/10 text-[#ef4444]')
+            'notice mb-4 ' + (toast.kind === 'ok' ? 'notice-ok' : 'notice-error')
           }
         >
           {toast.text}
         </div>
       )}
 
+      {/* Book first, then the positions it summarises, then risk. The rail
+          carries the figures you check; the main column carries the rows you
+          act on. Below `lg` the rail simply stacks under it. */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1.9fr_1fr] gap-4 items-start">
+        <div className="space-y-4 min-w-0">
       {!connected && (
-        <div className="light-card p-8 rounded-sm text-center">
-          <div className="font-mono text-sm text-ink-2 mb-4">
-            Connect wallet to view positions
-          </div>
-          <button
-            onClick={connect}
-            className="h-10 px-6 bg-inverse text-cream font-mono text-sm rounded-sm hover:bg-line-2"
-          >
-            connect
-          </button>
+        <div className="light-card">
+          <EmptyState
+            icon={Wallet}
+            title="Connect a wallet to see your positions."
+            hint="Nothing is stored locally — positions are read from contract state, so they follow the wallet, not the browser."
+            action={
+              <button onClick={connect} className="btn btn-primary press">
+                connect
+              </button>
+            }
+          />
         </div>
       )}
 
       {connected && loading && positions.length === 0 && (
         <div className="light-card p-12 rounded-sm text-center">
-          <div className="font-mono text-sm text-ink-2 inline-flex items-center gap-2">
+          <div className="font-mono text-body text-ink-2 inline-flex items-center gap-2">
             <Loader2 size={14} className="animate-spin" /> Loading positions…
           </div>
         </div>
       )}
 
       {connected && !loading && positions.length === 0 && (
-        <div className="light-card p-12 rounded-sm text-center">
-          <div className="font-mono text-sm text-ink-2 mb-4">
-            No active positions. Start earning.
-          </div>
-          <Link
-            href="/earn"
-            className="inline-flex h-10 px-6 items-center bg-inverse text-cream font-mono text-sm rounded-sm hover:bg-line-2"
-          >
-            go to earn
-          </Link>
+        <div className="light-card">
+          <EmptyState
+            icon={LayoutList}
+            title="No active positions yet."
+            hint="Pick a strike you would be happy to sell at, and the upfront lands in your wallet the moment you deposit."
+            action={
+              <Link href="/earn" className="btn btn-primary press">
+                go to earn
+                <ArrowRight size={14} />
+              </Link>
+            }
+          />
         </div>
       )}
 
-      {connected && portfolio && positions.length > 0 && (
-        <>
-          <RiskPanel portfolio={portfolio} />
-          <ExposurePanel portfolio={portfolio} />
-        </>
-      )}
-
       {connected && positions.length > 0 && (
-        <div className="space-y-3">
+        <div className="space-y-2">
           {positions.map((p) => {
             const days = daysRemaining(p.expiryIso)
             const expired = isExpired(p.expiryIso)
@@ -454,7 +401,7 @@ export default function DashboardPage() {
             return (
               <div
                 key={p.id}
-                className="light-card rounded-sm p-5 grid grid-cols-1 md:grid-cols-[1.3fr_1fr_1fr_1fr_auto] gap-5 items-center"
+                className="light-card card-interactive p-5 grid grid-cols-1 md:grid-cols-[1.3fr_1fr_1fr_1fr_auto] gap-5 items-center"
               >
                 <div className="flex items-center gap-3">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -467,17 +414,17 @@ export default function DashboardPage() {
                     <div className="font-mono font-semibold text-ink">
                       {p.asset} {isCall ? 'Covered Call' : 'Cash-Secured Put'}
                     </div>
-                    <div className="font-mono text-[11px] text-ink-2">
+                    <div className="font-mono text-tiny text-ink-2">
                       strike ${(p.strikePrice ?? 0).toFixed(4)} · {p.expiryLabel}
                     </div>
                   </div>
                 </div>
 
                 <div>
-                  <div className="font-mono text-[11px] uppercase text-ink-2 tracking-wider">
+                  <div className="label">
                     Collateral
                   </div>
-                  <div className="num text-sm text-ink font-semibold mt-0.5">
+                  <div className="num text-body text-ink font-semibold mt-0.5">
                     {isCall
                       ? formatXlm(p.collateralAmount)
                       : formatUsdc(p.collateralAmount)}
@@ -485,10 +432,10 @@ export default function DashboardPage() {
                 </div>
 
                 <div>
-                  <div className="font-mono text-[11px] uppercase text-ink-2 tracking-wider">
+                  <div className="label">
                     Upfront
                   </div>
-                  <div className="num text-sm text-[#22c55e] font-semibold mt-0.5">
+                  <div className="num text-body text-accent-green font-semibold mt-0.5">
                     ${p.premium.toFixed(4)}{' '}
                     <span className="text-ink-2 font-normal">
                       ({(p.apr ?? 0).toFixed(2)}% APR)
@@ -497,10 +444,10 @@ export default function DashboardPage() {
                 </div>
 
                 <div>
-                  <div className="font-mono text-[11px] uppercase text-ink-2 tracking-wider">
+                  <div className="label">
                     {p.settled ? 'Settled' : expired ? 'Awaiting settlement' : 'Expires in'}
                   </div>
-                  <div className="num text-sm text-ink font-semibold mt-0.5">
+                  <div className="num text-body text-ink font-semibold mt-0.5">
                     {p.settled ? 'yes' : expired ? 'now' : `${days}d`}
                   </div>
                 </div>
@@ -515,7 +462,7 @@ export default function DashboardPage() {
                   */}
                   {expired && !p.settled && p.positionId !== null && (
                     <span
-                      className="font-mono text-[11px] text-ink-2"
+                      className="font-mono text-tiny text-ink-2"
                       title="Settled by the contract against the oracle price at expiry. Anyone can trigger it; a scheduled runner does."
                     >
                       settles on chain
@@ -525,7 +472,7 @@ export default function DashboardPage() {
                     href={`https://stellarchain.io/tx/${p.depositHash}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="font-mono text-xs flex items-center gap-1 text-ink-2 hover:text-ink"
+                    className="font-mono text-caption flex items-center gap-1 text-ink-2 hover:text-ink"
                     title="View deposit on explorer"
                   >
                     {p.depositHash.slice(0, 8)}…
@@ -538,9 +485,60 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Live on-chain event feed — public, streamed from the ledger via
-          Soroban RPC getEvents (the contract's own deposit/settle/fund events). */}
-      <OnChainActivity />
+          {connected && portfolio && positions.length > 0 && (
+            <ExposurePanel portfolio={portfolio} />
+          )}
+
+          {/* Live on-chain event feed — public, streamed from the ledger via
+              Soroban RPC getEvents (the contract's own deposit/settle/fund
+              events). */}
+          <OnChainActivity />
+        </div>
+
+        {/* The rail: what your book adds up to, and what it risks. */}
+        <aside className="space-y-4 lg:sticky lg:top-24">
+          {connected && positions.length > 0 && (
+            <Panel title="Your book">
+              <StatStrip
+                stack
+                stats={[
+                  {
+                    label: 'Open positions',
+                    value: positions.filter((p) => !p.settled).length,
+                    sub: `${positions.length} written in total`,
+                  },
+                  {
+                    label: 'Upfront earned',
+                    value: `$${totalPremium.toFixed(2)}`,
+                    tone: 'green',
+                    sub: 'paid at deposit, yours in every outcome',
+                  },
+                  {
+                    label: 'Notional',
+                    value: `$${totalNotional.toFixed(2)}`,
+                    sub: 'value assigned if every position is called',
+                  },
+                ]}
+              />
+            </Panel>
+          )}
+
+          {connected && portfolio && positions.length > 0 && (
+            <RiskPanel portfolio={portfolio} />
+          )}
+
+          <Panel title="Earn more">
+            <p className="font-mono text-caption text-ink-2 mb-4">
+              Three expiries are open at a time. Each one carries its own
+              capacity and its own per-wallet allowance.
+            </p>
+            <Link href="/earn" className="btn btn-ghost press w-full">
+              Open a position
+              <ArrowRight size={14} />
+            </Link>
+          </Panel>
+        </aside>
+      </div>
     </div>
   )
 }

@@ -4,6 +4,9 @@ import { useEffect, useMemo, useState, useCallback } from 'react'
 import { useWalletContext } from '@/providers/WalletProvider'
 import { formatAddress } from '@/lib/utils'
 import { Trophy, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
+import { Panel } from '@/components/shared/Panel'
+import { StatStrip } from '@/components/shared/StatStrip'
+import { EmptyState } from '@/components/shared/EmptyState'
 
 interface LeaderRow {
   rank: number
@@ -17,7 +20,7 @@ interface LeaderRow {
 function Rank({ rank }: { rank: number }) {
   const medalColor =
     rank === 1
-      ? 'bg-[#eab308] text-ink'
+      ? 'bg-brand text-ink'
       : rank === 2
       ? 'bg-line text-ink'
       : rank === 3
@@ -25,7 +28,7 @@ function Rank({ rank }: { rank: number }) {
       : 'bg-transparent text-ink-2'
   return (
     <div
-      className={`font-mono text-sm w-8 h-8 flex items-center justify-center rounded-sm ${medalColor}`}
+      className={`font-mono text-body w-8 h-8 flex items-center justify-center rounded-sm ${medalColor}`}
     >
       {rank <= 3 ? <Trophy size={14} /> : rank}
     </div>
@@ -156,20 +159,22 @@ export default function LeaderboardPage() {
   const totalDeposits = rows.reduce((sum, r) => sum + r.totalDeposited, 0)
   const totalPremium = rows.reduce((sum, r) => sum + r.totalPremium, 0)
 
+  /* Sorting is a segmented control rather than four underlined words: the
+     current sort is a state of the table, and a chip that stays lit says so
+     better than a colour change on a link. */
   const SortButton = ({ k, children }: { k: SortKey; children: React.ReactNode }) => (
     <button
       onClick={() => setSortKey(k)}
-      className={
-        'font-mono text-[11px] uppercase tracking-wider transition ' +
-        (sortKey === k ? 'text-ink' : 'text-ink-2 hover:text-ink')
-      }
+      aria-selected={sortKey === k}
+      role="tab"
+      className="press press-sm"
     >
       {children}
     </button>
   )
 
   return (
-    <div className="max-w-7xl mx-auto px-6 pt-10 pb-2 space-y-10">
+    <div className="max-w-content mx-auto px-6 pt-10 pb-2 space-y-10">
       {/* Hero */}
       <section className="terminal-card rounded-sm p-8 md:p-12 relative overflow-hidden">
         <div
@@ -186,17 +191,17 @@ export default function LeaderboardPage() {
         <div className="absolute inset-0 pointer-events-none bg-gradient-to-r from-inverse via-inverse/80 to-transparent" />
         <div className="relative flex flex-col md:flex-row md:items-end md:justify-between gap-6">
           <div>
-            <div className="font-mono text-xs text-[#eab308] mb-3">~/leaderboard</div>
-            <h1 className="text-4xl md:text-5xl font-bold text-cream leading-tight">
-              Season 0 <span className="text-[#eab308]">points</span>
+            <div className="font-mono text-caption text-brand mb-3">~/leaderboard</div>
+            <h1 className="font-display text-head-lg md:text-hero text-cream leading-tight">
+              Season 0 <span className="text-brand">points</span>
             </h1>
-            <p className="mt-3 font-mono text-sm text-cream/70 max-w-md">
+            <p className="mt-3 font-mono text-body text-cream/70 max-w-md">
               Every deposit and every LUSD upfront you earn feeds a single
               leaderboard.
             </p>
             <a
               href="/docs#points"
-              className="mt-4 inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-wider px-3 py-1.5 rounded-sm border border-[#eab308]/40 bg-[#eab308]/10 text-[#eab308] hover:bg-[#eab308]/20 transition"
+              className="mt-4 inline-flex items-center gap-2 font-mono text-tiny uppercase tracking-wider px-3 py-1.5 rounded-sm border border-brand/40 bg-brand/10 text-brand hover:bg-brand/20 transition"
             >
               How points work
               <span aria-hidden>→</span>
@@ -204,20 +209,20 @@ export default function LeaderboardPage() {
           </div>
           <div className="grid grid-cols-3 gap-4 text-right font-mono">
             <div>
-              <div className="text-[11px] uppercase text-cream/50">Wallets</div>
+              <div className="text-tiny uppercase text-cream/50">Wallets</div>
               <div className="num text-xl font-bold text-cream">
                 {total.toLocaleString()}
               </div>
             </div>
             <div>
-              <div className="text-[11px] uppercase text-cream/50">Points</div>
-              <div className="num text-xl font-bold text-[#eab308]">
+              <div className="text-tiny uppercase text-cream/50">Points</div>
+              <div className="num text-xl font-bold text-brand">
                 {totalPoints >= 1000 ? `${(totalPoints / 1000).toFixed(1)}k` : totalPoints.toLocaleString()}
               </div>
             </div>
             <div>
-              <div className="text-[11px] uppercase text-cream/50">Upfront</div>
-              <div className="num text-xl font-bold text-[#22c55e]">
+              <div className="text-tiny uppercase text-cream/50">Upfront</div>
+              <div className="num text-xl font-bold text-accent-green">
                 ${totalPremium >= 1000 ? `${(totalPremium / 1000).toFixed(1)}k` : totalPremium.toFixed(2)}
               </div>
             </div>
@@ -225,23 +230,60 @@ export default function LeaderboardPage() {
         </div>
       </section>
 
+      {/* Where this wallet stands, before the board it stands in. The figures
+          are the same ones the pinned row carries, read across instead of
+          along, and they say "—" rather than 0 when the wallet is not on the
+          board yet. */}
+      {connected && (
+        <Panel
+          title="Your standing"
+          note={yourRow ? `wallet ${formatAddress(address ?? '')}` : 'not on the board yet'}
+        >
+          <StatStrip
+            stats={[
+              {
+                label: 'Rank',
+                value: yourRow ? `#${yourRow.rank}` : '—',
+                sub: yourRow ? `of ${total.toLocaleString()} wallets` : 'deposit once to enter',
+              },
+              {
+                label: 'Points',
+                value: yourRow ? yourRow.points.toLocaleString() : '—',
+                tone: 'brand',
+              },
+              {
+                label: 'Volume',
+                value: yourRow ? `$${yourRow.totalDeposited.toLocaleString()}` : '—',
+                sub: 'collateral deposited',
+              },
+              {
+                label: 'Upfront',
+                value: yourRow ? `$${yourRow.totalPremium.toLocaleString()}` : '—',
+                tone: 'green',
+                sub: 'paid to this wallet',
+              },
+            ]}
+          />
+        </Panel>
+      )}
+
       {/* Leaderboard table */}
       <section>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="font-mono text-xs uppercase text-ink-2 tracking-wider">
+        <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+          <h2 className="label">
             ~/rankings
           </h2>
-          <div className="font-mono text-[11px] text-ink-2">
-            sort by: <SortButton k="rank">rank</SortButton>{' '}
-            · <SortButton k="points">points</SortButton>{' '}
-            · <SortButton k="totalDeposited">volume</SortButton>{' '}
-            · <SortButton k="totalPremium">upfront</SortButton>
+          <div role="tablist" className="segmented">
+            <SortButton k="rank">rank</SortButton>
+            <SortButton k="points">points</SortButton>
+            <SortButton k="totalDeposited">volume</SortButton>
+            <SortButton k="totalPremium">upfront</SortButton>
           </div>
         </div>
 
-        <div className="light-card rounded-sm overflow-x-auto">
-          <div className="min-w-[600px]">
-          <div className="grid grid-cols-[56px_1fr_120px_140px_140px] px-5 py-3 border-b border-line font-mono text-[11px] uppercase tracking-wider text-ink-2">
+        <div className="scroll-slim overflow-x-auto">
+          <div className="min-w-[600px] space-y-2">
+          <div className="label grid grid-cols-[56px_1fr_120px_140px_140px] px-5">
             <div>#</div>
             <div>wallet</div>
             <div className="text-right">points</div>
@@ -251,55 +293,55 @@ export default function LeaderboardPage() {
 
           {/* Pinned "you" row above #1 */}
           {yourRow && (
-            <div className="grid grid-cols-[56px_1fr_120px_140px_140px] items-center px-5 py-3 bg-[#eab308]/15 border-b-2 border-[#eab308] border-dashed">
-              <div className="font-mono text-xs text-[#eab308] font-bold">YOU</div>
-              <div className="font-mono text-xs text-ink truncate flex items-center gap-2">
+            <div className="grid grid-cols-[56px_1fr_120px_140px_140px] items-center px-5 h-row rounded-sm border border-brand bg-brand/10 shadow-button">
+              <div className="font-mono text-caption text-brand font-bold">YOU</div>
+              <div className="font-mono text-caption text-ink truncate flex items-center gap-2">
                 <span className="num text-ink-2">#{yourRow.rank}</span>
                 <span className="font-semibold">{formatAddress(yourRow.address)}</span>
               </div>
-              <div className="text-right num text-sm text-ink font-bold">
+              <div className="text-right num text-body text-ink font-bold">
                 {yourRow.points.toLocaleString()}
               </div>
-              <div className="text-right num text-xs text-ink-2">
+              <div className="text-right num text-caption text-ink-2">
                 ${yourRow.totalDeposited.toLocaleString()}
               </div>
-              <div className="text-right num text-xs text-[#22c55e]">
+              <div className="text-right num text-caption text-accent-green">
                 ${yourRow.totalPremium.toLocaleString()}
               </div>
             </div>
           )}
 
           {loading && (
-            <div className="px-5 py-16 flex items-center justify-center">
+            <div className="light-card px-5 py-16 flex items-center justify-center">
               <Loader2 size={20} className="animate-spin text-ink-2" />
             </div>
           )}
 
           {!loading && sorted.length === 0 && (
-            <div className="px-5 py-16 text-center font-mono text-xs text-ink-2">
-              <div className="text-ink font-semibold mb-1">
-                No participants yet
-              </div>
-              Be the first to deposit. Every covered call and every cash
-              secured put earns points the moment the upfront lands.
+            <div className="light-card">
+              <EmptyState
+                icon={Trophy}
+                title="No participants yet."
+                hint="Be the first to deposit — every covered call and every cash-secured put earns points the moment the upfront lands."
+              />
             </div>
           )}
           {!loading && sorted.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE).map((row) => (
             <div
               key={row.address}
-              className="grid grid-cols-[56px_1fr_120px_140px_140px] items-center px-5 py-3 dashed-row hover:bg-surface transition"
+              className="light-card card-interactive grid grid-cols-[56px_1fr_120px_140px_140px] items-center px-5 h-row"
             >
               <Rank rank={row.rank} />
-              <div className="font-mono text-xs text-ink truncate">
+              <div className="font-mono text-caption text-ink truncate">
                 {formatAddress(row.address)}
               </div>
-              <div className="text-right num text-sm text-ink font-semibold">
+              <div className="text-right num text-body text-ink font-semibold">
                 {row.points.toLocaleString()}
               </div>
-              <div className="text-right num text-xs text-ink-2">
+              <div className="text-right num text-caption text-ink-2">
                 ${row.totalDeposited.toLocaleString()}
               </div>
-              <div className="text-right num text-xs text-[#22c55e]">
+              <div className="text-right num text-caption text-accent-green">
                 ${row.totalPremium.toLocaleString()}
               </div>
             </div>
@@ -310,7 +352,7 @@ export default function LeaderboardPage() {
 
         {/* Horizontal pagination */}
         {sorted.length > 0 && (
-        <div className="mt-3 flex items-center justify-between font-mono text-[11px] text-ink-2">
+        <div className="mt-3 flex items-center justify-between font-mono text-tiny text-ink-2">
           <div>
             total deposits ${(totalDeposits / 1_000_000).toFixed(2)}M
           </div>
@@ -318,7 +360,7 @@ export default function LeaderboardPage() {
             <button
               onClick={() => setPage((p) => Math.max(0, p - 1))}
               disabled={page === 0}
-              className="w-8 h-8 flex items-center justify-center rounded-sm border border-line bg-card text-ink hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed transition"
+              className="press w-8 h-8 flex items-center justify-center rounded-sm border border-line bg-card text-ink hover:bg-raised disabled:opacity-30 disabled:cursor-not-allowed transition"
               aria-label="Previous page"
             >
               <ChevronLeft size={14} />
@@ -333,7 +375,7 @@ export default function LeaderboardPage() {
                 )
               }
               disabled={(page + 1) * PAGE_SIZE >= sorted.length}
-              className="w-8 h-8 flex items-center justify-center rounded-sm border border-line bg-card text-ink hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed transition"
+              className="press w-8 h-8 flex items-center justify-center rounded-sm border border-line bg-card text-ink hover:bg-raised disabled:opacity-30 disabled:cursor-not-allowed transition"
               aria-label="Next page"
             >
               <ChevronRight size={14} />
