@@ -1,6 +1,12 @@
 'use client'
+import { useEffect, useState } from 'react'
 import { ExternalLink } from 'lucide-react'
 import { useContractEvents, type VaultEvent } from '@/hooks/useContractEvents'
+import { Pager } from '@/components/shared/Pager'
+
+// Five rows at a time. The feed is a thing you scan, not a wall you scroll
+// past on the way to the rest of the page.
+const PAGE_SIZE = 5
 
 function timeAgo(iso: string): string {
   const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000))
@@ -60,6 +66,15 @@ export function OnChainActivity() {
   const { events, loading } = useContractEvents()
   const mirrored = events.filter((e) => e.source === 'mirror').length
 
+  const [page, setPage] = useState(0)
+  const pageCount = Math.ceil(events.length / PAGE_SIZE)
+  // A poll that shortens the feed must not strand the reader on a page that no
+  // longer exists.
+  useEffect(() => {
+    setPage((p) => Math.min(p, Math.max(0, pageCount - 1)))
+  }, [pageCount])
+  const shown = events.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE)
+
   return (
     <div className="mt-10">
       <div className="mb-3 flex items-center justify-between">
@@ -72,7 +87,6 @@ export function OnChainActivity() {
               : 'Streamed from the ledger via Soroban RPC getEvents.'
           }
         >
-          <span className="w-1.5 h-1.5 rounded-full bg-accent-green animate-pulse" />
           {mirrored > 0 ? 'soroban events · mirrored history' : 'live · soroban events'}
         </div>
       </div>
@@ -91,7 +105,7 @@ export function OnChainActivity() {
           </div>
         )}
 
-        {events.map((e, i) => {
+        {shown.map((e, i) => {
           const l = label(e)
           return (
             <div
@@ -128,6 +142,13 @@ export function OnChainActivity() {
           )
         })}
       </div>
+
+      <Pager
+        className="mt-3"
+        page={page}
+        pageCount={pageCount}
+        onChange={setPage}
+      />
     </div>
   )
 }
