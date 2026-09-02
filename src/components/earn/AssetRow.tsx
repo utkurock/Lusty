@@ -69,7 +69,7 @@ export function AssetRow({
       onKeyDown={disabled ? undefined : e => { if (e.key === 'Enter') router.push(href) }}
       aria-disabled={disabled || undefined}
       className={
-        'light-card px-4 md:px-5 py-4 md:py-0 md:h-[76px] md:flex md:items-center ' +
+        'light-card px-4 md:px-5 py-4 md:py-0 md:h-row md:flex md:items-center ' +
         (disabled
           ? 'opacity-60 cursor-not-allowed'
           : 'card-interactive cursor-pointer')
@@ -89,10 +89,6 @@ export function AssetRow({
           <div>
             <div className="font-display text-lead text-ink">{symbol}</div>
             <div className="font-mono text-caption text-ink-2">{name}</div>
-            <div className="flex gap-1.5 mt-1">
-              <span className="chip">weekly</span>
-              <span className="chip">oracle settled</span>
-            </div>
           </div>
         </div>
         <div className="col-span-3 font-mono text-body text-ink-2">{type}</div>
