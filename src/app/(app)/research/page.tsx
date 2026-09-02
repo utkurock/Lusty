@@ -130,7 +130,10 @@ export default function ResearchPage() {
         }
       />
 
-      <div className="grid lg:grid-cols-3 gap-4 items-start">
+      {/* The two panels are one row, so they end on the same line: the grid
+          stretches them and the note's disclaimer is pushed to the foot rather
+          than leaving a short card beside a tall chart. */}
+      <div className="grid lg:grid-cols-3 gap-4">
         <Panel
           className="lg:col-span-2 min-w-0"
           title="XLM / USDT · 1h"
@@ -140,6 +143,7 @@ export default function ResearchPage() {
         </Panel>
 
         <Panel
+          className="flex flex-col"
           title="Desk note"
           action={
             <div className="flex items-center gap-3">
@@ -198,12 +202,12 @@ export default function ResearchPage() {
               {/* A desk note is a reading of the tape, not advice about your
                   book. Say so where it is read, not in a footer nobody scrolls
                   to. */}
-              <div className="font-mono text-tiny text-ink-faint mt-4">
+              <div className="font-mono text-tiny text-ink-faint mt-auto pt-6">
                 Generated from live market data. Not financial advice.
               </div>
             </>
           ) : (
-            <div className="font-mono text-caption text-ink-2 py-6 text-center">
+            <div className="flex-1 flex items-center justify-center font-mono text-caption text-ink-2 py-6">
               {commentaryLoading ? 'loading…' : 'No desk note right now.'}
             </div>
           )}
@@ -211,7 +215,7 @@ export default function ResearchPage() {
       </div>
 
       <Panel
-        className="mt-4"
+        className="mt-8"
         title="~/news"
         note="Stellar / XLM / DeFi · auto-refresh 2m"
       >
