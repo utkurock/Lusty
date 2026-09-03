@@ -32,6 +32,86 @@ interface SwapBody {
   expectedDestAmount: number
 }
 
+/**
+ * Can a swap be paid out right now?
+ *
+ * The order this route is called in used to be: the user signs a payment to the
+ * distributor, the payment lands irreversibly, and only then does the server
+ * find out whether it can price the swap and cover the payout. Everything that
+ * could fail — a price feed, a balance, a missing key — failed after the money
+ * had already moved, and the user was told "swap failed" while their funds sat
+ * at the distributor with no record of what they were owed.
+ *
+ * So the checks move in front of the payment. This answers the only question
+ * worth asking before signing: if I send this, will it come back?
+ *
+ * It is a readiness check, not a promise — the price is refetched at payout and
+ * a balance can change in between. It closes the window; it cannot remove it.
+ */
+export async function GET(req: Request) {
+  const url = new URL(req.url)
+  const direction = url.searchParams.get('direction')
+  const amount = Number(url.searchParams.get('amount') ?? '0')
+
+  if (direction !== 'xlm_to_lusd' && direction !== 'lusd_to_xlm') {
+    return NextResponse.json({ error: 'invalid direction' }, { status: 400 })
+  }
+  if (!isFinite(amount) || amount <= 0) {
+    return NextResponse.json({ error: 'invalid amount' }, { status: 400 })
+  }
+  if (!LUSD_ISSUER || !DISTRIBUTOR_SECRET) {
+    return NextResponse.json(
+      { ready: false, reason: 'swap is not configured on the server' },
+      { status: 503 }
+    )
+  }
+
+  try {
+    // 1. Can we price it? This is the check that was failing after the fact.
+    const spot = await fetchXlmUsd()
+    const gross = direction === 'xlm_to_lusd' ? amount * spot : amount / spot
+    const destAmount = gross * (1 - 0.001)
+
+    // 2. Can the distributor cover the payout?
+    const server = new Horizon.Server(HORIZON)
+    const dist = await server.loadAccount(
+      Keypair.fromSecret(DISTRIBUTOR_SECRET).publicKey()
+    )
+    const held =
+      direction === 'xlm_to_lusd'
+        ? dist.balances.find(
+            (b: any) => b.asset_code === LUSD_CODE && b.asset_issuer === LUSD_ISSUER
+          )
+        : dist.balances.find((b: any) => b.asset_type === 'native')
+    const available = held ? parseFloat((held as any).balance) : 0
+    // Native balances carry a base reserve that cannot be spent; keep clear of it.
+    const spendable = direction === 'lusd_to_xlm' ? available - 5 : available
+    if (spendable < destAmount) {
+      return NextResponse.json(
+        {
+          ready: false,
+          reason: `the protocol cannot cover this swap right now (needs ${destAmount.toFixed(4)}, has ${Math.max(0, spendable).toFixed(4)})`,
+        },
+        { status: 503 }
+      )
+    }
+
+    return NextResponse.json(
+      { ready: true, spot, destAmount },
+      { headers: { 'Cache-Control': 'no-store' } }
+    )
+  } catch (e: any) {
+    console.error('swap preflight failed:', e?.message ?? e)
+    return NextResponse.json(
+      {
+        ready: false,
+        reason: `pricing is unavailable right now — ${e?.message ?? 'unknown'}`,
+      },
+      { status: 503 }
+    )
+  }
+}
+
 export async function POST(req: Request) {
   // Hoisted so the catch below can name the funding transaction it failed on.
   let bodyHashForLog: string | undefined

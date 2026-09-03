@@ -91,6 +91,24 @@ export default function SwapPage() {
         return
       }
 
+      // Ask before paying: can the server price this and cover the payout?
+      // The payment below is irreversible, so every reason it could be refused
+      // afterwards is worth finding out first.
+      const direction: 'xlm_to_lusd' | 'lusd_to_xlm' =
+        fromAsset === 'XLM' ? 'xlm_to_lusd' : 'lusd_to_xlm'
+      setStatus('Checking the protocol can cover this…')
+      const pre = await fetch(
+        `/api/swap?direction=${direction}&amount=${encodeURIComponent(parsed)}`,
+        { cache: 'no-store' }
+      )
+      const preData = await pre.json().catch(() => null)
+      if (!pre.ok || !preData?.ready) {
+        throw new Error(
+          `${preData?.reason ?? preData?.error ?? 'the swap cannot be completed right now'}. ` +
+            `Nothing was sent — your ${fromAsset} is untouched.`
+        )
+      }
+
       // Preflight: if receiving LUSD, make sure the user has a trustline.
       if (toAsset === 'LUSD') {
         const hasTrust = await hasLusdTrustline(address)
@@ -116,7 +134,6 @@ export default function SwapPage() {
 
       // 1. Build + sign a payment to the distributor (user sends source asset)
       setStatus('Sending payment — confirm in wallet')
-      const direction = fromAsset === 'XLM' ? 'xlm_to_lusd' : 'lusd_to_xlm'
       const payXdr = await buildSwapPaymentTx({
         user: address,
         type: fromAsset === 'XLM' ? 'call' : 'put',
