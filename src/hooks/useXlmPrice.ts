@@ -1,122 +1,71 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 interface PriceData {
   price: number
   change24h: number
   loading: boolean
   error: string | null
-  source: 'binance-ws' | 'binance-rest' | 'fallback'
+  source: string
 }
 
-const SYMBOL = 'xlmusdt'
-const WS_URL = `wss://stream.binance.com:9443/stream?streams=${SYMBOL}@trade/${SYMBOL}@ticker`
-const REST_URL = `https://api.binance.com/api/v3/ticker/24hr?symbol=XLMUSDT`
+// Polled rather than streamed. The old hook held a Binance websocket open for a
+// tick-by-tick price, which looked live and cost the page a third-party socket
+// that a good share of networks refuse to open — and when it failed there was
+// nothing behind it. Nothing on these screens is traded on a per-tick basis:
+// strikes are quoted in tenors of days, so a price that moves every few seconds
+// is as live as this app needs to be.
+const POLL_MS = 10_000
 
 export function useXlmPrice(): PriceData {
   const [data, setData] = useState<PriceData>({
-    price: 0.10,
+    price: 0,
     change24h: 0,
     loading: true,
     error: null,
-    source: 'fallback',
+    source: 'none',
   })
 
-  const wsRef = useRef<WebSocket | null>(null)
-  const reconnectRef = useRef<number | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-
-    // Seed price from REST so the UI has a number before the first WS tick.
-    const seed = async () => {
-      try {
-        const res = await fetch(REST_URL)
-        const json = await res.json()
-        if (cancelled) return
-        setData((prev) => ({
-          ...prev,
-          price: parseFloat(json.lastPrice) || prev.price,
-          change24h: parseFloat(json.priceChangePercent) || 0,
-          loading: false,
-          error: null,
-          source: 'binance-rest',
-        }))
-      } catch {
-        if (!cancelled) {
-          setData((prev) => ({ ...prev, loading: false }))
-        }
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch('/api/price/xlm', { cache: 'no-store' })
+      const json = await res.json().catch(() => null)
+      if (!res.ok || !json?.ok || typeof json.price !== 'number') {
+        throw new Error(json?.error ?? `price unavailable (${res.status})`)
       }
-    }
-
-    const connect = () => {
-      if (cancelled) return
-      try {
-        const ws = new WebSocket(WS_URL)
-        wsRef.current = ws
-
-        ws.onmessage = (event) => {
-          try {
-            const msg = JSON.parse(event.data)
-            const stream: string = msg.stream
-            const payload = msg.data
-            if (!payload) return
-
-            if (stream.endsWith('@trade')) {
-              const price = parseFloat(payload.p)
-              if (!isNaN(price)) {
-                setData((prev) => ({
-                  ...prev,
-                  price,
-                  loading: false,
-                  error: null,
-                  source: 'binance-ws',
-                }))
-              }
-            } else if (stream.endsWith('@ticker')) {
-              const change = parseFloat(payload.P)
-              const last = parseFloat(payload.c)
-              if (!isNaN(change)) {
-                setData((prev) => ({
-                  ...prev,
-                  price: !isNaN(last) ? last : prev.price,
-                  change24h: change,
-                  loading: false,
-                  error: null,
-                  source: 'binance-ws',
-                }))
-              }
-            }
-          } catch {
-            /* ignore parse errors */
-          }
-        }
-
-        ws.onerror = () => {
-          setData((prev) => ({ ...prev, error: 'ws-error' }))
-        }
-
-        ws.onclose = () => {
-          if (cancelled) return
-          reconnectRef.current = window.setTimeout(connect, 3000)
-        }
-      } catch {
-        reconnectRef.current = window.setTimeout(connect, 3000)
-      }
-    }
-
-    seed()
-    connect()
-
-    return () => {
-      cancelled = true
-      if (reconnectRef.current) window.clearTimeout(reconnectRef.current)
-      if (wsRef.current) {
-        wsRef.current.onclose = null
-        wsRef.current.close()
-      }
+      setData((prev) => ({
+        price: json.price,
+        // A change the server could not determine keeps the last one we had
+        // rather than snapping to zero — "flat" is a claim, not a placeholder.
+        change24h: typeof json.change24h === 'number' ? json.change24h : prev.change24h,
+        loading: false,
+        error: null,
+        source: json.source ?? 'server',
+      }))
+    } catch (e: any) {
+      // Keep the last good price on screen and say the feed is stale. The old
+      // hook seeded 0.10 and left it there when Binance was unreachable, which
+      // put a number nobody stood behind next to the word "XLM / USD".
+      setData((prev) => ({
+        ...prev,
+        loading: false,
+        error: e?.message ?? 'price unavailable',
+      }))
     }
   }, [])
+
+  useEffect(() => {
+    load()
+    const id = setInterval(load, POLL_MS)
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') load()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      clearInterval(id)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [load])
 
   return data
 }

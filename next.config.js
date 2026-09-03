@@ -23,7 +23,11 @@ const nextConfig = {
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "img-src 'self' data: blob: https:",
               "font-src 'self' https://fonts.gstatic.com",
-              "connect-src 'self' https://horizon-testnet.stellar.org https://soroban-testnet.stellar.org https://friendbot.stellar.org https://api.binance.com https://*.supabase.co https://*.supabase.com wss://*.stellar.org wss://stream.binance.com:* https://*.tradingview.com https://news.google.com",
+              // Binance is gone from this list on purpose: the browser no longer talks
+              // to it. Price now comes from /api/price/xlm, which resolves through
+              // Reflector first — so a network that blocks Binance no longer leaves
+              // the page without a price.
+              "connect-src 'self' https://horizon-testnet.stellar.org https://soroban-testnet.stellar.org https://friendbot.stellar.org https://*.supabase.co https://*.supabase.com wss://*.stellar.org https://*.tradingview.com https://news.google.com",
               "frame-src https://*.tradingview.com",
               "frame-ancestors 'none'",
             ].join('; '),
