@@ -18,6 +18,7 @@ import {
 } from '@/lib/idempotency'
 import { LUSD_CODE, LUSD_ISSUER, LUSD_DISTRIBUTOR } from '@/lib/lusd'
 import { fetchXlmUsd } from '@/lib/spot'
+import { getPool, ensureSchema } from '@/lib/db'
 
 const HORIZON =
   process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
@@ -67,12 +68,21 @@ export async function GET(req: Request) {
   }
 
   try {
-    // 1. Can we price it? This is the check that was failing after the fact.
+    // 1. Is the database reachable? The payout path reserves the funding hash
+    // against replay before it submits, and that reservation is a write. A
+    // database that cannot be reached therefore stops the swap — after the
+    // payment has landed. This preflight checked the price and the balance and
+    // not this, which is how a third 10 XLM was taken tonight while the pooler's
+    // TLS was misconfigured. Anything the payout needs belongs in front of it.
+    await ensureSchema()
+    await getPool().query('select 1')
+
+    // 2. Can we price it?
     const spot = await fetchXlmUsd()
     const gross = direction === 'xlm_to_lusd' ? amount * spot : amount / spot
     const destAmount = gross * (1 - 0.001)
 
-    // 2. Can the distributor cover the payout?
+    // 3. Can the distributor cover the payout?
     const server = new Horizon.Server(HORIZON)
     const dist = await server.loadAccount(
       Keypair.fromSecret(DISTRIBUTOR_SECRET).publicKey()

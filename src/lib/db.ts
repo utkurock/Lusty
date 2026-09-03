@@ -28,8 +28,12 @@ declare global {
  * DB_SSL_CA_FILE (a path). Verification then stays on and the self-signed
  * chain is no longer a problem.
  *
- * Without a CA, the flag still decides — but disabling verification in
- * production says so on every boot rather than passing unnoticed.
+ * Without a CA, the flag still decides. Both of its settings are announced at
+ * startup, because both have been got wrong: verification off passes unnoticed
+ * and leaves the server unauthenticated, and verification on with no CA fails
+ * every query against a Supabase pooler with 'self-signed certificate in
+ * certificate chain' — a message that surfaces as a 500 on whichever endpoint
+ * happened to ask, and says nothing about the setting that caused it.
  */
 function sslConfig() {
   const caFile = process.env.DB_SSL_CA_FILE
@@ -37,7 +41,20 @@ function sslConfig() {
   if (ca) return { ca, rejectUnauthorized: true }
 
   const verify = process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false'
-  if (!verify && process.env.NODE_ENV === 'production') {
+  const supabasePooler = /pooler\.supabase\.com/.test(process.env.DATABASE_URL ?? '')
+
+  if (verify && supabasePooler) {
+    // Not a warning about a risk — a warning that nothing will work. Said once,
+    // at the moment the pool is built, rather than once per failed request.
+    console.error(
+      'db: TLS verification is ON with no CA, and DATABASE_URL points at a Supabase pooler. ' +
+        'That pooler presents a self-signed chain, so every query will fail with ' +
+        '"self-signed certificate in certificate chain". Fix it one of two ways: set DB_SSL_CA ' +
+        '(or DB_SSL_CA_FILE) to the prod-ca certificate from Project Settings → Database → SSL ' +
+        'Configuration, which keeps verification on; or set DB_SSL_REJECT_UNAUTHORIZED=false, ' +
+        'which connects but stops authenticating the server.'
+    )
+  } else if (!verify && process.env.NODE_ENV === 'production') {
     console.warn(
       'db: TLS certificate verification is OFF (DB_SSL_REJECT_UNAUTHORIZED=false). ' +
         'The connection is encrypted but the server is not authenticated. ' +
