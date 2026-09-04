@@ -32,13 +32,20 @@ export interface VaultEvent {
 // Polls /api/vault/events (no-store) for the vault contract's on-chain events.
 // Visibility-aware so a backgrounded tab stops hammering the RPC, mirroring
 // useVaultStats.
-export function useContractEvents(intervalMs = 15_000) {
+export function useContractEvents(
+  /** Scopes the feed to one wallet's positions. Omit for the whole vault. */
+  address?: string | null,
+  intervalMs = 15_000
+) {
   const [events, setEvents] = useState<VaultEvent[]>([])
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch('/api/vault/events', { cache: 'no-store' })
+      const url = address
+        ? `/api/vault/events?address=${encodeURIComponent(address)}`
+        : '/api/vault/events'
+      const res = await fetch(url, { cache: 'no-store' })
       const json = await res.json()
       if (json?.ok && Array.isArray(json.events)) setEvents(json.events)
     } catch {
@@ -46,7 +53,14 @@ export function useContractEvents(intervalMs = 15_000) {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [address])
+
+  useEffect(() => {
+    // Clear on a wallet change: the old rows are somebody else's history, and
+    // one poll interval of showing them under the new address is one too many.
+    setEvents([])
+    setLoading(true)
+  }, [address])
 
   useEffect(() => {
     load()

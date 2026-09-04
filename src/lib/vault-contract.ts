@@ -303,6 +303,22 @@ export async function getPositionsOf(
   owner: string,
   limit = 100,
 ): Promise<VaultPosition[]> {
+  const ids = await getPositionIdsOf(owner, limit)
+  const positions = await Promise.all(ids.map((id) => getPosition(id)))
+  return positions.reverse()
+}
+
+/**
+ * Just the ids, newest last — two contract calls rather than one per position.
+ *
+ * Enough to answer "is this event mine?", which is all a wallet-scoped feed
+ * needs: both `deposit` and `settle` publish the position id as a topic, so an
+ * id set filters the ledger's events without reading any position's contents.
+ */
+export async function getPositionIdsOf(
+  owner: string,
+  limit = 100,
+): Promise<number[]> {
   const count: number = Number(
     await readVault('position_count', [new Address(owner).toScVal()]),
   )
@@ -314,11 +330,7 @@ export async function getPositionsOf(
     nativeToScVal(start, { type: 'u32' }),
     nativeToScVal(Math.min(limit, 100), { type: 'u32' }),
   ])
-
-  const positions = await Promise.all(
-    ids.map(async (id) => getPosition(Number(id))),
-  )
-  return positions.reverse()
+  return ids.map((id) => Number(id))
 }
 
 /**

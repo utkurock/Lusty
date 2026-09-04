@@ -77,6 +77,13 @@ export interface DbPosition {
   apr: number | null
   /** XLM/USD when the position was written — the APR's denominator. */
   spotAtOpen: number | null
+  /**
+   * The stored APR was reconstructed after the fact rather than measured at
+   * open. Kept on the row so the distinction survives being written down —
+   * a backfilled figure that then reads as "measured at the time" is exactly
+   * the overstatement the backfill exists to avoid.
+   */
+  aprDerived: boolean
   premium: number
   depositHash: string
   premiumHash: string | null
@@ -116,6 +123,7 @@ export async function getPositionsForAddress(address: string): Promise<DbPositio
     const strikePrice = numOrNull(meta.strikePrice)
     const apr = numOrNull(meta.apr)
     const spotAtOpen = numOrNull(meta.spotAtOpen)
+    const aprDerived = meta.aprDerived === true
     const daysToExpiry = numOrNull(meta.daysToExpiry)
     const collateral = numOrNull(meta.collateralAmount)
 
@@ -137,6 +145,7 @@ export async function getPositionsForAddress(address: string): Promise<DbPositio
       strikePrice,
       apr,
       spotAtOpen,
+      aprDerived,
       premium: r.premium_amount !== null ? parseFloat(r.premium_amount) : 0,
       depositHash: r.tx_hash,
       premiumHash: r.premium_hash ?? null,
@@ -178,18 +187,36 @@ export interface MirroredDeposit {
   at: string
 }
 
-export async function getRecentDeposits(limit = 25): Promise<MirroredDeposit[]> {
+export async function getRecentDeposits(
+  limit = 25,
+  address?: string
+): Promise<MirroredDeposit[]> {
   await ensureSchema()
   const pool = getPool()
-  const res = await pool.query(
-    `select address, subtype, amount, asset, premium_amount, metadata, tx_hash, created_at
-       from transactions
-      where type = 'deposit'
-        and (subtype = 'call' or subtype = 'put')
-      order by created_at desc
-      limit $1`,
-    [Math.max(1, Math.min(limit, 100))]
-  )
+  const capped = Math.max(1, Math.min(limit, 100))
+  // Scoped by address when one is given, because the dashboard's feed is one
+  // wallet's history and a vault-wide backfill would put other writers'
+  // deposits under a heading that says "your".
+  const res = address
+    ? await pool.query(
+        `select address, subtype, amount, asset, premium_amount, metadata, tx_hash, created_at
+           from transactions
+          where type = 'deposit'
+            and (subtype = 'call' or subtype = 'put')
+            and address = $2
+          order by created_at desc
+          limit $1`,
+        [capped, address]
+      )
+    : await pool.query(
+        `select address, subtype, amount, asset, premium_amount, metadata, tx_hash, created_at
+           from transactions
+          where type = 'deposit'
+            and (subtype = 'call' or subtype = 'put')
+          order by created_at desc
+          limit $1`,
+        [capped]
+      )
 
   return res.rows.map((r: any) => {
     const meta = (r.metadata ?? {}) as Record<string, unknown>
@@ -208,6 +235,41 @@ export async function getRecentDeposits(limit = 25): Promise<MirroredDeposit[]> 
       at: new Date(r.created_at).toISOString(),
     }
   })
+}
+
+/**
+ * Fill in an APR the deposit route never recorded.
+ *
+ * The rate is measured against the underlying's price at open, and for
+ * positions written before that was recorded the only way back to it is the
+ * day's close from an outside feed. Reconstructing it on every read means the
+ * figure disappears whenever that feed is unreachable — a number that comes
+ * and goes is worse than one that is simply absent, because a writer cannot
+ * tell which reading is the real one.
+ *
+ * So the first successful reconstruction is written down and the row stops
+ * depending on the feed. Strictly additive: it only ever fills a hole, never
+ * overwrites a rate that was measured at the time.
+ */
+export async function backfillPositionApr(
+  txHash: string,
+  apr: number,
+  spotAtOpen: number | null
+): Promise<void> {
+  if (!txHash || !isFinite(apr) || apr < 0) return
+  await ensureSchema()
+  const pool = getPool()
+  const patch: Record<string, number | boolean> = { apr, aprDerived: true }
+  if (spotAtOpen != null && isFinite(spotAtOpen) && spotAtOpen > 0) {
+    patch.spotAtOpen = spotAtOpen
+  }
+  await pool.query(
+    `update transactions
+        set metadata = coalesce(metadata, '{}'::jsonb) || $2::jsonb
+      where tx_hash = $1
+        and (metadata->>'apr') is null`,
+    [txHash, JSON.stringify(patch)]
+  )
 }
 
 // ── Leaderboard ────────────────────────────────────────────────────

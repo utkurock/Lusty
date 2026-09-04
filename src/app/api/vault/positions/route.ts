@@ -1,5 +1,9 @@
 import { NextResponse } from 'next/server'
-import { getPositionsForAddress, type DbPosition } from '@/lib/db-queries'
+import {
+  getPositionsForAddress,
+  backfillPositionApr,
+  type DbPosition,
+} from '@/lib/db-queries'
 import { isValidStellarAddress } from '@/lib/utils'
 import { rateLimit } from '@/lib/rate-limit'
 import { expiryLabel } from '@/lib/expiries'
@@ -116,15 +120,24 @@ export async function GET(req: Request) {
       if (row.positionId !== null) byPositionId.set(row.positionId, row)
     }
 
+    const positions = chain.map((p) =>
+      merge(address, p, byPositionId.get(p.id), settlements.get(p.id), closes)
+    )
+
+    // Write down whatever had to be reconstructed, so the next read does not
+    // depend on an outside feed being up. Fire and forget: the response is
+    // already correct, and a database that will not take the note must not
+    // cost the caller their positions.
+    void Promise.all(
+      positions
+        .filter((p) => p.aprSource === 'derived' && p.apr !== null && p.depositHash)
+        .map((p) =>
+          backfillPositionApr(p.depositHash, p.apr as number, p.spotAtOpen)
+        )
+    ).catch((err) => console.warn('vault/positions: APR backfill failed', err))
+
     return NextResponse.json(
-      {
-        ok: true,
-        source: 'contract',
-        contractId: VAULT_ID,
-        positions: chain.map((p) =>
-          merge(address, p, byPositionId.get(p.id), settlements.get(p.id), closes)
-        ),
-      },
+      { ok: true, source: 'contract', contractId: VAULT_ID, positions },
       { headers: { 'Cache-Control': 'no-store' } }
     )
   } catch (e: any) {
@@ -148,7 +161,9 @@ function merge(
   closes: DatedClose[]
 ): PositionView {
   const openedAt = mirror?.createdAt ?? null
-  const { apr, aprSource } = resolveApr(position, mirror, openedAt, closes)
+  const spotAtOpen =
+    mirror?.spotAtOpen ?? (openedAt != null ? closeOn(closes, openedAt) : null)
+  const { apr, aprSource } = resolveApr(position, mirror, openedAt, spotAtOpen)
 
   return {
     id: mirror?.depositHash ?? `position-${position.id}`,
@@ -159,8 +174,11 @@ function merge(
     collateralAmount: position.collateral,
     strikePrice: position.strike,
     apr,
+    // `aprSource` is the field the UI reads; the mirror's own flag is passed
+    // through only because PositionView extends the row it came from.
     aprSource,
-    spotAtOpen: mirror?.spotAtOpen ?? null,
+    aprDerived: aprSource === 'derived',
+    spotAtOpen,
     premium: position.premium,
     depositHash: mirror?.depositHash ?? '',
     premiumHash: mirror?.premiumHash ?? null,
@@ -194,9 +212,14 @@ function resolveApr(
   position: VaultPosition,
   mirror: DbPosition | undefined,
   openedAt: number | null,
-  closes: DatedClose[]
+  spotAtOpen: number | null
 ): { apr: number | null; aprSource: PositionView['aprSource'] } {
-  if (mirror?.apr != null) return { apr: mirror.apr, aprSource: 'recorded' }
+  if (mirror?.apr != null) {
+    return {
+      apr: mirror.apr,
+      aprSource: mirror.aprDerived ? 'derived' : 'recorded',
+    }
+  }
   if (openedAt == null) return { apr: null, aprSource: null }
 
   const derived = realizedApr({
@@ -205,7 +228,7 @@ function resolveApr(
     premium: position.premium,
     openedAt,
     expiry: position.expiry.getTime(),
-    spotAtOpen: mirror?.spotAtOpen ?? closeOn(closes, openedAt),
+    spotAtOpen,
   })
   return derived == null
     ? { apr: null, aprSource: null }

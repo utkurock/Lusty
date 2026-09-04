@@ -79,17 +79,24 @@ function label(e: VaultEvent): { tag: string; tone: string; text: string } {
   }
 }
 
-// The vault's activity: the contract's own events (deposit / settle / fund)
-// streamed from the ledger via Soroban RPC getEvents, backfilled from the
-// deposit mirror for anything older than the RPC's ~7-day retention window.
+// One wallet's activity, or the vault's: the contract's own events (deposit /
+// settle / fund) streamed from the ledger via Soroban RPC getEvents, backfilled
+// from the deposit mirror for anything older than the RPC's ~7-day window.
 //
-// Without the backfill this panel went blank on a vault whose last deposit was
-// a fortnight old — three open positions on the same screen, and a feed saying
-// nothing had ever happened. Every row still names a real transaction and links
-// to it; the mirror only supplies the ones the ledger's event window dropped.
-export function OnChainActivity() {
-  const { events, loading } = useContractEvents()
+// Pass an address and the feed is that wallet's — which is what the dashboard
+// wants. Unscoped it showed every writer's settlements under a heading about
+// your positions, with nothing to say whose was whose; the first question it
+// got asked was what somebody else's assignment had to do with anything.
+//
+// Without the mirror backfill this panel went blank on a vault whose last
+// deposit was a fortnight old — three open positions on the same screen, and a
+// feed saying nothing had ever happened. Every row still names a real
+// transaction and links to it; the mirror only supplies the ones the ledger's
+// event window dropped.
+export function OnChainActivity({ address }: { address?: string | null }) {
+  const { events, loading } = useContractEvents(address)
   const mirrored = events.filter((e) => e.source === 'mirror').length
+  const mine = !!address
 
   const [page, setPage] = useState(0)
   const pageCount = Math.ceil(events.length / PAGE_SIZE)
@@ -103,7 +110,9 @@ export function OnChainActivity() {
   return (
     <div className="mt-10">
       <div className="mb-3 flex items-center justify-between">
-        <div className="font-mono text-caption text-ink-2">~/on-chain activity</div>
+        <div className="font-mono text-caption text-ink-2">
+          {mine ? '~/your activity' : '~/on-chain activity'}
+        </div>
         <div
           className="font-mono text-tiny text-ink-2 flex items-center gap-1.5"
           title={
@@ -112,6 +121,7 @@ export function OnChainActivity() {
               : 'Streamed from the ledger via Soroban RPC getEvents.'
           }
         >
+          {mine ? 'this wallet · ' : ''}
           {mirrored > 0 ? 'soroban events · mirrored history' : 'live · soroban events'}
         </div>
       </div>
@@ -125,8 +135,9 @@ export function OnChainActivity() {
 
         {!loading && events.length === 0 && (
           <div className="p-5 font-mono text-caption text-ink-2">
-            Nothing yet — no ledger events in the lookback window and no deposits
-            on record.
+            {mine
+              ? 'Nothing yet — this wallet has written no positions the ledger or our record still holds.'
+              : 'Nothing yet — no ledger events in the lookback window and no deposits on record.'}
           </div>
         )}
 
