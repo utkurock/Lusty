@@ -75,6 +75,8 @@ export interface DbPosition {
   collateralAmount: number
   strikePrice: number | null
   apr: number | null
+  /** XLM/USD when the position was written — the APR's denominator. */
+  spotAtOpen: number | null
   premium: number
   depositHash: string
   premiumHash: string | null
@@ -113,6 +115,7 @@ export async function getPositionsForAddress(address: string): Promise<DbPositio
 
     const strikePrice = numOrNull(meta.strikePrice)
     const apr = numOrNull(meta.apr)
+    const spotAtOpen = numOrNull(meta.spotAtOpen)
     const daysToExpiry = numOrNull(meta.daysToExpiry)
     const collateral = numOrNull(meta.collateralAmount)
 
@@ -133,6 +136,7 @@ export async function getPositionsForAddress(address: string): Promise<DbPositio
       collateralAmount: collateral !== null ? collateral : parseFloat(r.amount),
       strikePrice,
       apr,
+      spotAtOpen,
       premium: r.premium_amount !== null ? parseFloat(r.premium_amount) : 0,
       depositHash: r.tx_hash,
       premiumHash: r.premium_hash ?? null,

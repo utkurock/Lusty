@@ -321,6 +321,50 @@ export async function getPositionsOf(
   return positions.reverse()
 }
 
+/**
+ * What settlement actually moved, and in which token.
+ *
+ * This is the contract's own arithmetic from `settle`, repeated here on the
+ * scaled integers rather than on floats so the figure shown to a writer is the
+ * figure the ledger paid, to the stroop. A call that assigns pays
+ * collateral x strike in cash and gives up its XLM; a put that assigns pays
+ * collateral / strike in XLM and gives up its cash; either one kept simply
+ * returns what was escrowed.
+ *
+ * It lives beside the decoder because a payout formula with two copies is a
+ * payout formula that will eventually disagree with itself, and the copy that
+ * loses that argument is the one on screen.
+ */
+export function settlementPayout(
+  p: Pick<VaultPosition, 'side' | 'collateral' | 'strike' | 'outcome'>
+): { amount: number; asset: 'XLM' | 'LUSD' } | null {
+  if (!p.outcome || p.outcome === 'open') return null
+
+  const amount = scale(p.collateral, TOKEN_DECIMALS)
+  const strike = scale(p.strike, ORACLE_DECIMALS)
+  const oracleScale = 10n ** BigInt(ORACLE_DECIMALS)
+
+  if (p.outcome === 'kept') {
+    // The escrow comes back untouched, in the token it went in as.
+    return {
+      amount: unscale(amount, TOKEN_DECIMALS),
+      asset: p.side === 'call' ? 'XLM' : 'LUSD',
+    }
+  }
+
+  if (p.side === 'call') {
+    return {
+      amount: unscale((amount * strike) / oracleScale, TOKEN_DECIMALS),
+      asset: 'LUSD',
+    }
+  }
+  if (strike <= 0n) return { amount: 0, asset: 'XLM' }
+  return {
+    amount: unscale((amount * oracleScale) / strike, TOKEN_DECIMALS),
+    asset: 'XLM',
+  }
+}
+
 // ── Writing a position ──────────────────────────────────────────────
 
 /** Co-signs the quoter's authorization entry; see /api/vault/authorize. */

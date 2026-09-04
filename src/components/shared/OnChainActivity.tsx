@@ -18,6 +18,22 @@ function timeAgo(iso: string): string {
   return `${Math.floor(h / 24)}d ago`
 }
 
+/** Token-tagged: which token arrived is the point of a settlement row. */
+function amountOf(payout: { amount: number; asset: 'XLM' | 'LUSD' }): string {
+  return `${payout.amount.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: payout.asset === 'XLM' ? 2 : 4,
+  })} ${payout.asset}`
+}
+
+/** The collateral an assignment took, in the unit it was escrowed in. */
+function collateralOf(e: VaultEvent): string {
+  const n = (e.releasedAmount ?? 0).toLocaleString('en-US', {
+    maximumFractionDigits: 2,
+  })
+  return e.side === 'put' ? `${n} LUSD` : `${n} XLM`
+}
+
 function label(e: VaultEvent): { tag: string; tone: string; text: string } {
   // Positions written on the retired distributor rail carry no contract id.
   // "#null" is not a position number, so those rows lead with the collateral.
@@ -38,10 +54,19 @@ function label(e: VaultEvent): { tag: string; tone: string; text: string } {
   }
   if (e.kind === 'settle') {
     const assigned = e.outcome === 'assigned'
+    // Settlement is the only moment this vault hands back a different token
+    // than it took, so the row says what moved rather than only how it
+    // resolved. Without the amounts, "assigned" is a verdict with no payment
+    // attached and reads like nothing arrived.
+    const moved = e.payout
+      ? assigned
+        ? ` · ${collateralOf(e)} → ${amountOf(e.payout)}`
+        : ` · ${amountOf(e.payout)} returned`
+      : ''
     return {
       tag: 'settle',
       tone: assigned ? 'text-brand' : 'text-ink',
-      text: `${ref}${e.outcome} @ $${(e.priceUsd ?? 0).toFixed(4)}`,
+      text: `${ref}${e.outcome} @ $${(e.priceUsd ?? 0).toFixed(4)}${moved}`,
     }
   }
   const underlying = e.pool === 'underlying'

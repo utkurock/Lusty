@@ -1,4 +1,5 @@
 import { Keypair } from '@stellar/stellar-sdk'
+import { ORACLE_HISTORY_SECS } from './oracle-window'
 import {
   getVaultStats,
   getPosition,
@@ -29,27 +30,10 @@ export const DEFAULT_SCAN_LIMIT = 200
 /** How many settlements one run will submit, whatever the scan turned up. */
 export const DEFAULT_SETTLE_LIMIT = 25
 
-/**
- * How long after expiry a position can still be settled.
- *
- * Settlement is priced at the oracle's reading for the expiry timestamp, and
- * the contract fails closed when it cannot get one (`StalePrice`). Reflector
- * keeps a ring buffer of historical prices, not a permanent record: once the
- * expiry period is pruned, `price(asset, expiry)` returns nothing, and the
- * contract's only fallback — the live price — is gated on being within an hour
- * of expiry, deliberately, so that a late settlement cannot pick its own price.
- * Past that point nothing can settle the position — not this runner, not the
- * writer, not a stranger. There is no admin override and no upgrade entrypoint,
- * so the collateral stays escrowed. This has been confirmed against the live
- * testnet feed, not inferred from the documentation.
- *
- * Measured there: the reading 20h back was still served, the one 22h back was
- * gone. The nominal 24h here is the wrong side of that boundary on purpose — a
- * position over the real limit costs a simulation that fails for free, while
- * one wrongly written off would be abandoned while it could still have been
- * closed.
- */
-export const ORACLE_HISTORY_SECS = 24 * 60 * 60
+// The settle-by deadline is defined in lib/oracle-window, which the dashboard
+// imports too — the runner and the screen must not disagree about which
+// positions are still closeable.
+export { ORACLE_HISTORY_SECS }
 
 export interface SettlementCandidate {
   id: number

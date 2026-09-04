@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { fetchVaultEvents, type VaultEvent } from '@/lib/contract-events'
+import { getPosition, settlementPayout } from '@/lib/vault-contract'
 import { getRecentDeposits } from '@/lib/db-queries'
 import { rateLimit } from '@/lib/rate-limit'
 
@@ -46,6 +47,27 @@ export async function GET() {
         return []
       }),
     ])
+
+    // A settle event says how a position resolved and at what price, but not
+    // what that paid — the amounts are in contract state, not in the event. The
+    // feed is where a writer notices their money arrived, so the rows that
+    // moved money are the last rows that should stay silent about it.
+    await Promise.all(
+      chain
+        .filter((e) => e.kind === 'settle' && e.id != null)
+        .map(async (e) => {
+          try {
+            const p = await getPosition(Number(e.id))
+            e.side = p.side
+            e.strikeUsd = p.strike
+            e.releasedAmount = p.collateral
+            e.payout = settlementPayout(p) ?? undefined
+          } catch (err) {
+            // The row still stands on the outcome and the price it already has.
+            console.warn(`vault/events: could not read settled position ${e.id}`, err)
+          }
+        })
+    )
 
     const onChainHashes = new Set(
       chain.map((e) => e.txHash).filter((h): h is string => !!h)

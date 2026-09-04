@@ -9,6 +9,7 @@ import { Panel } from '@/components/shared/Panel'
 import { StatStrip } from '@/components/shared/StatStrip'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { PageHeader } from '@/components/shared/PageHeader'
+import { withinOracleWindow } from '@/lib/oracle-window'
 
 // Mirrors DbPosition from the /api/vault/positions response. Positions are read
 // from contract state and mirrored in the shared DB, so they show from any
@@ -27,6 +28,25 @@ interface Position {
   expiryIso: string | null
   expiryLabel: string
   settled: boolean
+  /**
+   * How the contract resolved it. A covered call that is `assigned` gave up its
+   * XLM and was paid cash; one that is `kept` got its XLM back. The distinction
+   * is the whole answer to "where did my collateral go", so it is carried all
+   * the way to the card rather than flattened into settled/not.
+   */
+  outcome?: 'open' | 'kept' | 'assigned'
+  /** What settlement actually paid, in the token it paid in. */
+  payout?: { amount: number; asset: 'XLM' | 'LUSD' } | null
+  /**
+   * Where the APR came from: measured at open, or reconstructed afterwards
+   * from the day's close. Shown so a derived figure is never mistaken for the
+   * one that was quoted.
+   */
+  aprSource?: 'recorded' | 'derived' | null
+  /** Oracle price at expiry — the price the outcome was decided at. */
+  settlePrice?: number | null
+  settledAt?: string | null
+  settleHash?: string | null
   /**
    * Contract-assigned id, or null for a position from the retired distributor
    * rail. Only the first kind can appear while the contract is reachable; the
@@ -226,6 +246,9 @@ function ExposurePanel({ portfolio }: { portfolio: Portfolio }) {
             const callPct = b.vault ? pctFull(b.vault.callXlm, b.vault.maxCallXlm) : null
             const putPct = b.vault ? pctFull(b.vault.putUsd, b.vault.maxPutUsd) : null
             const due = b.awaitingSettlement > 0 && b.awaitingSettlement === b.positions
+            // Same distinction the position rows make: a bucket whose expiry
+            // is past the oracle's history window is not waiting for anything.
+            const closed = due && !withinOracleWindow(new Date(b.expiryIso))
 
             return (
               <div
@@ -234,10 +257,14 @@ function ExposurePanel({ portfolio }: { portfolio: Portfolio }) {
               >
                 <div>
                   <div className="font-mono text-caption text-ink">{b.expiryLabel}</div>
-                  <div className="font-mono text-tiny text-ink-2">
-                    {due
-                      ? 'awaiting settlement'
-                      : `in ${Math.ceil(b.daysToExpiry)}d · ${b.positions} position${b.positions === 1 ? '' : 's'}`}
+                  <div
+                    className={`font-mono text-tiny ${closed ? 'text-accent-red' : 'text-ink-2'}`}
+                  >
+                    {closed
+                      ? 'window closed'
+                      : due
+                        ? 'awaiting settlement'
+                        : `in ${Math.ceil(b.daysToExpiry)}d · ${b.positions} position${b.positions === 1 ? '' : 's'}`}
                   </div>
                 </div>
                 <div className="num text-caption text-ink text-right">
@@ -273,6 +300,73 @@ function ExposurePanel({ portfolio }: { portfolio: Portfolio }) {
         </div>
       )}
     </Panel>
+  )
+}
+
+/** Token-tagged, because which token arrived is the point of the whole line. */
+function payoutAmount(payout: { amount: number; asset: 'XLM' | 'LUSD' }): string {
+  const digits = payout.asset === 'XLM' ? 2 : 4
+  return `${payout.amount.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: digits,
+  })} ${payout.asset}`
+}
+
+/**
+ * What settlement did, on the position it did it to.
+ *
+ * A settled covered call is the one place this product can hand back a
+ * different token than it took, and the dashboard used to render that as
+ * "settled: yes" — indistinguishable, to the writer looking for their XLM,
+ * from the money having gone missing. It had not: the contract pays at
+ * settlement, straight to the writer's wallet, in the same transaction that
+ * closes the position. There is nothing to claim, so the honest fix is to say
+ * what was paid and point at the transaction that paid it.
+ *
+ * The amount comes from the API, which computes it with the contract's own
+ * integer arithmetic. The price and the hash come from the settle event and so
+ * go missing once the RPC's retention window rolls past them — an old
+ * settlement therefore shows what it paid without showing where, which is a
+ * smaller loss than showing nothing.
+ */
+function Settlement({ position }: { position: Position }) {
+  const payout = position.payout
+  if (!payout) return null
+
+  const assigned = position.outcome === 'assigned'
+  const isCall = position.type === 'call'
+  const gaveUp = isCall ? 'XLM' : 'cash'
+  const at =
+    position.settlePrice != null
+      ? ` at $${position.settlePrice.toFixed(4)}`
+      : ''
+
+  return (
+    <div className="mt-4 pt-4 border-t border-line-light flex flex-wrap items-baseline gap-x-2 gap-y-1">
+      <span className="font-mono text-caption text-ink-2">
+        {assigned
+          ? `Assigned${at} — the vault took your ${gaveUp} and paid you`
+          : `Not assigned${at} — your collateral came back as`}
+      </span>
+      <span className="num text-caption text-accent-green font-semibold">
+        {payoutAmount(payout)}
+      </span>
+      <span className="font-mono text-caption text-ink-2">
+        , already in this wallet. Nothing to claim.
+      </span>
+      {position.settleHash && (
+        <a
+          href={`https://stellarchain.io/tx/${position.settleHash}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-mono text-caption flex items-center gap-1 text-ink-2 hover:text-ink"
+          title="View the settlement transaction"
+        >
+          settlement {position.settleHash.slice(0, 8)}…
+          <ExternalLink size={11} />
+        </a>
+      )}
+    </div>
   )
 }
 
@@ -396,94 +490,154 @@ export default function DashboardPage() {
           {positions.map((p) => {
             const days = daysRemaining(p.expiryIso)
             const expired = isExpired(p.expiryIso)
+            // Expired, unsettled, and past the oracle's history window: no
+            // runner and no stranger can close this one now. Saying "awaiting
+            // settlement" about it is a promise the contract cannot keep.
+            const stranded =
+              expired &&
+              !p.settled &&
+              p.expiryIso !== null &&
+              !withinOracleWindow(new Date(p.expiryIso))
             const isCall = p.type === 'call'
             const iconSrc = isCall ? '/xlm.png' : '/lusd.png'
             return (
-              <div
-                key={p.id}
-                className="light-card card-interactive p-5 grid grid-cols-1 md:grid-cols-[1.3fr_1fr_1fr_1fr_auto] gap-5 items-center"
-              >
-                <div className="flex items-center gap-3">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={iconSrc}
-                    alt={p.asset}
-                    className="w-10 h-10 rounded-full shrink-0"
-                  />
+              <div key={p.id} className="light-card card-interactive p-5">
+                <div className="grid grid-cols-1 md:grid-cols-[1.3fr_1fr_1fr_1fr_auto] gap-5 items-center">
+                  <div className="flex items-center gap-3">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={iconSrc}
+                      alt={p.asset}
+                      className="w-10 h-10 rounded-full shrink-0"
+                    />
+                    <div>
+                      <div className="font-mono font-semibold text-ink">
+                        {p.asset} {isCall ? 'Covered Call' : 'Cash-Secured Put'}
+                      </div>
+                      <div className="font-mono text-tiny text-ink-2">
+                        strike ${(p.strikePrice ?? 0).toFixed(4)} · {p.expiryLabel}
+                      </div>
+                    </div>
+                  </div>
+
                   <div>
-                    <div className="font-mono font-semibold text-ink">
-                      {p.asset} {isCall ? 'Covered Call' : 'Cash-Secured Put'}
+                    <div className="label">
+                      Collateral
                     </div>
-                    <div className="font-mono text-tiny text-ink-2">
-                      strike ${(p.strikePrice ?? 0).toFixed(4)} · {p.expiryLabel}
+                    <div className="num text-body text-ink font-semibold mt-0.5">
+                      {isCall
+                        ? formatXlm(p.collateralAmount)
+                        : formatUsdc(p.collateralAmount)}
                     </div>
                   </div>
-                </div>
 
-                <div>
-                  <div className="label">
-                    Collateral
+                  <div>
+                    <div className="label">
+                      Upfront
+                    </div>
+                    <div className="num text-body text-accent-green font-semibold mt-0.5">
+                      ${p.premium.toFixed(4)}{' '}
+                      {/* A missing APR is not a zero one. The premium is on
+                          chain; the rate beside it never was, and printing
+                          0.00% for an absent number tells a writer their
+                          position earned nothing. */}
+                      <span
+                        className="text-ink-2 font-normal"
+                        title={
+                          p.apr === null
+                            ? 'The rate was not recorded for this position and could not be reconstructed.'
+                            : p.aprSource === 'derived'
+                              ? 'Reconstructed: this premium against the underlying\u2019s close on the day the position was opened, annualized over its term.'
+                              : 'Measured when the position was written, against the price the underlying had then.'
+                        }
+                      >
+                        {p.apr === null
+                          ? '(APR unknown)'
+                          : `(${p.apr.toFixed(2)}% APR${p.aprSource === 'derived' ? '*' : ''})`}
+                      </span>
+                    </div>
                   </div>
-                  <div className="num text-body text-ink font-semibold mt-0.5">
-                    {isCall
-                      ? formatXlm(p.collateralAmount)
-                      : formatUsdc(p.collateralAmount)}
-                  </div>
-                </div>
 
-                <div>
-                  <div className="label">
-                    Upfront
-                  </div>
-                  <div className="num text-body text-accent-green font-semibold mt-0.5">
-                    ${p.premium.toFixed(4)}{' '}
-                    <span className="text-ink-2 font-normal">
-                      ({(p.apr ?? 0).toFixed(2)}% APR)
-                    </span>
-                  </div>
-                </div>
-
-                <div>
-                  <div className="label">
-                    {p.settled ? 'Settled' : expired ? 'Awaiting settlement' : 'Expires in'}
-                  </div>
-                  <div className="num text-body text-ink font-semibold mt-0.5">
-                    {p.settled ? 'yes' : expired ? 'now' : `${days}d`}
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3 justify-self-end">
-                  {/*
-                    Nothing to offer, and that is the finished state rather than
-                    a gap. A contract position settles on chain and needs
-                    nobody's permission. A position from the retired rail has
-                    already been paid: the book was settled in full from the
-                    distributor and closed, so no row here is waiting on us.
-                  */}
-                  {expired && !p.settled && p.positionId !== null && (
-                    <span
-                      className="font-mono text-tiny text-ink-2"
-                      title="Settled by the contract against the oracle price at expiry. Anyone can trigger it; a scheduled runner does."
+                  <div>
+                    <div className="label">
+                      {p.settled
+                        ? 'Settled'
+                        : stranded
+                          ? 'Cannot settle'
+                          : expired
+                            ? 'Awaiting settlement'
+                            : 'Expires in'}
+                    </div>
+                    <div
+                      className={`num text-body font-semibold mt-0.5 ${stranded ? 'text-accent-red' : 'text-ink'}`}
+                      title={
+                        stranded
+                          ? 'The oracle keeps about a day of history. Past that it can no longer price this expiry, the contract refuses to settle without a price, and there is no admin path around it.'
+                          : undefined
+                      }
                     >
-                      settles on chain
-                    </span>
-                  )}
-                  <a
-                    href={`https://stellarchain.io/tx/${p.depositHash}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="font-mono text-caption flex items-center gap-1 text-ink-2 hover:text-ink"
-                    title="View deposit on explorer"
-                  >
-                    {p.depositHash.slice(0, 8)}…
-                    <ExternalLink size={11} />
-                  </a>
+                      {/* "yes" was the old answer to a settled position, and it
+                          was the wrong one: it confirms that something happened
+                          without saying what, and the two things that can happen
+                          pay out in different tokens. */}
+                      {p.settled
+                        ? (p.outcome ?? 'yes')
+                        : stranded
+                          ? 'oracle window closed'
+                          : expired
+                            ? 'now'
+                            : `${days}d`}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3 justify-self-end">
+                    {/*
+                      Nothing to offer, and that is the finished state rather than
+                      a gap. A contract position settles on chain and needs
+                      nobody's permission. A position from the retired rail has
+                      already been paid: the book was settled in full from the
+                      distributor and closed, so no row here is waiting on us.
+                    */}
+                    {expired && !p.settled && p.positionId !== null && (
+                      <span
+                        className={`font-mono text-tiny ${stranded ? 'text-accent-red' : 'text-ink-2'}`}
+                        title={
+                          stranded
+                            ? 'Settlement is priced at the oracle\u2019s reading for the expiry timestamp, and that reading has been pruned. The collateral stays escrowed.'
+                            : 'Settled by the contract against the oracle price at expiry. Anyone can trigger it; a scheduled runner does.'
+                        }
+                      >
+                        {stranded ? 'collateral stuck' : 'settles on chain'}
+                      </span>
+                    )}
+                    <a
+                      href={`https://stellarchain.io/tx/${p.depositHash}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-mono text-caption flex items-center gap-1 text-ink-2 hover:text-ink"
+                      title="View deposit on explorer"
+                    >
+                      {p.depositHash.slice(0, 8)}…
+                      <ExternalLink size={11} />
+                    </a>
+                  </div>
                 </div>
+
+                {p.settled && p.payout && <Settlement position={p} />}
               </div>
             )
           })}
         </div>
       )}
+
+          {connected && positions.some((p) => p.aprSource === 'derived') && (
+            <div className="font-mono text-tiny text-ink-2">
+              * Rate reconstructed from the premium the contract paid and the
+              underlying&apos;s close on the day the position opened. Positions
+              written before the vault recorded its own rate have no other
+              record of one.
+            </div>
+          )}
 
           {connected && portfolio && positions.length > 0 && (
             <ExposurePanel portfolio={portfolio} />

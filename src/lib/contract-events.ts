@@ -8,7 +8,7 @@
 //
 // Reads only — getEvents submits nothing, signs nothing, costs nothing.
 
-import { rpc as sorobanRpc, scValToNative, xdr } from '@stellar/stellar-sdk'
+import { rpc as sorobanRpc, nativeToScVal, scValToNative, xdr } from '@stellar/stellar-sdk'
 
 const RPC_URL =
   process.env.SOROBAN_RPC_URL ?? 'https://soroban-testnet.stellar.org'
@@ -25,10 +25,19 @@ const VAULT_IDS = (
   .map((s) => s.trim())
   .filter(Boolean)
 
-// How far back to scan. ~100k ledgers ≈ 6 days at testnet cadence, kept just
-// inside the RPC's ~7-day event retention window (with margin so a stale
-// oldest-ledger boundary never trips the request).
-const LOOKBACK_LEDGERS = 100_000
+// A single getEvents call scans a fixed slice of ledgers — 10,000 on the public
+// RPC — and returns whatever it found in THAT slice, plus a cursor to continue
+// from. It is not "the newest N events": asking from 100,000 ledgers back
+// returns the events in the OLDEST ten thousand of that range, which for a
+// quiet contract is none at all, and looks exactly like a contract that has
+// never emitted anything.
+//
+// So every scan here pages forward explicitly and says how many pages it will
+// spend. Nothing scans from the far edge of retention and hopes.
+const LEDGERS_PER_PAGE = 10_000
+
+/** How far back the activity feed looks: three pages, about a day and a half. */
+const FEED_LOOKBACK_LEDGERS = 3 * LEDGERS_PER_PAGE
 
 // Token amounts are 7-decimal stroops; oracle-scaled values use 14 decimals.
 const TOKEN_SCALE = 1e7
@@ -63,6 +72,15 @@ export interface VaultEvent {
   // settle
   outcome?: string
   priceUsd?: number
+  /**
+   * What settlement moved, filled in by whoever reads the position behind the
+   * event. The event itself carries only the outcome and the price — the
+   * amounts live in contract state — and the outcome alone is the half of the
+   * story that does not say where the money went.
+   */
+  payout?: { amount: number; asset: 'XLM' | 'LUSD' }
+  /** Collateral the writer gave up, when assigned. */
+  releasedAmount?: number
   // fund
   from?: string
   pool?: 'cash' | 'underlying'
@@ -137,6 +155,55 @@ function parseEvent(e: sorobanRpc.Api.EventResponse): VaultEvent | null {
   }
 }
 
+/** One page of a forward scan, plus where to continue from. */
+interface EventPage {
+  events: sorobanRpc.Api.EventResponse[]
+  cursor?: string
+  latestLedger: number
+}
+
+/** The ledger a paging cursor has scanned through. */
+function cursorLedger(cursor: string): number {
+  try {
+    return Number(BigInt(cursor.split('-')[0]) >> 32n)
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * Page forward from `start` until the scan reaches the tip or runs out of
+ * pages, gathering everything it passes.
+ *
+ * `maxPages` is a budget, not a guess: each page is one RPC round trip, and
+ * this runs inside a request the user is waiting on. A scan that stops early
+ * returns what it has along with the cursor it stopped at, so the caller can
+ * resume rather than start over.
+ */
+async function scanForward(
+  server: sorobanRpc.Server,
+  start: { startLedger: number } | { cursor: string },
+  topics: (string | '*')[][],
+  maxPages: number
+): Promise<EventPage> {
+  const filters = [{ type: 'contract' as const, contractIds: VAULT_IDS, topics }]
+  const events: sorobanRpc.Api.EventResponse[] = []
+  let request: any = { ...start, filters, limit: 100 }
+  let cursor: string | undefined
+  let latestLedger = 0
+
+  for (let page = 0; page < maxPages; page++) {
+    const res = await server.getEvents(request)
+    events.push(...res.events)
+    latestLedger = res.latestLedger
+    cursor = res.cursor
+    if (!cursor || cursorLedger(cursor) >= res.latestLedger) break
+    request = { cursor, filters, limit: 100 }
+  }
+
+  return { events, cursor, latestLedger }
+}
+
 /**
  * Recent vault events across the deployed instances, newest first. Returns an
  * empty array on any RPC error rather than throwing — the activity feed is
@@ -147,15 +214,14 @@ export async function fetchVaultEvents(limit = 25): Promise<VaultEvent[]> {
   try {
     const server = new sorobanRpc.Server(RPC_URL)
     const { sequence } = await server.getLatestLedger()
-    const startLedger = Math.max(sequence - LOOKBACK_LEDGERS, 1)
+    const { events } = await scanForward(
+      server,
+      { startLedger: Math.max(sequence - FEED_LOOKBACK_LEDGERS, 1) },
+      [],
+      FEED_LOOKBACK_LEDGERS / LEDGERS_PER_PAGE
+    )
 
-    const res = await server.getEvents({
-      startLedger,
-      filters: [{ type: 'contract', contractIds: VAULT_IDS, topics: [] }],
-      limit: 100,
-    })
-
-    return res.events
+    return events
       .map(parseEvent)
       .filter((e): e is VaultEvent => e !== null)
       .reverse()
@@ -164,4 +230,103 @@ export async function fetchVaultEvents(limit = 25): Promise<VaultEvent[]> {
     console.warn('contract-events: getEvents failed', err)
     return []
   }
+}
+
+/** One position's resolution, as the ledger recorded it. */
+export interface SettlementRecord {
+  positionId: number
+  outcome: string
+  /** Oracle price the contract settled against — the price at expiry. */
+  priceUsd: number
+  at: string
+  txHash?: string
+}
+
+// The settlement index, kept between requests.
+//
+// Settlements are append-only and never change once written, so an entry that
+// has been read once never needs reading again. What the index keeps is the
+// cursor: the first scan pays for its window, and every later refresh resumes
+// from where that one stopped, which is normally a single page.
+const settlements = new Map<number, SettlementRecord>()
+let settlementCursor: string | undefined
+let settlementsFreshUntil = 0
+let settlementScan: Promise<void> | null = null
+
+const SETTLEMENT_TTL_MS = 60_000
+/** First scan: two pages, about twenty hours — comfortably past any sweep. */
+const SETTLEMENT_LOOKBACK_LEDGERS = 2 * LEDGERS_PER_PAGE
+
+async function refreshSettlements(): Promise<void> {
+  const server = new sorobanRpc.Server(RPC_URL)
+  const settleTopic = nativeToScVal('settle', { type: 'symbol' }).toXDR('base64')
+
+  let start: { startLedger: number } | { cursor: string }
+  if (settlementCursor) {
+    start = { cursor: settlementCursor }
+  } else {
+    const { sequence } = await server.getLatestLedger()
+    start = { startLedger: Math.max(sequence - SETTLEMENT_LOOKBACK_LEDGERS, 1) }
+  }
+
+  // Filtered on the topic rather than after the fact: a page is capped at 100
+  // events and deposits are the commoner kind, so an unfiltered scan would
+  // spend its budget on rows this function throws away.
+  const { events, cursor } = await scanForward(
+    server,
+    start,
+    [[settleTopic, '*']],
+    settlementCursor ? 3 : SETTLEMENT_LOOKBACK_LEDGERS / LEDGERS_PER_PAGE
+  )
+
+  for (const raw of events) {
+    const e = parseEvent(raw)
+    if (!e || e.kind !== 'settle' || e.id == null) continue
+    const positionId = Number(e.id)
+    if (!Number.isFinite(positionId)) continue
+    settlements.set(positionId, {
+      positionId,
+      outcome: e.outcome ?? 'unknown',
+      priceUsd: e.priceUsd ?? 0,
+      at: e.at,
+      txHash: e.txHash,
+    })
+  }
+
+  if (cursor) settlementCursor = cursor
+  settlementsFreshUntil = Date.now() + SETTLEMENT_TTL_MS
+}
+
+/**
+ * Settlements, indexed by position id.
+ *
+ * The position itself already says that it settled and how; what it cannot say
+ * is when, at what price, or in which transaction — the contract keeps no room
+ * for that and publishes it as an event instead. So a writer asking why their
+ * collateral came back as cash is answered from here, with a hash they can open.
+ *
+ * Bounded by the RPC's event retention and by the scan budget above, so an old
+ * settlement comes back missing rather than wrong. An absent record means "not
+ * recorded here" and never "did not settle" — the position is the authority on
+ * that, and callers must not infer settlement from this map.
+ */
+export async function fetchSettlements(): Promise<Map<number, SettlementRecord>> {
+  if (VAULT_IDS.length === 0) return settlements
+  if (Date.now() < settlementsFreshUntil) return settlements
+
+  // One scan at a time: a dashboard load asks for positions and portfolio at
+  // once, and two identical walks of the same ledgers help nobody.
+  if (!settlementScan) {
+    settlementScan = refreshSettlements()
+      .catch((err) => {
+        console.warn('contract-events: settlement scan failed', err)
+        // Back off rather than retrying on every request while RPC is unwell.
+        settlementsFreshUntil = Date.now() + 10_000
+      })
+      .finally(() => {
+        settlementScan = null
+      })
+  }
+  await settlementScan
+  return settlements
 }

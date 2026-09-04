@@ -4,6 +4,8 @@ import { isValidStellarAddress } from '@/lib/utils'
 import { reserveAction, releaseAction, confirmAction } from '@/lib/idempotency'
 import { logTransaction } from '@/lib/db-queries'
 import { getPosition, VAULT_ID } from '@/lib/vault-contract'
+import { getSpotXlmUsd } from '@/lib/spot'
+import { realizedApr } from '@/lib/apr'
 
 export const dynamic = 'force-dynamic'
 
@@ -115,6 +117,28 @@ export async function POST(req: Request) {
       )
     }
 
+    // ---- the rate this position paid
+    //
+    // Recorded now because it can only be recorded now: the APR is measured
+    // against the underlying's value at open, and by tomorrow that price is
+    // history nobody kept. A feed outage costs the row its APR, not its
+    // existence — the deposit is indexed either way.
+    let spotAtOpen: number | null = null
+    try {
+      spotAtOpen = (await getSpotXlmUsd()).price
+    } catch (spotErr) {
+      console.warn('vault/deposit: spot unavailable, APR not recorded', spotErr)
+    }
+    const openApr =
+      realizedApr({
+        side: position.side,
+        collateral: position.collateral,
+        premium: position.premium,
+        openedAt: Date.now(),
+        expiry: position.expiry.getTime(),
+        spotAtOpen,
+      }) ?? undefined
+
     // ---- record it once
     //
     // Same replay ledger the old rail used, so a position can be indexed only
@@ -146,6 +170,14 @@ export async function POST(req: Request) {
           strikePrice: position.strike,
           expiryIso: position.expiry.toISOString(),
           daysToExpiry: body.daysToExpiry,
+          // The rate this position paid, and the price it was measured
+          // against. Neither has a home on chain, and the client is not asked
+          // for either: both are derived here from contract state and this
+          // server's own feed, so a writer cannot mint themselves a headline
+          // APR by posting one. Undefined when the feed was unreachable —
+          // recorded as unknown, never as zero.
+          apr: openApr,
+          spotAtOpen: spotAtOpen ?? undefined,
           premium: position.premium,
           settled: position.settled,
           outcome: position.outcome,
