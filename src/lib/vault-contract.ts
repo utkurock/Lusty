@@ -29,6 +29,7 @@ import {
   rpc,
   xdr,
 } from '@stellar/stellar-sdk'
+import { XLM, vaultInstances, type UnderlyingAsset } from './assets'
 
 export const RPC_URL =
   process.env.SOROBAN_RPC_URL ??
@@ -37,11 +38,11 @@ export const RPC_URL =
 
 export const NETWORK_PASSPHRASE = Networks.TESTNET
 
-/** The vault instance the app writes to. */
-export const VAULT_ID =
-  process.env.NEXT_PUBLIC_VAULT_CONTRACT ??
-  process.env.VAULT_CONTRACT ??
-  ''
+/**
+ * XLM's instance — the one a read addresses when no asset is named. It is a
+ * default now, not the only address; every read below takes an asset.
+ */
+export const VAULT_ID = XLM.contracts.vault
 
 export const TOKEN_DECIMALS = 7
 export const ORACLE_DECIMALS = 14
@@ -185,24 +186,26 @@ export function vaultServer(): rpc.Server {
   return new rpc.Server(RPC_URL, { allowHttp: RPC_URL.startsWith('http://') })
 }
 
-function requireVaultId(): string {
-  if (!VAULT_ID) {
-    throw new Error('NEXT_PUBLIC_VAULT_CONTRACT is not configured')
+function requireVaultId(asset: UnderlyingAsset = XLM): string {
+  if (!asset.contracts.vault) {
+    throw new Error(`no vault contract configured for ${asset.symbol}`)
   }
-  return VAULT_ID
+  return asset.contracts.vault
 }
 
 /**
- * Invoke a view by simulation. Never submitted, so it neither costs fees nor
- * needs a funded account — `from` only has to be a well-formed address.
+ * Invoke a view by simulation, on the named asset's instance. Never submitted,
+ * so it neither costs fees nor needs a funded account — `from` only has to be
+ * a well-formed address.
  */
 export async function readVault(
   method: string,
   args: xdr.ScVal[] = [],
+  asset: UnderlyingAsset = XLM,
   from: string = NULL_ACCOUNT,
 ): Promise<any> {
   const server = vaultServer()
-  const contract = new Contract(requireVaultId())
+  const contract = new Contract(requireVaultId(asset))
   const tx = new TransactionBuilder(new Account(from, '0'), {
     fee: BASE_FEE,
     networkPassphrase: NETWORK_PASSPHRASE,
@@ -212,17 +215,19 @@ export async function readVault(
     .build()
 
   const sim = await server.simulateTransaction(tx)
+  // Named, because with an instance per asset "the vault failed" does not say
+  // which book was being read.
   if (rpc.Api.isSimulationError(sim)) {
-    throw new Error(`vault.${method} failed: ${sim.error}`)
+    throw new Error(`${asset.symbol} vault.${method} failed: ${sim.error}`)
   }
   if (!rpc.Api.isSimulationSuccess(sim) || !sim.result?.retval) {
-    throw new Error(`vault.${method} returned nothing`)
+    throw new Error(`${asset.symbol} vault.${method} returned nothing`)
   }
   return scValToNative(sim.result.retval)
 }
 
-export async function getVaultConfig(): Promise<VaultConfig> {
-  const c = await readVault('config')
+export async function getVaultConfig(asset: UnderlyingAsset = XLM): Promise<VaultConfig> {
+  const c = await readVault('config', [], asset)
   return {
     oracle: c.oracle,
     feed: c.feed,
@@ -238,12 +243,12 @@ export async function getVaultConfig(): Promise<VaultConfig> {
  * so the set being enforced can be compared against the one the operator says
  * is in force — the point of keeping the registry on chain.
  */
-export async function getVaultQuoters(): Promise<string[]> {
-  return await readVault('quoters')
+export async function getVaultQuoters(asset: UnderlyingAsset = XLM): Promise<string[]> {
+  return await readVault('quoters', [], asset)
 }
 
-export async function getVaultStats(): Promise<VaultStats> {
-  const s = await readVault('stats')
+export async function getVaultStats(asset: UnderlyingAsset = XLM): Promise<VaultStats> {
+  const s = await readVault('stats', [], asset)
   return {
     escrowedCall: fromTokenUnits(s.escrowed_call),
     escrowedPut: fromTokenUnits(s.escrowed_put),
@@ -255,8 +260,8 @@ export async function getVaultStats(): Promise<VaultStats> {
   }
 }
 
-export async function getVaultLimits(): Promise<VaultLimits> {
-  const l = await readVault('limits')
+export async function getVaultLimits(asset: UnderlyingAsset = XLM): Promise<VaultLimits> {
+  const l = await readVault('limits', [], asset)
   return {
     maxPositionCall: fromTokenUnits(l.max_position_call),
     maxPositionPut: fromTokenUnits(l.max_position_put),
@@ -267,11 +272,19 @@ export async function getVaultLimits(): Promise<VaultLimits> {
 }
 
 /** Collateral already committed to one expiry — how full that date is. */
-export async function getExposure(side: OptionSide, expiry: Date): Promise<number> {
-  const raw = await readVault('exposure', [
-    sideToScVal(side),
-    nativeToScVal(BigInt(Math.floor(expiry.getTime() / 1000)), { type: 'u64' }),
-  ])
+export async function getExposure(
+  side: OptionSide,
+  expiry: Date,
+  asset: UnderlyingAsset = XLM,
+): Promise<number> {
+  const raw = await readVault(
+    'exposure',
+    [
+      sideToScVal(side),
+      nativeToScVal(BigInt(Math.floor(expiry.getTime() / 1000)), { type: 'u64' }),
+    ],
+    asset,
+  )
   return fromTokenUnits(raw)
 }
 
@@ -289,8 +302,17 @@ export function decodePosition(id: number, raw: any): VaultPosition {
   }
 }
 
-export async function getPosition(id: number): Promise<VaultPosition> {
-  const raw = await readVault('position', [nativeToScVal(BigInt(id), { type: 'u64' })])
+// Position ids are per instance and start at 0 in each, so #3 names a
+// different position in every book. An id without an asset is half an address.
+export async function getPosition(
+  id: number,
+  asset: UnderlyingAsset = XLM,
+): Promise<VaultPosition> {
+  const raw = await readVault(
+    'position',
+    [nativeToScVal(BigInt(id), { type: 'u64' })],
+    asset,
+  )
   return decodePosition(id, raw)
 }
 
@@ -302,9 +324,10 @@ export async function getPosition(id: number): Promise<VaultPosition> {
 export async function getPositionsOf(
   owner: string,
   limit = 100,
+  asset: UnderlyingAsset = XLM,
 ): Promise<VaultPosition[]> {
-  const ids = await getPositionIdsOf(owner, limit)
-  const positions = await Promise.all(ids.map((id) => getPosition(id)))
+  const ids = await getPositionIdsOf(owner, limit, asset)
+  const positions = await Promise.all(ids.map((id) => getPosition(id, asset)))
   return positions.reverse()
 }
 
@@ -318,18 +341,23 @@ export async function getPositionsOf(
 export async function getPositionIdsOf(
   owner: string,
   limit = 100,
+  asset: UnderlyingAsset = XLM,
 ): Promise<number[]> {
   const count: number = Number(
-    await readVault('position_count', [new Address(owner).toScVal()]),
+    await readVault('position_count', [new Address(owner).toScVal()], asset),
   )
   if (count === 0) return []
 
   const start = Math.max(0, count - limit)
-  const ids: bigint[] = await readVault('positions_of', [
-    new Address(owner).toScVal(),
-    nativeToScVal(start, { type: 'u32' }),
-    nativeToScVal(Math.min(limit, 100), { type: 'u32' }),
-  ])
+  const ids: bigint[] = await readVault(
+    'positions_of',
+    [
+      new Address(owner).toScVal(),
+      nativeToScVal(start, { type: 'u32' }),
+      nativeToScVal(Math.min(limit, 100), { type: 'u32' }),
+    ],
+    asset,
+  )
   return ids.map((id) => Number(id))
 }
 
@@ -701,7 +729,9 @@ export function readableContractError(
 
   const culprit = failingContract(events)
   if (culprit) {
-    if (culprit === VAULT_ID) {
+    // Any declared instance is a vault. Comparing against one address would
+    // read a second vault's #13 off the token table and blame a trustline.
+    if (vaultInstances().includes(culprit)) {
       return fromVault ?? `Vault rejected the ${action}: ${error}`
     }
     // Anything else in this invocation is a token contract: the collateral
