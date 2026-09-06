@@ -9,21 +9,21 @@
 // Reads only — getEvents submits nothing, signs nothing, costs nothing.
 
 import { rpc as sorobanRpc, nativeToScVal, scValToNative, xdr } from '@stellar/stellar-sdk'
+import { vaultInstances } from './assets'
 
 const RPC_URL =
   process.env.SOROBAN_RPC_URL ?? 'https://soroban-testnet.stellar.org'
 
-// The vault instances to stream. Normally just the live one; the plural form
-// exists so a superseded instance can be kept in the feed while its last
-// positions settle.
-const VAULT_IDS = (
-  process.env.NEXT_PUBLIC_VAULT_CONTRACTS ??
-  process.env.NEXT_PUBLIC_VAULT_CONTRACT ??
-  ''
-)
+// The instances to stream come off the registry — a separate env list would
+// drift, and an asset missing from it settles on chain while its writers watch
+// a feed that never mentions it. The env var survives only for superseded
+// instances, which the registry cannot name.
+const RETIRED_VAULT_IDS = (process.env.NEXT_PUBLIC_VAULT_CONTRACTS ?? '')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean)
+
+const VAULT_IDS = [...new Set([...vaultInstances(), ...RETIRED_VAULT_IDS])]
 
 // A single getEvents call scans a fixed slice of ledgers — 10,000 on the public
 // RPC — and returns whatever it found in THAT slice, plus a cursor to continue
