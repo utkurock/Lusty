@@ -1,9 +1,13 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest'
+import { StrKey } from '@stellar/stellar-sdk'
 
 // The registry reads its contract ids at module load, so the env goes in
 // before the import.
-
-const XLM_VAULT = 'CBJZGTCF2PJVHX2BNFTFZ2L2LX6DWD5JMTLHNCVYTSOD3BLVSXZRUCJZ'
+//
+// Synthetic addresses: well-formed strkeys naming nothing deployed. The
+// registry cares that an address is configured, not which one.
+const XLM_VAULT = StrKey.encodeContract(Buffer.alloc(32, 0x11))
+const SOME_ISSUER = StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 0x44))
 
 type Registry = typeof import('../assets')
 let reg: Registry
@@ -38,7 +42,7 @@ describe('registry — what is declared vs what is tradeable', () => {
   it('gates an underlying with nowhere to settle, anchor or not', async () => {
     expect(reg.BTC.contracts.vault).toBe('')
 
-    const issuer = 'GDUKMGUGDZQK6YHYA5Z6AY2G4XDSZPSZ3SW5UN3ARVMO6QSRDWP5YLEX'
+    const issuer = SOME_ISSUER
     process.env.NEXT_PUBLIC_BTC_ANCHOR_ISSUER = issuer
     vi.resetModules()
     const anchored: Registry = await import('../assets')
