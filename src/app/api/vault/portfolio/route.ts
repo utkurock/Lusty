@@ -6,10 +6,10 @@ import {
   getPositionsOf,
   getExposure,
   getVaultLimits,
-  VAULT_ID,
   type VaultPosition,
 } from '@/lib/vault-contract'
-import { getSpotXlmUsd } from '@/lib/spot'
+import { XLM, settleableUnderlying, type UnderlyingAsset } from '@/lib/assets'
+import { getSpot } from '@/lib/spot'
 import { getMarketContext } from '@/lib/pricing-server'
 import {
   aggregatePortfolio,
@@ -38,6 +38,12 @@ export const revalidate = 0
 // Market data is fetched ONCE per request, not once per position. σ is a
 // property of the underlying, and every expiry's forward comes off the same
 // funding observation.
+//
+// ONE BOOK PER REQUEST. Unlike /positions, everything here is a total: call
+// collateral, premium income, delta, gamma, vega. Totalling across underlyings
+// would add BTC to XLM and print the sum as a quantity, so `?asset=` names the
+// book and the response says which one answered. Absent means XLM, which is
+// what every caller written before there was a second book meant.
 
 export async function GET(req: Request) {
   try {
@@ -45,6 +51,17 @@ export async function GET(req: Request) {
     const address = url.searchParams.get('address') ?? ''
     if (!isValidStellarAddress(address)) {
       return NextResponse.json({ error: 'invalid address' }, { status: 400 })
+    }
+
+    // Settleable rather than tradeable: a writer whose asset was withdrawn
+    // from quoting still carries its risk and still needs to see it.
+    const assetRaw = url.searchParams.get('asset')
+    const asset = assetRaw ? settleableUnderlying(assetRaw) : XLM
+    if (!asset) {
+      return NextResponse.json(
+        { error: `${assetRaw} has no vault to read`, code: 'asset_unavailable' },
+        { status: 400 }
+      )
     }
 
     // Tighter than /positions: every call here also re-prices the book against
@@ -60,13 +77,13 @@ export async function GET(req: Request) {
     // Each source is best-effort on its own, as in /positions: a database
     // outage must not hide positions the ledger can answer for, and vice versa.
     const [chain, mirror] = await Promise.all([
-      VAULT_ID
-        ? getPositionsOf(address).catch((err) => {
-            console.warn('vault/portfolio: contract read failed', err)
+      asset.contracts.vault
+        ? getPositionsOf(address, 100, asset).catch((err) => {
+            console.warn(`vault/portfolio: ${asset.symbol} contract read failed`, err)
             return null
           })
         : Promise.resolve(null),
-      getPositionsForAddress(address).catch((err) => {
+      getPositionsForAddress(address, asset).catch((err) => {
         console.warn('vault/portfolio: database read failed', err)
         return [] as DbPosition[]
       }),
@@ -78,7 +95,7 @@ export async function GET(req: Request) {
 
     // Losing the feed costs the Greeks, not the whole answer: collateral and
     // premium income are recorded facts that need no price to report.
-    const market = await marketFor(legs).catch((err) => {
+    const market = await marketFor(legs, asset).catch((err) => {
       console.warn('vault/portfolio: market data unavailable', err)
       return null
     })
@@ -88,13 +105,16 @@ export async function GET(req: Request) {
     // Only meaningful against contract state: comparing a mirror-derived
     // holding to the contract's own book invites a discrepancy that means
     // nothing to the reader.
-    if (chain) await attachVaultLoad(summary.byExpiry)
+    if (chain) await attachVaultLoad(summary.byExpiry, asset)
 
     return NextResponse.json(
       {
         ok: true,
         source: chain ? 'contract' : 'database',
-        ...(chain ? { contractId: VAULT_ID } : {}),
+        // Which book these totals are for. Every number below is in this
+        // asset's units, and none of them may be added to another book's.
+        underlying: asset.symbol,
+        ...(chain ? { contractId: asset.contracts.vault } : {}),
         address,
         asOf: Date.now(),
         // Mirror rows without a strike or expiry cannot be priced or bucketed.
@@ -127,17 +147,20 @@ export async function GET(req: Request) {
  * and must not be held hostage to an extra read; a failure here leaves `vault`
  * absent, which the UI renders as "unknown" rather than as zero.
  */
-async function attachVaultLoad(buckets: ExpiryBucket[]): Promise<void> {
+async function attachVaultLoad(
+  buckets: ExpiryBucket[],
+  asset: UnderlyingAsset
+): Promise<void> {
   if (buckets.length === 0) return
   try {
     const [limits, loads] = await Promise.all([
-      getVaultLimits(),
+      getVaultLimits(asset),
       Promise.all(
         buckets.map(async (b) => {
           const expiry = new Date(b.expiryIso)
           const [callXlm, putUsd] = await Promise.all([
-            getExposure('call', expiry),
-            getExposure('put', expiry),
+            getExposure('call', expiry, asset),
+            getExposure('put', expiry, asset),
           ])
           return { callXlm, putUsd }
         })
@@ -196,13 +219,13 @@ function fromMirror(rows: DbPosition[]): { legs: Leg[]; incomplete: number } {
  * to price, which is a valid state and not an error — a wallet whose positions
  * have all expired has no market exposure to report.
  */
-async function marketFor(legs: Leg[]) {
+async function marketFor(legs: Leg[], asset: UnderlyingAsset) {
   const live = legs.filter((l) => !l.settled && daysUntil(l.expiry) > 0)
   if (live.length === 0) return null
 
-  const spot = await getSpotXlmUsd()
+  const spot = await getSpot(asset)
   const nearest = Math.min(...live.map((l) => daysUntil(l.expiry)))
-  const ctx = await getMarketContext(spot.price, nearest)
+  const ctx = await getMarketContext(spot.price, nearest, asset)
 
   return {
     spot: spot.price,

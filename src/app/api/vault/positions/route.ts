@@ -13,7 +13,12 @@ import {
   VAULT_ID,
   type VaultPosition,
 } from '@/lib/vault-contract'
-import { fetchSettlements, type SettlementRecord } from '@/lib/contract-events'
+import {
+  fetchSettlements,
+  settlementKey,
+  type SettlementRecord,
+} from '@/lib/contract-events'
+import { settleableUnderlyings, type UnderlyingAsset } from '@/lib/assets'
 import { getDailyCloses, closeOn, type DatedClose } from '@/lib/price-history'
 import { realizedApr } from '@/lib/apr'
 
@@ -49,7 +54,7 @@ export interface PositionView extends DbPosition {
    * and a screen that says only "settled: yes" reads exactly like a screen
    * saying the money never came back.
    */
-  payout: { amount: number; asset: 'XLM' | 'LUSD' } | null
+  payout: { amount: number; asset: string } | null
   /** Oracle price the contract settled against, when the event is still readable. */
   settlePrice: number | null
   settledAt: string | null
@@ -81,15 +86,28 @@ export async function GET(req: Request) {
       )
     }
 
+    // Every book with an instance to read, not just the one this application
+    // started with. A wallet's list of what it holds is not an aggregate — no
+    // total is taken here — so returning both books mixes nothing, and each
+    // row says which one it came from.
+    //
+    // Wider than the tradeable set on purpose, exactly as settlement is: an
+    // asset withdrawn from quoting still has open positions, and a writer must
+    // be able to see the collateral they are waiting on.
+    const books = settleableUnderlyings()
+
     // Each source is best-effort on its own: a database outage must not hide
     // positions that are perfectly readable from the ledger, and vice versa.
-    const [chain, mirror, settlements, closes] = await Promise.all([
-      VAULT_ID
-        ? getPositionsOf(address).catch((err) => {
-            console.warn('vault/positions: contract read failed', err)
+    const [reads, mirror, settlements] = await Promise.all([
+      Promise.all(
+        books.map(async (asset) => ({
+          asset,
+          positions: await getPositionsOf(address, 100, asset).catch((err) => {
+            console.warn(`vault/positions: ${asset.symbol} contract read failed`, err)
             return null
-          })
-        : Promise.resolve(null),
+          }),
+        }))
+      ),
       getPositionsForAddress(address).catch((err) => {
         console.warn('vault/positions: database read failed', err)
         return [] as DbPosition[]
@@ -98,30 +116,70 @@ export async function GET(req: Request) {
       // and hash, never whether a position settled. The contract owns that.
       fetchSettlements().catch((err) => {
         console.warn('vault/positions: settlement events unavailable', err)
-        return new Map<number, SettlementRecord>()
-      }),
-      // One series covers every row, however old. Only positions written
-      // before the deposit route recorded an APR need it.
-      getDailyCloses().catch((err) => {
-        console.warn('vault/positions: price history unavailable', err)
-        return [] as DatedClose[]
+        return new Map<string, SettlementRecord>()
       }),
     ])
 
-    if (!chain) {
+    const answered = reads.filter(
+      (r): r is { asset: UnderlyingAsset; positions: VaultPosition[] } =>
+        r.positions !== null
+    )
+
+    if (answered.length === 0) {
       return NextResponse.json(
         { ok: true, source: 'database', positions: mirror },
         { headers: { 'Cache-Control': 'no-store' } }
       )
     }
 
-    const byPositionId = new Map<number, DbPosition>()
+    // A book that could not be read is named rather than left out. Silently
+    // returning the books that answered would show a writer a shorter list
+    // than they hold and give them no way to know it was short.
+    const unreadable = reads
+      .filter((r) => r.positions === null)
+      .map((r) => r.asset.symbol)
+
+    // Price history is per book — an XLM close cannot reconstruct a BTC rate —
+    // and only rows written before the deposit route recorded an APR need it.
+    const closes = new Map<string, DatedClose[]>(
+      await Promise.all(
+        answered.map(
+          async (b) =>
+            [
+              b.asset.symbol,
+              await getDailyCloses(b.asset).catch((err) => {
+                console.warn(
+                  `vault/positions: ${b.asset.symbol} price history unavailable`,
+                  err
+                )
+                return [] as DatedClose[]
+              }),
+            ] as [string, DatedClose[]]
+        )
+      )
+    )
+
+    // Keyed by book as well as id: each instance numbers its positions from
+    // zero, so the number alone would hand one book's deposit row to another
+    // book's position.
+    const byPosition = new Map<string, DbPosition>()
     for (const row of mirror) {
-      if (row.positionId !== null) byPositionId.set(row.positionId, row)
+      if (row.positionId !== null) {
+        byPosition.set(`${row.underlying}#${row.positionId}`, row)
+      }
     }
 
-    const positions = chain.map((p) =>
-      merge(address, p, byPositionId.get(p.id), settlements.get(p.id), closes)
+    const positions = answered.flatMap((b) =>
+      b.positions.map((p) =>
+        merge(
+          address,
+          p,
+          b.asset,
+          byPosition.get(`${b.asset.symbol}#${p.id}`),
+          settlements.get(settlementKey(b.asset.contracts.vault, p.id)),
+          closes.get(b.asset.symbol) ?? []
+        )
+      )
     )
 
     // Write down whatever had to be reconstructed, so the next read does not
@@ -137,7 +195,19 @@ export async function GET(req: Request) {
     ).catch((err) => console.warn('vault/positions: APR backfill failed', err))
 
     return NextResponse.json(
-      { ok: true, source: 'contract', contractId: VAULT_ID, positions },
+      {
+        ok: true,
+        source: 'contract',
+        // Kept for callers written when there was one instance; `books` is
+        // what a caller reading more than XLM should use.
+        contractId: VAULT_ID,
+        books: answered.map((b) => ({
+          underlying: b.asset.symbol,
+          contractId: b.asset.contracts.vault,
+        })),
+        ...(unreadable.length > 0 ? { unreadableBooks: unreadable } : {}),
+        positions,
+      },
       { headers: { 'Cache-Control': 'no-store' } }
     )
   } catch (e: any) {
@@ -156,6 +226,7 @@ export async function GET(req: Request) {
 function merge(
   address: string,
   position: VaultPosition,
+  asset: UnderlyingAsset,
   mirror: DbPosition | undefined,
   settlement: SettlementRecord | undefined,
   closes: DatedClose[]
@@ -170,7 +241,8 @@ function merge(
     positionId: position.id,
     address,
     type: position.side,
-    asset: position.side === 'call' ? 'XLM' : 'LUSD',
+    asset: position.side === 'call' ? asset.symbol : 'LUSD',
+    underlying: asset.symbol,
     collateralAmount: position.collateral,
     strikePrice: position.strike,
     apr,
@@ -189,7 +261,7 @@ function merge(
     settled: position.settled,
     outcome: position.outcome,
     payoutHash: mirror?.payoutHash ?? null,
-    payout: settlementPayout(position),
+    payout: settlementPayout(position, asset),
     settlePrice: settlement?.priceUsd ?? null,
     settledAt: settlement?.at ?? null,
     settleHash: settlement?.txHash ?? null,

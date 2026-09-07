@@ -411,32 +411,41 @@ export async function getPositionIdsOf(
  * loses that argument is the one on screen.
  */
 export function settlementPayout(
-  p: Pick<VaultPosition, 'side' | 'collateral' | 'strike' | 'outcome'>
-): { amount: number; asset: 'XLM' | 'LUSD' } | null {
+  p: Pick<VaultPosition, 'side' | 'collateral' | 'strike' | 'outcome'>,
+  asset: UnderlyingAsset = XLM,
+): { amount: number; asset: string } | null {
   if (!p.outcome || p.outcome === 'open') return null
 
   const amount = scale(p.collateral, TOKEN_DECIMALS)
   const strike = scale(p.strike, ORACLE_DECIMALS)
   const oracleScale = 10n ** BigInt(ORACLE_DECIMALS)
 
+  // Which token the writer is handed. The underlying leg is the instance's
+  // own — a BTC put that assigns pays BTC, and naming it XLM would tell the
+  // writer their collateral came back as something it is not. The cash leg is
+  // LUSD for every instance today; it is the registry's `cash` SAC, and an
+  // asset settling in something else changes here and in the registry
+  // together.
+  const CASH = 'LUSD'
+
   if (p.outcome === 'kept') {
     // The escrow comes back untouched, in the token it went in as.
     return {
       amount: unscale(amount, TOKEN_DECIMALS),
-      asset: p.side === 'call' ? 'XLM' : 'LUSD',
+      asset: p.side === 'call' ? asset.symbol : CASH,
     }
   }
 
   if (p.side === 'call') {
     return {
       amount: unscale((amount * strike) / oracleScale, TOKEN_DECIMALS),
-      asset: 'LUSD',
+      asset: CASH,
     }
   }
-  if (strike <= 0n) return { amount: 0, asset: 'XLM' }
+  if (strike <= 0n) return { amount: 0, asset: asset.symbol }
   return {
     amount: unscale((amount * oracleScale) / strike, TOKEN_DECIMALS),
-    asset: 'XLM',
+    asset: asset.symbol,
   }
 }
 

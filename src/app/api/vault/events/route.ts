@@ -4,8 +4,12 @@ import {
   getPosition,
   getPositionIdsOf,
   settlementPayout,
-  VAULT_ID,
 } from '@/lib/vault-contract'
+import {
+  settleableUnderlying,
+  settleableUnderlyings,
+  underlyingByVault,
+} from '@/lib/assets'
 import { getRecentDeposits } from '@/lib/db-queries'
 import { rateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
@@ -54,14 +58,41 @@ export async function GET(req: Request) {
     // Neither source may take the other down: the ledger read already swallows
     // its own errors, and a database that is unreachable must still leave the
     // live events on screen.
-    // Which position ids belong to this wallet. Both `deposit` and `settle`
+    // Which positions belong to this wallet. Both `deposit` and `settle`
     // publish the id as a topic, so an id set is enough to sort the wallet's
     // events out of the vault's without reading a single position.
+    //
+    // The set is of instance-and-id pairs, not of numbers. Every vault numbers
+    // its positions from zero, so a bare id set would claim another book's
+    // event as this wallet's the moment two instances are scanned — which the
+    // retired vaults in NEXT_PUBLIC_VAULT_CONTRACTS already make possible.
+    const books = settleableUnderlyings()
     const mine =
-      address && VAULT_ID
-        ? await getPositionIdsOf(address).catch((err) => {
-            console.warn('vault/events: owner index unreadable', err)
-            return null
+      address && books.length > 0
+        ? await Promise.all(
+            books.map(async (asset) => ({
+              asset,
+              ids: await getPositionIdsOf(address, 100, asset).catch((err) => {
+                console.warn(
+                  `vault/events: ${asset.symbol} owner index unreadable`,
+                  err
+                )
+                return null
+              }),
+            }))
+          ).then((reads) => {
+            // One unreadable book means we cannot say whose the rest are
+            // either — an event from it would fall through the filter as
+            // somebody else's. Fail the whole scoping rather than show a
+            // wallet a feed that is quietly missing a book.
+            if (reads.some((r) => r.ids === null)) return null
+            return new Set(
+              reads.flatMap((r) =>
+                (r.ids as number[]).map(
+                  (id) => `${r.asset.contracts.vault}#${id}`
+                )
+              )
+            )
           })
         : null
 
@@ -83,7 +114,9 @@ export async function GET(req: Request) {
       mine !== null
         ? chain.filter(
             (e) =>
-              e.kind !== 'fund' && e.id != null && mine.includes(Number(e.id))
+              e.kind !== 'fund' &&
+              e.id != null &&
+              mine.has(`${e.contractId}#${Number(e.id)}`)
           )
         : address
           ? // Asked for one wallet's feed and unable to tell whose events these
@@ -101,11 +134,16 @@ export async function GET(req: Request) {
         .filter((e) => e.kind === 'settle' && e.id != null)
         .map(async (e) => {
           try {
-            const p = await getPosition(Number(e.id))
+            // Read from the instance that emitted the event, not from the one
+            // this application started with: the id is only meaningful there,
+            // and the payout is named in that book's own token.
+            const asset = underlyingByVault(e.contractId)
+            if (!asset) return
+            const p = await getPosition(Number(e.id), asset)
             e.side = p.side
             e.strikeUsd = p.strike
             e.releasedAmount = p.collateral
-            e.payout = settlementPayout(p) ?? undefined
+            e.payout = settlementPayout(p, asset) ?? undefined
           } catch (err) {
             // The row still stands on the outcome and the price it already has.
             console.warn(`vault/events: could not read settled position ${e.id}`, err)
@@ -126,7 +164,10 @@ export async function GET(req: Request) {
         // The mirror records when a deposit landed, not which ledger closed it.
         ledger: 0,
         at: d.at,
-        contractId: '',
+        // Named from the book the row was written in, so a mirrored row is
+        // addressable the same way an on-chain one is. Empty when the book
+        // has no instance any more, which is what an unaddressable row is.
+        contractId: settleableUnderlying(d.underlying)?.contracts.vault ?? '',
         txHash: d.txHash ?? undefined,
         owner: d.address,
         amount: d.collateral,

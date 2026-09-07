@@ -1,4 +1,12 @@
 import { getPool, ensureSchema } from './db'
+import type { UnderlyingAsset } from './assets'
+
+// Rows written before `transactions.underlying` existed were backfilled to
+// 'XLM' for options and left null for everything else, so a null here means
+// "not an option" rather than "book unknown". Reads still coalesce, because a
+// row inserted between the migration and its constraint would otherwise reach
+// the UI with no book at all.
+const DEFAULT_BOOK = 'XLM'
 
 // ── User operations ────────────────────────────────────────────────
 
@@ -76,7 +84,14 @@ export interface DbPosition {
   id: string
   address: string
   type: 'call' | 'put'
+  /** Token the collateral is denominated in — XLM or BTC for a call, cash for a put. */
   asset: string
+  /**
+   * The book this position belongs to. Distinct from `asset`, which names a
+   * token: a BTC put escrows cash, so its `asset` is LUSD and only this says
+   * which vault it settles in.
+   */
+  underlying: string
   collateralAmount: number
   strikePrice: number | null
   apr: number | null
@@ -102,12 +117,24 @@ export interface DbPosition {
   positionId: number | null
 }
 
-export async function getPositionsForAddress(address: string): Promise<DbPosition[]> {
+/**
+ * One wallet's positions.
+ *
+ * `asset` narrows the answer to a single book. Left off, the answer spans every
+ * book and each row says which one it came from — a wallet's list of what it
+ * holds is not an aggregate, so nothing is mixed by returning both. Callers
+ * that *total* anything must pass an asset; adding a BTC collateral figure to
+ * an XLM one is a currency error whichever way it is rounded.
+ */
+export async function getPositionsForAddress(
+  address: string,
+  asset?: UnderlyingAsset
+): Promise<DbPosition[]> {
   if (!address) return []
   await ensureSchema()
   const pool = getPool()
   const res = await pool.query(
-    `select t.tx_hash, t.subtype, t.amount, t.asset, t.premium_hash,
+    `select t.tx_hash, t.subtype, t.amount, t.asset, t.underlying, t.premium_hash,
             t.premium_amount, t.metadata, t.created_at,
             (pa.confirmed_at is not null) as settled, pa.payout_hash
      from transactions t
@@ -116,8 +143,9 @@ export async function getPositionsForAddress(address: string): Promise<DbPositio
      where t.address = $1
        and t.type = 'deposit'
        and (t.subtype = 'call' or t.subtype = 'put')
+       ${asset ? 'and t.underlying = $2' : ''}
      order by t.created_at desc`,
-    [address]
+    asset ? [address, asset.symbol] : [address]
   )
 
   return res.rows.map((r) => {
@@ -146,6 +174,7 @@ export async function getPositionsForAddress(address: string): Promise<DbPositio
       address,
       type: r.subtype as 'call' | 'put',
       asset: r.asset ?? (r.subtype === 'call' ? 'XLM' : 'LUSD'),
+      underlying: r.underlying ?? DEFAULT_BOOK,
       collateralAmount: collateral !== null ? collateral : parseFloat(r.amount),
       strikePrice,
       apr,
@@ -185,6 +214,8 @@ export interface MirroredDeposit {
   address: string
   side: 'call' | 'put'
   asset: string
+  /** The book it was written in; see `DbPosition.underlying`. */
+  underlying: string
   collateral: number
   premium: number
   strikeUsd: number | null
@@ -194,34 +225,35 @@ export interface MirroredDeposit {
 
 export async function getRecentDeposits(
   limit = 25,
-  address?: string
+  address?: string,
+  asset?: UnderlyingAsset
 ): Promise<MirroredDeposit[]> {
   await ensureSchema()
   const pool = getPool()
   const capped = Math.max(1, Math.min(limit, 100))
   // Scoped by address when one is given, because the dashboard's feed is one
   // wallet's history and a vault-wide backfill would put other writers'
-  // deposits under a heading that says "your".
-  const res = address
-    ? await pool.query(
-        `select address, subtype, amount, asset, premium_amount, metadata, tx_hash, created_at
-           from transactions
-          where type = 'deposit'
-            and (subtype = 'call' or subtype = 'put')
-            and address = $2
-          order by created_at desc
-          limit $1`,
-        [capped, address]
-      )
-    : await pool.query(
-        `select address, subtype, amount, asset, premium_amount, metadata, tx_hash, created_at
-           from transactions
-          where type = 'deposit'
-            and (subtype = 'call' or subtype = 'put')
-          order by created_at desc
-          limit $1`,
-        [capped]
-      )
+  // deposits under a heading that says "your". Scoped by book when one is
+  // given, for the same reason one book's activity is not another's.
+  const where: string[] = ["type = 'deposit'", "(subtype = 'call' or subtype = 'put')"]
+  const params: unknown[] = [capped]
+  if (address) {
+    params.push(address)
+    where.push(`address = $${params.length}`)
+  }
+  if (asset) {
+    params.push(asset.symbol)
+    where.push(`underlying = $${params.length}`)
+  }
+  const res = await pool.query(
+    `select address, subtype, amount, asset, underlying, premium_amount,
+            metadata, tx_hash, created_at
+       from transactions
+      where ${where.join('\n        and ')}
+      order by created_at desc
+      limit $1`,
+    params
+  )
 
   return res.rows.map((r: any) => {
     const meta = (r.metadata ?? {}) as Record<string, unknown>
@@ -231,6 +263,7 @@ export async function getRecentDeposits(
       address: r.address,
       side: r.subtype as 'call' | 'put',
       asset: r.asset ?? (r.subtype === 'call' ? 'XLM' : 'LUSD'),
+      underlying: r.underlying ?? DEFAULT_BOOK,
       collateral: num(meta.collateralAmount) ?? parseFloat(r.amount),
       premium: r.premium_amount !== null ? parseFloat(r.premium_amount) : 0,
       strikeUsd: num(meta.strikePrice),

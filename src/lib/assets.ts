@@ -183,6 +183,20 @@ export function vaultInstances(): string[] {
   return [...new Set(ids)]
 }
 
+/**
+ * The underlying whose vault this contract id is.
+ *
+ * The reverse of `contracts.vault`, and the only way a read that starts from a
+ * chain event can name the book it belongs to: an event carries the contract
+ * that emitted it, never the symbol. Null for an id the registry does not
+ * know — a retired instance, or another deployment entirely — which callers
+ * must treat as "not one of ours" rather than as XLM.
+ */
+export function underlyingByVault(contractId: unknown): UnderlyingAsset | null {
+  if (typeof contractId !== 'string' || !contractId) return null
+  return allUnderlyings().find((a) => a.contracts.vault === contractId) ?? null
+}
+
 /** Registry lookup by exact symbol. Throws — a bad symbol is a bug, not input. */
 export function underlying(symbol: UnderlyingSymbol): UnderlyingAsset {
   return REGISTRY[symbol]
