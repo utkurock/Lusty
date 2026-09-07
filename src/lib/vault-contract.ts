@@ -30,6 +30,11 @@ import {
   xdr,
 } from '@stellar/stellar-sdk'
 import { XLM, vaultInstances, type UnderlyingAsset } from './assets'
+import {
+  credentialAddress,
+  describeMismatch,
+  type ExpectedInvocation,
+} from './vault-auth'
 
 export const RPC_URL =
   process.env.SOROBAN_RPC_URL ??
@@ -178,6 +183,36 @@ export function openArgs(args: OpenArgs): xdr.ScVal[] {
     nativeToScVal(toTokenUnits(args.premium), { type: 'i128' }),
     new Address(args.quoter).toScVal(),
   ]
+}
+
+/** Argument names, for saying which one differs. */
+const OPEN_ARG_LABELS = [
+  'owner',
+  'side',
+  'collateral',
+  'strike',
+  'expiry',
+  'premium',
+  'quoter',
+]
+
+/**
+ * The invocation the quoter is asked to co-sign, on the named instance.
+ *
+ * The instance is half of what is being authorized. A signature covering the
+ * same seven arguments against a different vault authorizes a different
+ * escrow, so the contract belongs in what is checked, not in what is assumed.
+ */
+export function expectedOpenInvocation(
+  args: OpenArgs,
+  asset: UnderlyingAsset = XLM,
+): ExpectedInvocation {
+  return {
+    contractId: requireVaultId(asset),
+    functionName: 'open',
+    args: openArgs(args).map((v) => v.toXDR('base64')),
+    labels: OPEN_ARG_LABELS,
+  }
 }
 
 // ── Reads ───────────────────────────────────────────────────────────
@@ -411,6 +446,8 @@ export function settlementPayout(
 export type QuoterCosigner = (entries: string[]) => Promise<string[]>
 
 export interface OpenPositionParams extends OpenArgs {
+  /** Which underlying's instance to write into. Defaults to XLM's. */
+  asset?: UnderlyingAsset
   /** Wallet callback: takes a transaction XDR, returns it signed. */
   signTransaction: (xdr: string) => Promise<string>
   cosignQuote: QuoterCosigner
@@ -445,8 +482,9 @@ export async function openPosition(
   params: OpenPositionParams,
 ): Promise<OpenPositionResult> {
   const { signTransaction, cosignQuote, onProgress } = params
+  const asset = params.asset ?? XLM
   const server = vaultServer()
-  const contractId = requireVaultId()
+  const contractId = requireVaultId(asset)
   const args = openArgs(params)
 
   const build = async (auth?: xdr.SorobanAuthorizationEntry[]) => {
@@ -484,6 +522,19 @@ export async function openPosition(
   const unsigned = (probe.result?.auth ?? []).map((e) => e.toXDR('base64'))
   const cosigned = await cosignQuote(unsigned)
   const auth = cosigned.map((e) => xdr.SorobanAuthorizationEntry.fromXDR(e, 'base64'))
+
+  // The quoter's entry comes back from a server, so check it still authorizes
+  // this instance and these arguments before the wallet is asked to sign
+  // around it. Otherwise the mismatch surfaces as an opaque contract error at
+  // simulation, after the writer has been prompted.
+  const expected = expectedOpenInvocation(params, asset)
+  for (const entry of auth) {
+    if (credentialAddress(entry) !== params.quoter) continue
+    const mismatch = describeMismatch(entry, expected)
+    if (mismatch) {
+      throw new Error(`the co-signed authorization does not match the quote: ${mismatch}`)
+    }
+  }
 
   const authorized = await build(auth)
   const sim = await simulate(authorized)
@@ -524,9 +575,10 @@ export async function openPosition(
 export async function settlePosition(
   id: number,
   signer: Keypair,
+  asset: UnderlyingAsset = XLM,
 ): Promise<{ txHash: string; outcome: string }> {
   const server = vaultServer()
-  const contractId = requireVaultId()
+  const contractId = requireVaultId(asset)
 
   const account = await server.getAccount(signer.publicKey())
   const tx = new TransactionBuilder(account, {

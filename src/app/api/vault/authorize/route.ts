@@ -9,10 +9,11 @@ import { pricingInputsFor } from '@/lib/quote-inputs'
 import { MIN_DAYS_TO_EXPIRY } from '@/lib/expiries'
 import { assertQuoteAllowed, PolicyRejection } from '@/lib/quote-policy'
 import { getBreakerState } from '@/lib/circuit-breaker'
+import { XLM } from '@/lib/assets'
 import {
   VAULT_ID,
   NETWORK_PASSPHRASE,
-  openArgs,
+  expectedOpenInvocation,
   vaultServer,
   coveredUnits,
   type OptionSide,
@@ -265,15 +266,20 @@ export async function POST(req: Request) {
     const quoterKey = Keypair.fromSecret(QUOTER_SECRET)
     const quoterAddress = quoterKey.publicKey()
 
-    const expected = openArgs({
-      owner: body.address,
-      side: body.side,
-      collateral: body.collateralAmount,
-      strike: body.strikePrice,
-      expiry: new Date(expiryMs),
-      premium: body.premium,
-      quoter: quoterAddress,
-    }).map((v) => v.toXDR('base64'))
+    // XLM's instance, named rather than assumed — the request does not yet
+    // carry an underlying, and resolving it is M1-06's job.
+    const expected = expectedOpenInvocation(
+      {
+        owner: body.address,
+        side: body.side,
+        collateral: body.collateralAmount,
+        strike: body.strikePrice,
+        expiry: new Date(expiryMs),
+        premium: body.premium,
+        quoter: quoterAddress,
+      },
+      XLM,
+    )
 
     let entries: xdr.SorobanAuthorizationEntry[]
     try {
@@ -292,12 +298,7 @@ export async function POST(req: Request) {
       )
     }
 
-    const mismatch = describeMismatch(entries[target], {
-      contractId: VAULT_ID,
-      functionName: 'open',
-      args: expected,
-      labels: ['owner', 'side', 'collateral', 'strike', 'expiry', 'premium', 'quoter'],
-    })
+    const mismatch = describeMismatch(entries[target], expected)
     if (mismatch) {
       return NextResponse.json(
         { error: `authorization entry does not match the quote: ${mismatch}`, code: 'entry_mismatch' },

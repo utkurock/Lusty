@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest'
-import { Address, nativeToScVal, rpc, StrKey, xdr } from '@stellar/stellar-sdk'
+import { Account, Address, nativeToScVal, rpc, StrKey, xdr } from '@stellar/stellar-sdk'
 
 // Synthetic addresses: well-formed strkeys that name nothing deployed. What is
 // under test is which instance a read goes to, not which real one — and a real
@@ -125,6 +125,106 @@ describe('an asset with no instance', () => {
 
     // The failure that matters: a BTC read landing in XLM's escrow.
     await expect(bare.getVaultStats(bareAssets.BTC)).rejects.toThrow(/BTC/)
+  })
+})
+
+describe('writes are authorized for one instance only', () => {
+  const QUOTER = fakeAccount(0x55)
+  const WRITER = fakeAccount(0x66)
+
+  const quote = () => ({
+    owner: WRITER,
+    side: 'call' as const,
+    collateral: 100,
+    strike: 0.25,
+    expiry: new Date('2026-10-02T16:00:00Z'),
+    premium: 1.5,
+    quoter: QUOTER,
+  })
+
+  /** An unsigned entry authorizing `open` on `contract` with these arguments. */
+  function entryFor(contract: string, args: xdr.ScVal[]) {
+    return new xdr.SorobanAuthorizationEntry({
+      credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(
+        new xdr.SorobanAddressCredentials({
+          address: Address.fromString(QUOTER).toScAddress(),
+          nonce: xdr.Int64.fromString('1'),
+          signatureExpirationLedger: 0,
+          signature: xdr.ScVal.scvVoid(),
+        }),
+      ),
+      rootInvocation: new xdr.SorobanAuthorizedInvocation({
+        function:
+          xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+            new xdr.InvokeContractArgs({
+              contractAddress: Address.fromString(contract).toScAddress(),
+              functionName: 'open',
+              args,
+            }),
+          ),
+        subInvocations: [],
+      }),
+    })
+  }
+
+  it('rejects an XLM-vault quote presented to the BTC vault', async () => {
+    const { describeMismatch } = await import('../vault-auth')
+    const args = vault.openArgs(quote())
+    const signedForXlm = entryFor(XLM_VAULT, args)
+
+    // Same seven arguments, byte for byte. Only the instance differs — and
+    // that alone must be disqualifying, because it is a different escrow.
+    expect(
+      describeMismatch(signedForXlm, vault.expectedOpenInvocation(quote(), assets.XLM)),
+    ).toBeNull()
+
+    const mismatch = describeMismatch(
+      signedForXlm,
+      vault.expectedOpenInvocation(quote(), assets.BTC),
+    )
+    expect(mismatch).toMatch(XLM_VAULT)
+    expect(mismatch).toMatch(/not the vault/)
+  })
+
+  it('names the instance in what the quoter is asked to sign', () => {
+    expect(vault.expectedOpenInvocation(quote(), assets.XLM).contractId).toBe(XLM_VAULT)
+    expect(vault.expectedOpenInvocation(quote(), assets.BTC).contractId).toBe(BTC_VAULT)
+    expect(vault.expectedOpenInvocation(quote()).contractId).toBe(XLM_VAULT)
+  })
+
+  it('refuses a co-signature for the wrong instance before the wallet is asked', async () => {
+    const args = vault.openArgs(quote())
+    vi.spyOn(rpc.Server.prototype, 'getAccount').mockResolvedValue(
+      new Account(WRITER, '0') as any,
+    )
+    vi.spyOn(rpc.Server.prototype, 'simulateTransaction').mockResolvedValue({
+      transactionData: {},
+      result: { retval: xdr.ScVal.scvVoid(), auth: [entryFor(BTC_VAULT, args)] },
+    } as any)
+
+    // The quoter hands back an entry for another vault. Signing the
+    // transaction around it would escrow the writer's collateral against a
+    // book nobody quoted.
+    const signTransaction = vi.fn()
+    await expect(
+      vault.openPosition({
+        ...quote(),
+        asset: assets.BTC,
+        signTransaction,
+        cosignQuote: async () => [entryFor(XLM_VAULT, args).toXDR('base64')],
+      }),
+    ).rejects.toThrow(/does not match the quote/)
+    expect(signTransaction).not.toHaveBeenCalled()
+  })
+
+  it('will not describe an invocation for an asset with no instance', async () => {
+    vi.resetModules()
+    delete process.env.NEXT_PUBLIC_VAULT_CONTRACT_BTC
+    const bare = await import('../vault-contract')
+    const bareAssets = await import('../assets')
+    process.env.NEXT_PUBLIC_VAULT_CONTRACT_BTC = BTC_VAULT
+
+    expect(() => bare.expectedOpenInvocation(quote(), bareAssets.BTC)).toThrow(/BTC/)
   })
 })
 
