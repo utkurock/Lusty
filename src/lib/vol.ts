@@ -1,13 +1,15 @@
-// Realized volatility for XLM.
-// ----------------------------
-// XLM has no options market, so there is no implied-vol surface to read. The
-// only honest σ we can produce comes from XLM's own price history. This module
-// estimates annualized realized volatility from Binance daily candles using the
+// Realized volatility for an underlying.
+// --------------------------------------
+// The vault sells options on assets with no listed surface of its own to read,
+// so the only honest σ comes from the underlying's own price history. This
+// module estimates annualized realized volatility from daily candles using the
 // RiskMetrics EWMA estimator (λ = 0.94), which weights recent returns more
 // heavily so the quote reacts to the current regime instead of a stale average.
 //
 // Every quote's σ flows from here. The number is explainable end-to-end:
 // "30-day close-to-close log returns, RiskMetrics EWMA λ=0.94, annualized ×√365".
+
+import { XLM, type UnderlyingAsset } from './assets'
 
 // Two independent sources for the same series of daily closes.
 //
@@ -20,19 +22,22 @@
 // CoinGecko returns the same thing in a different shape and answers from
 // networks Binance does not. Neither is trusted over the other for the money
 // path — σ is derived identically from whichever series arrives.
-const KLINES_URL = (limit: number) =>
-  `https://api.binance.com/api/v3/klines?symbol=XLMUSDT&interval=1d&limit=${limit}`
+const KLINES_URL = (symbol: string, limit: number) =>
+  `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1d&limit=${limit}`
 
-const COINGECKO_URL = (days: number) =>
-  `https://api.coingecko.com/api/v3/coins/stellar/market_chart?vs_currency=usd&days=${days}&interval=daily`
+const COINGECKO_URL = (coin: string, days: number) =>
+  `https://api.coingecko.com/api/v3/coins/${coin}/market_chart?vs_currency=usd&days=${days}&interval=daily`
 
 /** How long any one source may take before the next is tried. */
 const SOURCE_TIMEOUT_MS = 8_000
 
 /** Daily closes, oldest → newest, or null if this source could not answer. */
-async function closesFromBinance(limit: number): Promise<number[] | null> {
+async function closesFromBinance(
+  asset: UnderlyingAsset,
+  limit: number,
+): Promise<number[] | null> {
   try {
-    const r = await fetch(KLINES_URL(limit), {
+    const r = await fetch(KLINES_URL(asset.binanceSymbol, limit), {
       cache: 'no-store',
       signal: AbortSignal.timeout(SOURCE_TIMEOUT_MS),
     })
@@ -47,9 +52,12 @@ async function closesFromBinance(limit: number): Promise<number[] | null> {
   }
 }
 
-async function closesFromCoinGecko(days: number): Promise<number[] | null> {
+async function closesFromCoinGecko(
+  asset: UnderlyingAsset,
+  days: number,
+): Promise<number[] | null> {
   try {
-    const r = await fetch(COINGECKO_URL(days), {
+    const r = await fetch(COINGECKO_URL(asset.coingeckoId, days), {
       cache: 'no-store',
       signal: AbortSignal.timeout(SOURCE_TIMEOUT_MS),
     })
@@ -99,9 +107,15 @@ interface CacheEntry {
   expires: number
 }
 
-// Module-level cache (per server instance). `as any` avoids leaking the type
-// into the public surface.
-let cache: CacheEntry | null = null
+// Cached per underlying (per server instance). A single slot would serve a BTC
+// quote whichever σ was fetched last — and σ is the input the whole premium is
+// built on, so that mix-up mispays rather than merely misreports.
+const cache = new Map<string, CacheEntry>()
+
+/** Drops the memoized estimates. Tests only. */
+export function resetVolCache(): void {
+  cache.clear()
+}
 
 /**
  * Close-to-close log returns → EWMA variance → annualized σ.
@@ -137,34 +151,40 @@ function ewmaSigma(closes: number[]): { sigma: number; sigmaSimple: number; samp
 }
 
 /**
- * Fetch + estimate XLM realized vol. Cached for {@link CACHE_TTL_MS}.
+ * Fetch + estimate one underlying's realized vol. Cached for
+ * {@link CACHE_TTL_MS}.
  *
  * Sources are tried in order and the first that answers wins. Throws only when
- * every source has failed AND there is no cached value — callers on the money
- * path must fail closed rather than price off a fabricated σ.
+ * every source has failed AND there is no cached value for THIS asset —
+ * callers on the money path must fail closed rather than price off a
+ * fabricated σ, and another asset's σ is a fabricated one.
  */
-export async function getRealizedVol(now: number = Date.now()): Promise<RealizedVol> {
-  if (cache && cache.expires > now) return cache.value
+export async function getRealizedVol(
+  asset: UnderlyingAsset = XLM,
+  now: number = Date.now(),
+): Promise<RealizedVol> {
+  const hit = cache.get(asset.symbol)
+  if (hit && hit.expires > now) return hit.value
 
-  let closes = await closesFromBinance(WINDOW_DAYS)
-  let source = 'binance 1d klines'
+  let closes = await closesFromBinance(asset, WINDOW_DAYS)
+  let source = `binance ${asset.binanceSymbol} 1d klines`
   if (!closes) {
-    closes = await closesFromCoinGecko(WINDOW_DAYS)
-    source = 'coingecko daily closes'
+    closes = await closesFromCoinGecko(asset, WINDOW_DAYS)
+    source = `coingecko ${asset.coingeckoId} daily closes`
   }
   if (!closes) {
     // Stale is a worse number than fresh and a far better one than none: the
     // window is 60 days, so an hour-old σ is the same σ.
-    if (cache) return cache.value
+    if (hit) return hit.value
     throw new Error(
-      'realized-vol: no price history available — binance and coingecko both failed',
+      `realized-vol: no price history for ${asset.symbol} — binance and coingecko both failed`,
     )
   }
 
   const { sigma, sigmaSimple, samples } = ewmaSigma(closes)
   if (!isFinite(sigma) || sigma <= 0) {
-    if (cache) return cache.value
-    throw new Error('realized-vol: computed σ invalid')
+    if (hit) return hit.value
+    throw new Error(`realized-vol: computed σ invalid for ${asset.symbol}`)
   }
 
   const value: RealizedVol = {
@@ -175,6 +195,6 @@ export async function getRealizedVol(now: number = Date.now()): Promise<Realized
     windowDays: WINDOW_DAYS,
     asOf: now,
   }
-  cache = { value, expires: now + CACHE_TTL_MS }
+  cache.set(asset.symbol, { value, expires: now + CACHE_TTL_MS })
   return value
 }

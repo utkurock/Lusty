@@ -49,8 +49,14 @@ export interface UnderlyingAsset {
   contracts: UnderlyingContracts
   /** Reflector `Other(Symbol)` feed name — THE settlement price source. */
   feedSymbol: string
-  /** Binance ticker for the quote inputs and the spot fallback. */
+  /**
+   * Binance ticker for the quote inputs and the spot fallback. Also names the
+   * USDⓈ-M perp the forward reads its funding from; an asset without one falls
+   * back to F = S rather than fabricating a carry.
+   */
   binanceSymbol: string
+  /** CoinGecko coin id — the second source for the realized-vol series. */
+  coingeckoId: string
   /** The collateral a covered call escrows (the underlying itself). */
   stellarAsset: StellarAsset
   /** Decimals the amount is booked in. Stellar carries 7 for every asset. */
@@ -120,6 +126,7 @@ const REGISTRY: Record<UnderlyingSymbol, UnderlyingAsset> = {
     },
     feedSymbol: process.env.REFLECTOR_FEED_SYMBOL ?? 'XLM',
     binanceSymbol: 'XLMUSDT',
+    coingeckoId: 'stellar',
     stellarAsset: { kind: 'native' },
     unitDecimals: 7,
     displayDecimals: 2,
@@ -140,6 +147,7 @@ const REGISTRY: Record<UnderlyingSymbol, UnderlyingAsset> = {
     },
     feedSymbol: process.env.REFLECTOR_FEED_SYMBOL_BTC ?? 'BTC',
     binanceSymbol: 'BTCUSDT',
+    coingeckoId: 'bitcoin',
     stellarAsset: { kind: 'issued', code: BTC_CODE, issuer: BTC_ISSUER },
     unitDecimals: 7,
     displayDecimals: 6,

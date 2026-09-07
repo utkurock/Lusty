@@ -29,6 +29,12 @@
  * puts are written. The table below averages them, so the put wing carries more
  * model risk than the call wing. It is still far better than assuming flat vol,
  * which is what this replaces.
+ *
+ * Nothing here is per-asset, and that is the point: the curve lives in
+ * standardised moneyness, which is what made it comparable across assets in the
+ * first place. Every underlying reads the same ψ(z) and anchors it to its own
+ * σ_atm. For BTC the shape is not even borrowed — it is half of where the
+ * table came from.
  */
 
 /**

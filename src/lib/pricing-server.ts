@@ -6,7 +6,7 @@
 //
 // The pipeline, fully explainable end-to-end:
 //
-//   σ_realized   ← XLM's own price history (vol.ts, EWMA realized vol)
+//   σ_realized   ← the underlying's own history (vol.ts, EWMA realized vol)
 //   σ_offered    = σ_realized·(1+spread_rel) + spread_abs   (vol risk premium)
 //   σ_strike     = σ_offered · ψ(z)                          (smile.ts, borrowed
 //                  shape; z = ln(K/F)/(σ_offered·√T))
@@ -37,6 +37,7 @@ import {
   callStrikeLabel,
   putStrikeLabel,
 } from './pricing'
+import { XLM, type UnderlyingAsset } from './assets'
 import { getRealizedVol } from './vol'
 import { getForward } from './forward'
 import { smileVol } from './smile'
@@ -345,16 +346,20 @@ export interface MarketContext {
 }
 
 /**
- * Fetch the live market inputs (σ from XLM history, forward from perp) for a
- * given spot and expiry. One call feeds both the ladder and single quotes so
- * the same σ/forward back the whole screen.
+ * Fetch the live market inputs (σ from the underlying's own history, forward
+ * from its own perp) for a given spot and expiry. One call feeds both the
+ * ladder and single quotes so the same σ/forward back the whole screen.
  */
 export async function getMarketContext(
   spot: number,
   daysToExpiry: number,
+  asset: UnderlyingAsset = XLM,
 ): Promise<MarketContext> {
   const timeYears = daysToExpiry / 365
-  const [rv, fwd] = await Promise.all([getRealizedVol(), getForward(spot, timeYears)])
+  const [rv, fwd] = await Promise.all([
+    getRealizedVol(asset),
+    getForward(spot, timeYears, asset),
+  ])
   return {
     spot,
     forward: fwd.forward,
@@ -385,8 +390,9 @@ export async function quoteLadder(
   spot: number,
   daysToExpiry: number,
   utilization: number = 0,
+  asset: UnderlyingAsset = XLM,
 ): Promise<{ context: MarketContext; rungs: LadderRung[] }> {
-  const context = await getMarketContext(spot, daysToExpiry)
+  const context = await getMarketContext(spot, daysToExpiry, asset)
   const mults = side === 'call' ? CALL_STRIKE_MULTIPLIERS : PUT_STRIKE_MULTIPLIERS
   const rungs = mults.map((mult, index) => {
     const strike = roundStrike(spot * mult, spot)
@@ -412,8 +418,14 @@ export async function quoteOptionLive(input: {
   strike: number
   daysToExpiry: number
   utilization?: number
+  /** Which underlying's σ and forward to price against. Defaults to XLM. */
+  asset?: UnderlyingAsset
 }): Promise<{ context: MarketContext; quote: Quote }> {
-  const context = await getMarketContext(input.spot, input.daysToExpiry)
+  const context = await getMarketContext(
+    input.spot,
+    input.daysToExpiry,
+    input.asset ?? XLM,
+  )
   const quote = quoteOption({
     side: input.side,
     spot: input.spot,

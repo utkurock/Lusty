@@ -239,6 +239,7 @@ export async function POST(req: Request) {
       strike: body.strikePrice,
       daysToExpiry: pricingDays,
       utilization,
+      asset: XLM,
     })
 
     const units = coveredUnits(body.side, body.collateralAmount, body.strikePrice)

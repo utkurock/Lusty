@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server'
 import { quoteLadder, quoteOptionLive } from '@/lib/pricing-server'
-import { getSpotXlmUsd } from '@/lib/spot'
+import { getSpot } from '@/lib/spot'
 import { rateLimit } from '@/lib/rate-limit'
 import { pricingInputsFor } from '@/lib/quote-inputs'
+import { XLM, resolveUnderlying } from '@/lib/assets'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -42,6 +43,17 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: 'invalid side' }, { status: 400 })
     }
 
+    // Absent means XLM, which is what every existing caller means. Named but
+    // gated is refused rather than quietly served XLM's σ under BTC's name.
+    const assetRaw = url.searchParams.get('asset')
+    const asset = assetRaw === null ? XLM : resolveUnderlying(assetRaw)
+    if (!asset) {
+      return NextResponse.json(
+        { error: `${assetRaw} is not a tradeable underlying` },
+        { status: 400 },
+      )
+    }
+
     let days: number
     let util: number
     if (expiryRaw !== null) {
@@ -75,7 +87,7 @@ export async function GET(req: Request) {
       )
     }
 
-    const { price: spot, source: spotSource } = await getSpotXlmUsd()
+    const { price: spot, source: spotSource } = await getSpot(asset)
 
     const headers = {
       // Quote depends on live spot; never cache.
@@ -94,18 +106,30 @@ export async function GET(req: Request) {
         strike,
         daysToExpiry: days,
         utilization: util,
+        asset,
       })
       return NextResponse.json(
-        { ok: true, spot, spotSource, days, utilization: util, quote: slimQuote(quote) },
+        {
+          ok: true,
+          asset: asset.symbol,
+          spot,
+          spotSource,
+          days,
+          utilization: util,
+          quote: slimQuote(quote),
+        },
         { headers },
       )
     }
 
     // Ladder mode
-    const { rungs } = await quoteLadder(side, spot, days, util)
+    const { rungs } = await quoteLadder(side, spot, days, util, asset)
     return NextResponse.json(
       {
         ok: true,
+        // Named in the response so a caller can see which book it was quoted
+        // against, not just infer it from the price.
+        asset: asset.symbol,
         spot,
         spotSource,
         // Echoed so a caller can see what its quote was priced against — and,
