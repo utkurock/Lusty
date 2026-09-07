@@ -4,6 +4,7 @@ import {
   setBreaker,
   type BreakerState,
 } from '@/lib/circuit-breaker'
+import { enabledUnderlyings } from '@/lib/assets'
 import { computeVolRatio, fetchCloses } from './checks'
 
 /**
@@ -45,35 +46,48 @@ export function currentEpochStart(now = new Date()): Date {
   return start
 }
 
+// The breaker is one switch for the whole desk, so a stress condition on any
+// book halts every book. Conservative on purpose — but the reason names the
+// asset, because "volatility spike" with two underlyings live does not say
+// which market moved.
 async function volSpikeHalt(): Promise<string | null> {
-  try {
-    const ratio = await computeVolRatio()
-    if (ratio !== null && ratio >= VOL_HALT_MULT) {
-      return `volatility spike ${ratio.toFixed(2)}× 24h baseline (halt ≥ ${VOL_HALT_MULT}×)`
+  const reasons: string[] = []
+  for (const asset of enabledUnderlyings()) {
+    try {
+      const ratio = await computeVolRatio(asset)
+      if (ratio !== null && ratio >= VOL_HALT_MULT) {
+        reasons.push(
+          `${asset.symbol} volatility spike ${ratio.toFixed(2)}× its 24h baseline (halt ≥ ${VOL_HALT_MULT}×)`
+        )
+      }
+    } catch {
+      // Vol data unavailable is its own alert elsewhere; don't halt on it.
     }
-    return null
-  } catch {
-    // Vol data unavailable is handled as its own alert elsewhere; don't halt on it.
-    return null
   }
+  return reasons.length > 0 ? reasons.join('; ') : null
 }
 
 async function oracleStressHalt(): Promise<string | null> {
-  try {
-    const closes = await fetchCloses('1m', 6)
-    let maxMovePct = 0
-    for (let i = 1; i < closes.length; i++) {
-      const movePct = Math.abs((closes[i] - closes[i - 1]) / closes[i - 1]) * 100
-      if (movePct > maxMovePct) maxMovePct = movePct
+  const reasons: string[] = []
+  for (const asset of enabledUnderlyings()) {
+    try {
+      const closes = await fetchCloses('1m', 6, asset)
+      let maxMovePct = 0
+      for (let i = 1; i < closes.length; i++) {
+        const movePct = Math.abs((closes[i] - closes[i - 1]) / closes[i - 1]) * 100
+        if (movePct > maxMovePct) maxMovePct = movePct
+      }
+      if (maxMovePct >= ORACLE_JUMP_PCT) {
+        reasons.push(
+          `${asset.symbol} oracle stress — ${maxMovePct.toFixed(1)}% 1m price move (halt ≥ ${ORACLE_JUMP_PCT}%)`
+        )
+      }
+    } catch {
+      // Feed unreachable = we can't price settlements safely → halt.
+      reasons.push(`${asset.symbol} oracle stress — price feed unreachable`)
     }
-    if (maxMovePct >= ORACLE_JUMP_PCT) {
-      return `oracle stress — ${maxMovePct.toFixed(1)}% 1m price move (halt ≥ ${ORACLE_JUMP_PCT}%)`
-    }
-    return null
-  } catch {
-    // Feed unreachable = we can't price settlements safely → halt.
-    return 'oracle stress — price feed unreachable'
   }
+  return reasons.length > 0 ? reasons.join('; ') : null
 }
 
 /** USD notional assigned against the vault since the current epoch started. */
