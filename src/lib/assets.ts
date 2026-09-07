@@ -201,6 +201,31 @@ export function resolveUnderlying(raw: unknown): UnderlyingAsset | null {
 }
 
 /**
+ * Every underlying with a vault to settle against — the books a settlement
+ * sweep must walk. Wider than `enabledUnderlyings()` on purpose: see below.
+ */
+export function settleableUnderlyings(): UnderlyingAsset[] {
+  return allUnderlyings().filter((a) => a.contracts.vault)
+}
+
+/**
+ * The underlying an existing position belongs to, whether or not it is still
+ * being written.
+ *
+ * Settlement has to outlive listing. An asset withdrawn from quoting still has
+ * open positions, and `settle` is the only thing that releases their
+ * collateral — gating the runner on `enabled` would strand it. So this asks
+ * the one question settlement actually needs answered: is there an instance to
+ * settle against.
+ */
+export function settleableUnderlying(raw: unknown): UnderlyingAsset | null {
+  if (typeof raw !== 'string') return null
+  const key = raw.trim().toUpperCase()
+  const found = (REGISTRY as Record<string, UnderlyingAsset>)[key]
+  return found && found.contracts.vault ? found : null
+}
+
+/**
  * The underlying a request names. Absent means XLM — the only asset Tranche 1's
  * callers knew about, so an old client keeps working unchanged.
  *

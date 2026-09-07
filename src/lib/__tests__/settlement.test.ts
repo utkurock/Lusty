@@ -227,6 +227,7 @@ describe('runSettlement', () => {
   const candidates = [0, 1, 2].map((id) => ({
     id,
     owner: 'GWRITER',
+    underlying: 'XLM' as const,
     side: 'call' as const,
     strike: 0.25,
     collateral: 1000,
@@ -261,6 +262,7 @@ describe('runSettlement', () => {
     expect(run.failed).toEqual([
       {
         id: 1,
+        underlying: 'XLM',
         error: 'Oracle price is stale — settlement is blocked',
         permanent: false,
       },
@@ -298,14 +300,18 @@ describe('runSettlement', () => {
 
     const run = await runSettlement(candidates, signer, 2)
     expect(run.settled.map((s) => s.id)).toEqual([0, 1])
-    expect(run.deferred).toEqual([2])
+    expect(run.deferred).toEqual([{ id: 2, underlying: 'XLM' }])
     expect(settlePosition).toHaveBeenCalledTimes(2)
   })
 
   it('submits nothing at a cap of zero', async () => {
     const run = await runSettlement(candidates, signer, 0)
     expect(run.settled).toEqual([])
-    expect(run.deferred).toEqual([0, 1, 2])
+    expect(run.deferred).toEqual([
+      { id: 0, underlying: 'XLM' },
+      { id: 1, underlying: 'XLM' },
+      { id: 2, underlying: 'XLM' },
+    ])
     expect(settlePosition).not.toHaveBeenCalled()
   })
 })

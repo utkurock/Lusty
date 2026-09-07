@@ -1,6 +1,12 @@
 import { Keypair } from '@stellar/stellar-sdk'
 import { ORACLE_HISTORY_SECS } from './oracle-window'
 import {
+  XLM,
+  settleableUnderlying,
+  type UnderlyingAsset,
+  type UnderlyingSymbol,
+} from './assets'
+import {
   getVaultStats,
   getPosition,
   settlePosition,
@@ -35,8 +41,22 @@ export const DEFAULT_SETTLE_LIMIT = 25
 // positions are still closeable.
 export { ORACLE_HISTORY_SECS }
 
+/**
+ * Identity of a position, which is the pair and not the id.
+ *
+ * Ids restart at 0 in every instance, so #3 names one position in XLM's book
+ * and a different one in BTC's. Anything that remembers a position — a report,
+ * a retry, a "do not warn about this twice" set — has to key on both.
+ */
+export function positionKey(underlying: UnderlyingSymbol, id: number): string {
+  return `${underlying}#${id}`
+}
+
 export interface SettlementCandidate {
   id: number
+  /** The book this id belongs to. Travels with the candidate so a settlement
+   *  cannot be submitted against the instance that happened to be default. */
+  underlying: UnderlyingSymbol
   owner: string
   side: OptionSide
   strike: number
@@ -49,6 +69,8 @@ export interface SettlementCandidate {
 }
 
 export interface ScanResult {
+  /** Which book was walked. Every id below is scoped to it. */
+  underlying: UnderlyingSymbol
   /** First id examined this run. */
   cursor: number
   /** How many ids were read. */
@@ -83,12 +105,15 @@ export async function scanForSettlement(opts: {
   from?: number
   limit?: number
   now?: Date
+  /** Which book to walk. Each has its own id range and its own next id. */
+  asset?: UnderlyingAsset
 } = {}): Promise<ScanResult> {
   const cursor = Math.max(0, Math.floor(opts.from ?? 0))
   const limit = Math.max(1, Math.floor(opts.limit ?? DEFAULT_SCAN_LIMIT))
   const now = opts.now ?? new Date()
+  const asset = opts.asset ?? XLM
 
-  const { nextId } = await getVaultStats()
+  const { nextId } = await getVaultStats(asset)
   const end = Math.min(nextId, cursor + limit)
 
   const candidates: SettlementCandidate[] = []
@@ -97,7 +122,7 @@ export async function scanForSettlement(opts: {
 
   for (let id = cursor; id < end; id++) {
     try {
-      const p = await getPosition(id)
+      const p = await getPosition(id, asset)
       if (p.settled) continue
       if (p.expiry.getTime() > now.getTime()) continue
       const settleBy = new Date(p.expiry.getTime() + ORACLE_HISTORY_SECS * 1000)
@@ -105,6 +130,7 @@ export async function scanForSettlement(opts: {
       if (pastDeadline) stranded.push(p.id)
       candidates.push({
         id: p.id,
+        underlying: asset.symbol,
         owner: p.owner,
         side: p.side,
         strike: p.strike,
@@ -114,13 +140,14 @@ export async function scanForSettlement(opts: {
         pastDeadline,
       })
     } catch (err) {
-      console.warn(`settlement: could not read position ${id}`, err)
+      console.warn(`settlement: could not read ${positionKey(asset.symbol, id)}`, err)
       unreadable.push(id)
     }
   }
 
   const scanned = Math.max(0, end - cursor)
   return {
+    underlying: asset.symbol,
     cursor,
     scanned,
     nextId,
@@ -134,12 +161,14 @@ export async function scanForSettlement(opts: {
 
 export interface SettlementOutcome {
   id: number
+  underlying: UnderlyingSymbol
   txHash: string
   outcome: string
 }
 
 export interface SettlementFailure {
   id: number
+  underlying: UnderlyingSymbol
   error: string
   /**
    * The oracle can no longer price this expiry, so no later run will do
@@ -153,7 +182,7 @@ export interface SettlementRun {
   settled: SettlementOutcome[]
   failed: SettlementFailure[]
   /** Candidates left for the next run because the submit cap was reached. */
-  deferred: number[]
+  deferred: { id: number; underlying: UnderlyingSymbol }[]
 }
 
 /**
@@ -176,18 +205,35 @@ export async function runSettlement(
 ): Promise<SettlementRun> {
   const cap = Math.max(0, Math.floor(maxSettlements))
   const take = candidates.slice(0, cap)
-  const deferred = candidates.slice(cap).map((c) => c.id)
+  const deferred = candidates
+    .slice(cap)
+    .map((c) => ({ id: c.id, underlying: c.underlying }))
 
   const settled: SettlementOutcome[] = []
   const failed: SettlementFailure[] = []
 
   for (const c of take) {
+    // The instance comes off the candidate, never off the default. An id whose
+    // book cannot be resolved is refused: submitting it would settle whatever
+    // position happens to hold that id in XLM's vault, against XLM's feed and
+    // XLM's price — which is not a degraded settlement, it is somebody else's.
+    const asset = settleableUnderlying(c.underlying)
+    if (!asset) {
+      failed.push({
+        id: c.id,
+        underlying: c.underlying,
+        error: `${c.underlying} has no settleable vault — refusing rather than settling elsewhere`,
+        permanent: true,
+      })
+      continue
+    }
     try {
-      const { txHash, outcome } = await settlePosition(c.id, signer)
-      settled.push({ id: c.id, txHash, outcome })
+      const { txHash, outcome } = await settlePosition(c.id, signer, asset)
+      settled.push({ id: c.id, underlying: c.underlying, txHash, outcome })
     } catch (err: any) {
       failed.push({
         id: c.id,
+        underlying: c.underlying,
         error: err?.message ?? 'unknown',
         permanent: c.pastDeadline,
       })

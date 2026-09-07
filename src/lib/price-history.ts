@@ -1,20 +1,22 @@
-// Dated daily closes for XLM.
-// ---------------------------
+// Dated daily closes for an underlying.
+// -------------------------------------
 // lib/vol reads the same candles for σ and throws the timestamps away, because
 // σ only needs the shape of the series. This needs the dates: it answers "what
-// was XLM worth on the day this position was opened", which is the denominator
-// of a covered call's APR and the one figure about an old position that exists
-// nowhere on chain.
+// was the underlying worth on the day this position was opened", which is the
+// denominator of a covered call's APR and the one figure about an old position
+// that exists nowhere on chain.
 //
-// One fetch covers every position a wallet has ever written, so this is a
-// single cached call rather than a lookup per row.
+// One fetch covers every position a wallet has ever written on one asset, so
+// this is a cached call per asset rather than a lookup per row.
+
+import { XLM, type UnderlyingAsset } from './assets'
 
 /** Binance klines: [openTime, open, high, low, close, …]. */
-const KLINES_URL = (limit: number) =>
-  `https://api.binance.com/api/v3/klines?symbol=XLMUSDT&interval=1d&limit=${limit}`
+const KLINES_URL = (symbol: string, limit: number) =>
+  `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1d&limit=${limit}`
 
-const COINGECKO_URL = (days: number) =>
-  `https://api.coingecko.com/api/v3/coins/stellar/market_chart?vs_currency=usd&days=${days}&interval=daily`
+const COINGECKO_URL = (coin: string, days: number) =>
+  `https://api.coingecko.com/api/v3/coins/${coin}/market_chart?vs_currency=usd&days=${days}&interval=daily`
 
 const SOURCE_TIMEOUT_MS = 8_000
 const DAY_MS = 86_400_000
@@ -28,17 +30,19 @@ export interface DatedClose {
   close: number
 }
 
-let cache: { at: number; series: DatedClose[] } | null = null
-let inFlight: Promise<DatedClose[]> | null = null
+// Per asset: one slot would answer a BTC position's "what was it worth that
+// day" with XLM's close, which is the denominator of its APR.
+const cache = new Map<string, { at: number; series: DatedClose[] }>()
+const inFlight = new Map<string, Promise<DatedClose[]>>()
 
 /** Truncate to the start of the UTC day, which is how the candles are keyed. */
 export function utcDay(ms: number): number {
   return Math.floor(ms / DAY_MS) * DAY_MS
 }
 
-async function fromBinance(): Promise<DatedClose[] | null> {
+async function fromBinance(asset: UnderlyingAsset): Promise<DatedClose[] | null> {
   try {
-    const r = await fetch(KLINES_URL(WINDOW_DAYS), {
+    const r = await fetch(KLINES_URL(asset.binanceSymbol, WINDOW_DAYS), {
       cache: 'no-store',
       signal: AbortSignal.timeout(SOURCE_TIMEOUT_MS),
     })
@@ -54,9 +58,9 @@ async function fromBinance(): Promise<DatedClose[] | null> {
   }
 }
 
-async function fromCoinGecko(): Promise<DatedClose[] | null> {
+async function fromCoinGecko(asset: UnderlyingAsset): Promise<DatedClose[] | null> {
   try {
-    const r = await fetch(COINGECKO_URL(WINDOW_DAYS), {
+    const r = await fetch(COINGECKO_URL(asset.coingeckoId, WINDOW_DAYS), {
       cache: 'no-store',
       signal: AbortSignal.timeout(SOURCE_TIMEOUT_MS),
     })
@@ -73,22 +77,29 @@ async function fromCoinGecko(): Promise<DatedClose[] | null> {
 }
 
 /**
- * XLM's daily closes, oldest first. Empty on a total source failure — a
- * missing series must leave an APR unknown, never zero.
+ * One underlying's daily closes, oldest first. Empty on a total source failure
+ * — a missing series must leave an APR unknown, never zero, and never another
+ * asset's close.
  */
-export async function getDailyCloses(): Promise<DatedClose[]> {
-  if (cache && Date.now() - cache.at < CACHE_MS) return cache.series
-  if (inFlight) return inFlight
+export async function getDailyCloses(
+  asset: UnderlyingAsset = XLM
+): Promise<DatedClose[]> {
+  const key = asset.symbol
+  const hit = cache.get(key)
+  if (hit && Date.now() - hit.at < CACHE_MS) return hit.series
+  const pending = inFlight.get(key)
+  if (pending) return pending
 
-  inFlight = (async () => {
-    const series = (await fromBinance()) ?? (await fromCoinGecko()) ?? []
-    if (series.length > 0) cache = { at: Date.now(), series }
+  const run = (async () => {
+    const series = (await fromBinance(asset)) ?? (await fromCoinGecko(asset)) ?? []
+    if (series.length > 0) cache.set(key, { at: Date.now(), series })
     return series
   })().finally(() => {
-    inFlight = null
+    inFlight.delete(key)
   })
+  inFlight.set(key, run)
 
-  return inFlight
+  return run
 }
 
 /**
@@ -112,6 +123,6 @@ export function closeOn(series: DatedClose[], at: number): number | null {
 
 /** Test seam. */
 export function resetPriceHistoryCache(): void {
-  cache = null
-  inFlight = null
+  cache.clear()
+  inFlight.clear()
 }

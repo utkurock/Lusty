@@ -1,4 +1,5 @@
 import { sweepOnce } from '@/lib/settlement-sweep'
+import { positionKey } from '@/lib/settlement'
 
 /**
  * The settlement sweep, run by the application itself.
@@ -48,7 +49,7 @@ let running = false
 // they must not reprint the same nine lines every quarter hour. A backlog that
 // scrolls past is one nobody reads, and this log is the only thing standing
 // between a late sweep and permanent loss.
-const reportedPermanent = new Set<number>()
+const reportedPermanent = new Set<string>()
 
 function enabled(): boolean {
   const flag = process.env.SETTLE_SWEEP_ENABLED
@@ -66,19 +67,24 @@ async function tick() {
   running = true
   try {
     const r = await sweepOnce()
-    const parts = [
-      `scanned ${r.scan.scanned}/${r.scan.nextId}`,
-      `due ${r.due.length}`,
-      `settled ${r.settled.length}`,
-      `failed ${r.failed.length}`,
-    ]
+    const parts = r.books.map((b) =>
+      b.error
+        ? `${b.underlying} scan failed (${b.error})`
+        : `${b.underlying} ${b.scan.scanned}/${b.scan.nextId} due ${b.due.length}`
+    )
+    parts.push(`settled ${r.settled.length}`, `failed ${r.failed.length}`)
     if (r.note) parts.push(r.note)
     console.log(`settlement sweep: ${parts.join(' · ')}`)
 
     // Loud, and separately: past the oracle deadline no later sweep can help,
     // so this is collateral awaiting a decision rather than a retry. Said once
-    // per id, at the moment it becomes true.
-    const fresh = r.pastDeadline.filter((id) => !reportedPermanent.has(id))
+    // per position, at the moment it becomes true.
+    //
+    // Keyed by book and id together: ids restart at 0 in every instance, so a
+    // set of bare numbers would silence BTC's #3 because XLM's was reported.
+    const fresh = r.books
+      .flatMap((b) => b.pastDeadline.map((id) => positionKey(b.underlying, id)))
+      .filter((key) => !reportedPermanent.has(key))
     if (fresh.length > 0) {
       console.error(
         `settlement sweep: ${fresh.length} position(s) past the oracle deadline and no longer settleable: ${fresh.join(', ')}`
@@ -86,17 +92,18 @@ async function tick() {
     }
 
     for (const f of r.failed) {
+      const key = positionKey(f.underlying, f.id)
       if (f.permanent) {
-        if (reportedPermanent.has(f.id)) continue
-        reportedPermanent.add(f.id)
-        console.error(`settlement sweep: #${f.id} is permanently unsettleable: ${f.error}`)
+        if (reportedPermanent.has(key)) continue
+        reportedPermanent.add(key)
+        console.error(`settlement sweep: ${key} is permanently unsettleable: ${f.error}`)
         continue
       }
       // Retryable, so worth repeating: the next tick may well fix it, and
       // silence here would hide a sweep failing the same way every time.
-      console.warn(`settlement sweep: #${f.id} failed, will retry: ${f.error}`)
+      console.warn(`settlement sweep: ${key} failed, will retry: ${f.error}`)
     }
-    for (const id of fresh) reportedPermanent.add(id)
+    for (const key of fresh) reportedPermanent.add(key)
   } catch (err) {
     console.error('settlement sweep: run failed', err)
   } finally {
