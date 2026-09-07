@@ -164,6 +164,35 @@ async function createSchema(): Promise<void> {
     create index if not exists transactions_created_at_idx on transactions(created_at desc);
     create index if not exists transactions_type_idx on transactions(type);
 
+    -- The underlying an option was written on. The asset column cannot answer
+    -- this: it names the token the amount is in, which for a put is the cash
+    -- and for an assigned call is the payout — never the underlying.
+    --
+    -- Backfilled once, inside the branch that creates the column, so it can
+    -- never run again and quietly relabel a later row. Rows that are not
+    -- options keep null: a faucet payout has no underlying, and writing 'XLM'
+    -- there would invent a fact nobody recorded.
+    do $$
+    begin
+      if not exists (
+        select 1 from information_schema.columns
+         where table_name = 'transactions' and column_name = 'underlying'
+      ) then
+        alter table transactions add column underlying text;
+        update transactions set underlying = 'XLM' where subtype in ('call','put');
+      end if;
+    end $$;
+    -- Structural, not hoped-for: a position row without an underlying would be
+    -- silently dropped from its own book's exposure, which understates the
+    -- haircut and overpays.
+    alter table transactions
+      drop constraint if exists transactions_underlying_present;
+    alter table transactions
+      add constraint transactions_underlying_present
+      check (subtype not in ('call','put') or underlying is not null);
+    create index if not exists transactions_underlying_idx
+      on transactions(underlying, subtype);
+
     -- Admin users whitelist
     create table if not exists admin_users (
       address  text primary key,

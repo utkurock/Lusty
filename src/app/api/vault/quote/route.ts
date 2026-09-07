@@ -3,7 +3,7 @@ import { quoteLadder, quoteOptionLive } from '@/lib/pricing-server'
 import { getSpot } from '@/lib/spot'
 import { rateLimit } from '@/lib/rate-limit'
 import { pricingInputsFor } from '@/lib/quote-inputs'
-import { XLM, resolveUnderlying } from '@/lib/assets'
+import { requestedUnderlying } from '@/lib/assets'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -43,10 +43,8 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: 'invalid side' }, { status: 400 })
     }
 
-    // Absent means XLM, which is what every existing caller means. Named but
-    // gated is refused rather than quietly served XLM's σ under BTC's name.
     const assetRaw = url.searchParams.get('asset')
-    const asset = assetRaw === null ? XLM : resolveUnderlying(assetRaw)
+    const asset = requestedUnderlying(assetRaw)
     if (!asset) {
       return NextResponse.json(
         { error: `${assetRaw} is not a tradeable underlying` },
@@ -61,7 +59,7 @@ export async function GET(req: Request) {
       if (!isFinite(expiryMs) || expiryMs <= Date.now()) {
         return NextResponse.json({ error: 'invalid expiry' }, { status: 400 })
       }
-      const inputs = await pricingInputsFor(side, expiryMs)
+      const inputs = await pricingInputsFor(side, expiryMs, Date.now(), asset)
       if (inputs.daysToExpiry > 365) {
         return NextResponse.json({ error: 'expiry too far out' }, { status: 400 })
       }

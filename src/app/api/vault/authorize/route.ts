@@ -4,14 +4,13 @@ import { rateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
 import { credentialAddress, describeMismatch } from '@/lib/vault-auth'
 import { quoteOptionLive } from '@/lib/pricing-server'
-import { fetchXlmUsd } from '@/lib/spot'
+import { getSpot } from '@/lib/spot'
 import { pricingInputsFor } from '@/lib/quote-inputs'
 import { MIN_DAYS_TO_EXPIRY } from '@/lib/expiries'
 import { assertQuoteAllowed, PolicyRejection } from '@/lib/quote-policy'
 import { getBreakerState } from '@/lib/circuit-breaker'
-import { XLM } from '@/lib/assets'
+import { requestedUnderlying } from '@/lib/assets'
 import {
-  VAULT_ID,
   NETWORK_PASSPHRASE,
   expectedOpenInvocation,
   vaultServer,
@@ -86,6 +85,8 @@ const STRIKE_BUCKET_PCT = 0.01
 
 interface AuthorizeBody {
   address: string
+  /** Which underlying is being written. Absent means XLM. */
+  asset?: string
   side: OptionSide
   collateralAmount: number
   strikePrice: number
@@ -106,11 +107,20 @@ export async function POST(req: Request) {
         { status: 500 },
       )
     }
-    if (!VAULT_ID) {
-      return NextResponse.json(
-        { error: 'vault contract not configured on the server' },
-        { status: 500 },
-      )
+    // Resolved before anything is priced. Every reading below — spot, σ, the
+    // forward, the instance the entry authorizes — belongs to this asset, and
+    // a gated one must never fall through to XLM's.
+    const asset = requestedUnderlying(body.asset)
+    if (!asset) {
+      return body.asset
+        ? NextResponse.json(
+            { error: `${body.asset} is not a tradeable underlying`, code: 'asset_unavailable' },
+            { status: 400 },
+          )
+        : NextResponse.json(
+            { error: 'vault contract not configured on the server' },
+            { status: 500 },
+          )
     }
     if (!isValidStellarAddress(body.address)) {
       return NextResponse.json({ error: 'invalid address' }, { status: 400 })
@@ -179,7 +189,7 @@ export async function POST(req: Request) {
     // ---- re-derive the premium from the engine, never from the request
     let spot: number
     try {
-      spot = await fetchXlmUsd()
+      spot = (await getSpot(asset)).price
     } catch (priceErr) {
       console.error('vault/authorize: price feed unavailable', priceErr)
       return NextResponse.json(
@@ -199,6 +209,7 @@ export async function POST(req: Request) {
     try {
       await assertQuoteAllowed({
         address: body.address,
+        underlying: asset.symbol,
         type: body.side,
         collateralAmount: body.collateralAmount,
         notionalUsd,
@@ -232,6 +243,8 @@ export async function POST(req: Request) {
     const { daysToExpiry: pricingDays, utilization } = await pricingInputsFor(
       body.side,
       expiryMs,
+      Date.now(),
+      asset,
     )
     const { quote } = await quoteOptionLive({
       side: body.side,
@@ -239,7 +252,7 @@ export async function POST(req: Request) {
       strike: body.strikePrice,
       daysToExpiry: pricingDays,
       utilization,
-      asset: XLM,
+      asset,
     })
 
     const units = coveredUnits(body.side, body.collateralAmount, body.strikePrice)
@@ -267,8 +280,6 @@ export async function POST(req: Request) {
     const quoterKey = Keypair.fromSecret(QUOTER_SECRET)
     const quoterAddress = quoterKey.publicKey()
 
-    // XLM's instance, named rather than assumed — the request does not yet
-    // carry an underlying, and resolving it is M1-06's job.
     const expected = expectedOpenInvocation(
       {
         owner: body.address,
@@ -279,7 +290,7 @@ export async function POST(req: Request) {
         premium: body.premium,
         quoter: quoterAddress,
       },
-      XLM,
+      asset,
     )
 
     let entries: xdr.SorobanAuthorizationEntry[]

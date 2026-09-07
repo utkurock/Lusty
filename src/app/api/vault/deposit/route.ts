@@ -3,9 +3,10 @@ import { rateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
 import { reserveAction, releaseAction, confirmAction } from '@/lib/idempotency'
 import { logTransaction } from '@/lib/db-queries'
-import { getPosition, VAULT_ID } from '@/lib/vault-contract'
-import { getSpotXlmUsd } from '@/lib/spot'
+import { getPosition } from '@/lib/vault-contract'
+import { getSpot } from '@/lib/spot'
 import { realizedApr } from '@/lib/apr'
+import { requestedUnderlying } from '@/lib/assets'
 
 export const dynamic = 'force-dynamic'
 
@@ -31,8 +32,13 @@ interface DepositBody {
   address: string
   /** Transaction that opened the position. */
   txHash: string
-  /** Contract-assigned position id. */
+  /**
+   * Contract-assigned position id. Numbered per instance and starting at 0 in
+   * each, so it means nothing without the underlying below.
+   */
   positionId: number
+  /** Which underlying's vault the position was opened in. Absent means XLM. */
+  asset?: string
   type: 'call' | 'put'
   collateralAmount: number
   strikePrice: number
@@ -61,11 +67,23 @@ export async function POST(req: Request) {
     ) {
       return NextResponse.json({ error: 'missing positionId' }, { status: 400 })
     }
-    if (!VAULT_ID) {
-      return NextResponse.json(
-        { error: 'vault contract not configured on the server' },
-        { status: 500 },
-      )
+    // Resolved before the position is read, because the id is only meaningful
+    // against one instance. A gated asset is refused here rather than falling
+    // through to XLM's vault, where position #3 is somebody else's position.
+    const asset = requestedUnderlying(body.asset)
+    if (!asset) {
+      // Naming an asset we do not serve is the caller's error; naming none and
+      // still getting nothing means XLM itself has no vault configured, which
+      // is ours.
+      return body.asset
+        ? NextResponse.json(
+            { error: `${body.asset} is not a tradeable underlying`, code: 'asset_unavailable' },
+            { status: 400 },
+          )
+        : NextResponse.json(
+            { error: 'vault contract not configured on the server' },
+            { status: 500 },
+          )
     }
 
     const rl = rateLimit(`deposit:${body.address}`, 3600_000, 30)
@@ -79,7 +97,7 @@ export async function POST(req: Request) {
     // ---- read the position back from the ledger
     let position
     try {
-      position = await getPosition(body.positionId)
+      position = await getPosition(body.positionId, asset)
     } catch (readErr) {
       console.error('vault/deposit: position read failed', readErr)
       return NextResponse.json(
@@ -125,7 +143,7 @@ export async function POST(req: Request) {
     // existence — the deposit is indexed either way.
     let spotAtOpen: number | null = null
     try {
-      spotAtOpen = (await getSpotXlmUsd()).price
+      spotAtOpen = (await getSpot(asset)).price
     } catch (spotErr) {
       console.warn('vault/deposit: spot unavailable, APR not recorded', spotErr)
     }
@@ -157,7 +175,11 @@ export async function POST(req: Request) {
         type: 'deposit',
         subtype: position.side,
         amount: position.collateral,
-        asset: position.side === 'call' ? 'XLM' : 'LUSD',
+        // The token the amount is denominated in: a call escrows the
+        // underlying, a put escrows cash. Which book the row belongs to is a
+        // separate question, and `underlying` is the only one that answers it.
+        asset: position.side === 'call' ? asset.symbol : 'LUSD',
+        underlying: asset.symbol,
         txHash: body.txHash,
         // Escrow and premium are one transaction now; there is no separate
         // payout to point at.
@@ -165,7 +187,7 @@ export async function POST(req: Request) {
         premiumAmount: position.premium,
         metadata: {
           positionId: position.id,
-          contractId: VAULT_ID,
+          contractId: asset.contracts.vault,
           collateralAmount: position.collateral,
           strikePrice: position.strike,
           expiryIso: position.expiry.toISOString(),

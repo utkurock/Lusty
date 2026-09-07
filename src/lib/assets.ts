@@ -199,3 +199,19 @@ export function resolveUnderlying(raw: unknown): UnderlyingAsset | null {
   const found = (REGISTRY as Record<string, UnderlyingAsset>)[key]
   return found && found.enabled ? found : null
 }
+
+/**
+ * The underlying a request names. Absent means XLM — the only asset Tranche 1's
+ * callers knew about, so an old client keeps working unchanged.
+ *
+ * Null for anything else, including a gated asset spelled correctly. The
+ * failure this exists to prevent is a request naming BTC being served XLM: the
+ * quote would price off the wrong market and the position would be written to
+ * the wrong instance, both silently.
+ */
+export function requestedUnderlying(raw: unknown): UnderlyingAsset | null {
+  if (raw === undefined || raw === null || raw === '') {
+    return XLM.enabled ? XLM : null
+  }
+  return resolveUnderlying(raw)
+}

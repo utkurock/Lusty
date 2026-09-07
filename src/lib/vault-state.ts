@@ -1,4 +1,4 @@
-import { XLM } from './assets'
+import { XLM, type UnderlyingAsset } from './assets'
 import { getPool, ensureSchema } from './db'
 import { upcomingExpiryDates, expiryLabel, expiryUtilization } from './expiries'
 
@@ -37,13 +37,18 @@ const EXPOSURE_GRACE_DAYS = Number(process.env.VAULT_EXPOSURE_GRACE_DAYS ?? 7)
 // expiries are open at once, each capped independently (call in XLM, put in
 // USD). A full expiry blocks only itself.
 export const EPOCHS_PER_MONTH = Number(process.env.VAULT_EPOCHS_PER_MONTH ?? 3)
-// XLM's own envelope, off the registry. Each underlying carries its caps
-// there, so BTC's capacity is a separate number rather than a share of this one.
+
+/** Per-expiry cap = the asset's own monthly budget / open expiries. */
+export const callEpochCap = (asset: UnderlyingAsset = XLM): number =>
+  asset.callMonthlyCap / EPOCHS_PER_MONTH
+export const putEpochCap = (asset: UnderlyingAsset = XLM): number =>
+  asset.putMonthlyCapUsd / EPOCHS_PER_MONTH
+
+// XLM's numbers, kept for the surfaces that still name it directly.
 export const CALL_MONTHLY_CAP_XLM = XLM.callMonthlyCap
 export const PUT_MONTHLY_CAP_USD = XLM.putMonthlyCapUsd
-// Per-expiry cap = monthly budget / number of open expiries.
-export const CALL_EPOCH_CAP_XLM = CALL_MONTHLY_CAP_XLM / EPOCHS_PER_MONTH
-export const PUT_EPOCH_CAP_USD = PUT_MONTHLY_CAP_USD / EPOCHS_PER_MONTH
+export const CALL_EPOCH_CAP_XLM = callEpochCap(XLM)
+export const PUT_EPOCH_CAP_USD = putEpochCap(XLM)
 
 export function expiryDateKey(d: Date | string): string {
   return new Date(d).toISOString().slice(0, 10)
@@ -58,7 +63,8 @@ export interface ExpirySold {
 // of expiryIso (no timestamptz cast, so a malformed row can't throw and block
 // deposits). Throws if the DB is unreachable so callers fail closed.
 export async function computeExpirySold(
-  dateKeys: string[]
+  dateKeys: string[],
+  asset: UnderlyingAsset = XLM
 ): Promise<Map<string, ExpirySold>> {
   const map = new Map<string, ExpirySold>()
   for (const k of dateKeys) map.set(k, { callXlm: 0, putUsd: 0 })
@@ -73,11 +79,12 @@ export async function computeExpirySold(
        from transactions
       where type = 'deposit'
         and subtype in ('call', 'put')
+        and underlying = $2
         and tx_hash is not null
         and metadata ? 'expiryIso'
         and left(metadata->>'expiryIso', 10) = any($1::text[])
       group by 1`,
-    [dateKeys]
+    [dateKeys, asset.symbol]
   )
   for (const row of res.rows) {
     if (!row.date_key) continue
@@ -99,11 +106,12 @@ export interface ExpiryBucket {
 
 // The open expiry buckets (next EPOCHS_PER_MONTH Fridays) with amounts sold.
 export async function computeOpenBuckets(
-  now = new Date()
+  now = new Date(),
+  asset: UnderlyingAsset = XLM
 ): Promise<ExpiryBucket[]> {
   const dates = upcomingExpiryDates(now, EPOCHS_PER_MONTH)
   const keys = dates.map((d) => expiryDateKey(d))
-  const sold = await computeExpirySold(keys)
+  const sold = await computeExpirySold(keys, asset)
   return dates.map((d) => {
     const dateKey = expiryDateKey(d)
     const s = sold.get(dateKey) ?? { callXlm: 0, putUsd: 0 }
@@ -128,15 +136,19 @@ export async function computeOpenBuckets(
  */
 export async function expiryUtilizationFor(
   side: 'call' | 'put',
-  expiryIso: string
+  expiryIso: string,
+  asset: UnderlyingAsset = XLM
 ): Promise<number> {
   try {
-    const buckets = await computeOpenBuckets()
+    // Both halves of the ratio belong to this asset: its own sold collateral
+    // over its own capacity. Filling one book leaves the other's haircut
+    // exactly where it was.
+    const buckets = await computeOpenBuckets(new Date(), asset)
     const n = buckets.length || 1
     const aggregate =
       side === 'call'
-        ? buckets.reduce((a, b) => a + b.callXlm, 0) / (CALL_EPOCH_CAP_XLM * n)
-        : buckets.reduce((a, b) => a + b.putUsd, 0) / (PUT_EPOCH_CAP_USD * n)
+        ? buckets.reduce((a, b) => a + b.callXlm, 0) / (callEpochCap(asset) * n)
+        : buckets.reduce((a, b) => a + b.putUsd, 0) / (putEpochCap(asset) * n)
     const slot = buckets.findIndex((b) => b.dateKey === expiryDateKey(expiryIso))
     return expiryUtilization(aggregate, slot >= 0 ? slot : 0)
   } catch (err) {
@@ -159,7 +171,9 @@ export interface OpenExposure {
  * Throws if the DB is unreachable — callers should fail closed (a cap check
  * that can't see real exposure must reject, not wave through).
  */
-export async function computeOpenExposure(): Promise<OpenExposure> {
+export async function computeOpenExposure(
+  asset: UnderlyingAsset = XLM
+): Promise<OpenExposure> {
   await ensureSchema()
   const pool = getPool()
   // Compare expiry as a string, not a timestamptz cast: the deposit route
@@ -179,6 +193,7 @@ export async function computeOpenExposure(): Promise<OpenExposure> {
      from transactions d
      where d.type = 'deposit'
        and d.subtype in ('call', 'put')
+       and d.underlying = $2
        and d.tx_hash is not null
        and d.metadata ? 'collateralAmount'
        and (
@@ -190,7 +205,7 @@ export async function computeOpenExposure(): Promise<OpenExposure> {
          where pa.action_type = 'claim'
            and pa.source_hash = d.tx_hash
        )`,
-    [cutoffIso]
+    [cutoffIso, asset.symbol]
   )
   const row = res.rows[0] ?? {}
   return {

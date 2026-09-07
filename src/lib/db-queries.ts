@@ -22,7 +22,10 @@ interface LogTxParams {
   type: 'deposit' | 'claim' | 'faucet'
   subtype?: string | null
   amount: number
+  /** Token the amount is denominated in. */
   asset: string
+  /** Underlying the option was written on. Required for call/put rows. */
+  underlying?: string | null
   txHash?: string | null
   premiumHash?: string | null
   premiumAmount?: number | null
@@ -36,14 +39,16 @@ export async function logTransaction(params: LogTxParams) {
   const pool = getPool()
   await pool.query(
     `insert into transactions
-       (address, type, subtype, amount, asset, tx_hash, premium_hash, premium_amount, metadata)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+       (address, type, subtype, amount, asset, underlying,
+        tx_hash, premium_hash, premium_amount, metadata)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
     [
       params.address,
       params.type,
       params.subtype ?? null,
       params.amount,
       params.asset,
+      params.underlying ?? null,
       params.txHash ?? null,
       params.premiumHash ?? null,
       params.premiumAmount ?? null,

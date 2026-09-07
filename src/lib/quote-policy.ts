@@ -48,6 +48,13 @@ export class PolicyRejection extends Error {
 
 export interface PolicyInput {
   address: string
+  /**
+   * The underlying being written. Every allowance below is scoped to it: a
+   * wallet's BTC history is not a claim on its XLM allowance, and two books'
+   * inventory against "the same strike" are not the same inventory — $0.25
+   * means nothing on a $77k asset.
+   */
+  underlying: string
   type: 'call' | 'put'
   /** Collateral being escrowed (XLM for calls, cash for puts). */
   collateralAmount: number
@@ -74,15 +81,16 @@ export async function assertQuoteAllowed(input: PolicyInput): Promise<void> {
   await ensureSchema()
   const pool = getPool()
 
-  // Per-wallet 30-day notional (USD).
+  // Per-wallet 30-day notional (USD), for this underlying's book.
   const userRes = await pool.query(
     `select coalesce(sum(amount), 0)::float as sum
        from transactions
       where address = $1
         and type = 'deposit'
-        and (subtype is null or subtype != 'swap')
+        and subtype in ('call', 'put')
+        and underlying = $2
         and created_at > now() - interval '30 days'`,
-    [input.address]
+    [input.address, input.underlying]
   )
   const userNotional = parseFloat(userRes.rows[0]?.sum ?? '0')
   if (userNotional + input.notionalUsd > input.maxUserNotionalUsd) {
@@ -107,9 +115,10 @@ export async function assertQuoteAllowed(input: PolicyInput): Promise<void> {
       where type = 'deposit'
         and subtype in ('call', 'put')
         and address = $1
+        and underlying = $3
         and metadata ? 'expiryIso'
         and left(metadata->>'expiryIso', 10) = $2`,
-    [input.address, dateKey]
+    [input.address, dateKey, input.underlying]
   )
   const used =
     input.type === 'call'
@@ -119,7 +128,9 @@ export async function assertQuoteAllowed(input: PolicyInput): Promise<void> {
     input.type === 'call' ? input.maxUserEpochCallXlm : input.maxUserEpochPutUsd
   if (used + input.collateralAmount > limit) {
     const remaining = Math.max(0, limit - used)
-    const unit = input.type === 'call' ? 'XLM' : 'USD'
+    // A call's allowance is counted in the underlying it escrows, a put's in
+    // the cash it locks.
+    const unit = input.type === 'call' ? input.underlying : 'USD'
     throw new PolicyRejection(
       `per-wallet limit for this expiry exceeded — you have used ${used.toFixed(0)} of ${limit.toFixed(0)} ${unit} (${remaining.toFixed(0)} ${unit} remaining). Other expiries have a fresh allowance.`,
       'user_epoch_limit_exceeded'
@@ -134,11 +145,12 @@ export async function assertQuoteAllowed(input: PolicyInput): Promise<void> {
     `select coalesce(sum(amount), 0)::float as sum
        from transactions
       where type = 'deposit'
-        and (subtype is null or subtype != 'swap')
+        and subtype in ('call', 'put')
+        and underlying = $3
         and metadata ? 'strikePrice'
         and (metadata->>'strikePrice')::float8 between $1 and $2
         and created_at > now() - interval '14 days'`,
-    [lo, hi]
+    [lo, hi, input.underlying]
   )
   const strikeNotional = parseFloat(strikeRes.rows[0]?.sum ?? '0')
   if (strikeNotional + input.notionalUsd > input.strikeInventoryLimitUsd) {
