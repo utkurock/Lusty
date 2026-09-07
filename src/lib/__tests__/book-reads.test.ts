@@ -67,6 +67,10 @@ const queries: { text: string; params: unknown[] }[] = []
 
 vi.mock('@/lib/db', () => ({
   ensureSchema: async () => {},
+  // Only the position reads are under test here; the fragment is pinned in
+  // leaderboard-usd.test.ts, and a stub keeps it out of the SQL these
+  // assertions read.
+  COLLATERAL_USD_SQL: 'null',
   getPool: () => ({
     query: async (text: string, params: unknown[]) => {
       queries.push({ text, params })

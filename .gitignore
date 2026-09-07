@@ -41,9 +41,10 @@ trench*.md
 scripts/.wind-down-*.json
 scripts/compensate-stranded.mjs
 
-# design scratch — screenshots and notes, local only
+# design scratch — screenshots, notes and social-post builders, local only
 docs/design-references/
 screenshots/
+design/
 
 # font sources; only the subsetted web font under public/fonts ships
 jekofont/

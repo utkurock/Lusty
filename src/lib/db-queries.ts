@@ -1,4 +1,4 @@
-import { getPool, ensureSchema } from './db'
+import { getPool, ensureSchema, COLLATERAL_USD_SQL } from './db'
 import type { UnderlyingAsset } from './assets'
 
 // Rows written before `transactions.underlying` existed were backfilled to
@@ -450,11 +450,14 @@ export async function getAdminStats(): Promise<AdminStats> {
   const [users, txs, volumes, recentUsers, recentTxs] = await Promise.all([
     pool.query('select count(*) from users'),
     pool.query('select count(*) from transactions'),
+    // Valued the same way the leaderboard values it, off the same fragment:
+    // two records of one number that drift apart are worse than either alone,
+    // and this one is the figure the admin panel reads as the vault's size.
     pool.query(
       `select
-         coalesce(sum(case when type = 'deposit' then amount end), 0) as total_deposited,
-         coalesce(sum(case when type = 'deposit' then premium_amount end), 0) as total_premium
-       from transactions`
+         coalesce(sum(${COLLATERAL_USD_SQL}), 0) as total_deposited,
+         coalesce(sum(case when t.type = 'deposit' then t.premium_amount end), 0) as total_premium
+       from transactions t`
     ),
     pool.query("select count(*) from users where last_seen > now() - interval '24 hours'"),
     pool.query("select count(*) from transactions where created_at > now() - interval '24 hours'"),
