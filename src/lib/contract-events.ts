@@ -78,7 +78,7 @@ export interface VaultEvent {
    * amounts live in contract state — and the outcome alone is the half of the
    * story that does not say where the money went.
    */
-  payout?: { amount: number; asset: 'XLM' | 'LUSD' }
+  payout?: { amount: number; asset: string }
   /** Collateral the writer gave up, when assigned. */
   releasedAmount?: number
   // fund
@@ -235,11 +235,27 @@ export async function fetchVaultEvents(limit = 25): Promise<VaultEvent[]> {
 /** One position's resolution, as the ledger recorded it. */
 export interface SettlementRecord {
   positionId: number
+  /** The instance that settled it. Half of the identity — see `settlementKey`. */
+  contractId: string
   outcome: string
   /** Oracle price the contract settled against — the price at expiry. */
   priceUsd: number
   at: string
   txHash?: string
+}
+
+/**
+ * How a settlement is addressed: by instance and id together.
+ *
+ * A position id alone does not identify a position. Every vault numbers its
+ * own positions from zero, so XLM's #3 and BTC's #3 are two different writers'
+ * money, and an index keyed on the number hands whichever settled last to
+ * both. The retired instances in `NEXT_PUBLIC_VAULT_CONTRACTS` make this true
+ * today, before BTC exists: they are scanned alongside the live vault and
+ * their ids start at zero as well.
+ */
+export function settlementKey(contractId: string, positionId: number): string {
+  return `${contractId}#${positionId}`
 }
 
 // The settlement index, kept between requests.
@@ -248,7 +264,7 @@ export interface SettlementRecord {
 // has been read once never needs reading again. What the index keeps is the
 // cursor: the first scan pays for its window, and every later refresh resumes
 // from where that one stopped, which is normally a single page.
-const settlements = new Map<number, SettlementRecord>()
+const settlements = new Map<string, SettlementRecord>()
 let settlementCursor: string | undefined
 let settlementsFreshUntil = 0
 let settlementScan: Promise<void> | null = null
@@ -284,8 +300,9 @@ async function refreshSettlements(): Promise<void> {
     if (!e || e.kind !== 'settle' || e.id == null) continue
     const positionId = Number(e.id)
     if (!Number.isFinite(positionId)) continue
-    settlements.set(positionId, {
+    settlements.set(settlementKey(e.contractId, positionId), {
       positionId,
+      contractId: e.contractId,
       outcome: e.outcome ?? 'unknown',
       priceUsd: e.priceUsd ?? 0,
       at: e.at,
@@ -298,7 +315,7 @@ async function refreshSettlements(): Promise<void> {
 }
 
 /**
- * Settlements, indexed by position id.
+ * Settlements, indexed by instance and position id — see `settlementKey`.
  *
  * The position itself already says that it settled and how; what it cannot say
  * is when, at what price, or in which transaction — the contract keeps no room
@@ -310,7 +327,7 @@ async function refreshSettlements(): Promise<void> {
  * recorded here" and never "did not settle" — the position is the authority on
  * that, and callers must not infer settlement from this map.
  */
-export async function fetchSettlements(): Promise<Map<number, SettlementRecord>> {
+export async function fetchSettlements(): Promise<Map<string, SettlementRecord>> {
   if (VAULT_IDS.length === 0) return settlements
   if (Date.now() < settlementsFreshUntil) return settlements
 

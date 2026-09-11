@@ -7,7 +7,12 @@ export interface StoredPosition {
   id: string                  // deposit tx hash
   address: string             // user wallet
   type: 'call' | 'put'
-  asset: string               // 'XLM' for call, stable code for put
+  asset: string               // the token escrowed: underlying for a call, stable for a put
+  /**
+   * The book it was written in. Absent on rows cached before there was more
+   * than one — those are XLM's, which is what `getPositionsFor` reads them as.
+   */
+  underlying?: string
   collateralAmount: number
   strikePrice: number
   strikeIndex: number
@@ -43,10 +48,21 @@ function writeAll(list: StoredPosition[]) {
   localStorage.setItem(KEY, JSON.stringify(list))
 }
 
-export function getPositionsFor(address: string | null): StoredPosition[] {
+/**
+ * One wallet's cached positions, newest first.
+ *
+ * `underlying` narrows to one book. A row cached before the field existed
+ * reads as XLM, which is what it was: this cache is per-browser and predates
+ * any second instance, so there is no row it could mislabel.
+ */
+export function getPositionsFor(
+  address: string | null,
+  underlying?: string
+): StoredPosition[] {
   if (!address) return []
   return readAll()
     .filter((p) => p.address === address)
+    .filter((p) => !underlying || (p.underlying ?? 'XLM') === underlying)
     .sort((a, b) => b.createdAt - a.createdAt)
 }
 

@@ -3,10 +3,11 @@ import { Horizon } from '@stellar/stellar-sdk'
 import { rateLimit } from '@/lib/rate-limit'
 import {
   computeOpenBuckets,
-  CALL_EPOCH_CAP_XLM,
-  PUT_EPOCH_CAP_USD,
+  callEpochCap,
+  putEpochCap,
   EPOCHS_PER_MONTH,
 } from '@/lib/vault-state'
+import { XLM, settleableUnderlying } from '@/lib/assets'
 import { LUSD_CODE, LUSD_ISSUER, LUSD_DISTRIBUTOR } from '@/lib/lusd'
 
 export const dynamic = 'force-dynamic'
@@ -20,9 +21,22 @@ const HORIZON =
 // readout and response back-compat.
 const XLM_BASELINE = Number(process.env.VAULT_XLM_BASELINE ?? 30000)
 
-export async function GET() {
+// One book per request, for the same reason the portfolio route takes one:
+// every figure below is a capacity or a fill in the asset's own units, and
+// summing two assets' would produce a utilization percentage measured against
+// nothing. `?asset=` names the book; absent means XLM.
+export async function GET(req: Request) {
   try {
-    const rl = rateLimit('vault-stats:global', 60_000, 120)
+    const assetRaw = new URL(req.url).searchParams.get('asset')
+    const asset = assetRaw ? settleableUnderlying(assetRaw) : XLM
+    if (!asset) {
+      return NextResponse.json(
+        { error: `${assetRaw} has no vault to read`, code: 'asset_unavailable' },
+        { status: 400 }
+      )
+    }
+
+    const rl = rateLimit(`vault-stats:${asset.symbol}`, 60_000, 120)
     if (!rl.ok) {
       return NextResponse.json(
         { error: `rate limited — retry after ${rl.retryAfter}s` },
@@ -34,7 +48,13 @@ export async function GET() {
       return NextResponse.json({ error: 'vault not configured' }, { status: 500 })
     }
 
-    const openBuckets = await computeOpenBuckets()
+    const openBuckets = await computeOpenBuckets(new Date(), asset)
+
+    // Both the fill and the cap are this asset's own. The field names still
+    // say Xlm because Tranche 1's clients read them by that name; the number
+    // in them is the underlying's, whichever underlying was asked for.
+    const callEpoch = callEpochCap(asset)
+    const putEpoch = putEpochCap(asset)
 
     const buckets = openBuckets.map((b, i) => ({
       index: i,
@@ -42,17 +62,17 @@ export async function GET() {
       expiryIso: b.expiryIso,
       dateKey: b.dateKey,
       callXlm: b.callXlm,
-      callCapXlm: CALL_EPOCH_CAP_XLM,
-      callFull: b.callXlm >= CALL_EPOCH_CAP_XLM,
+      callCapXlm: callEpoch,
+      callFull: b.callXlm >= callEpoch,
       putUsd: b.putUsd,
-      putCapUsd: PUT_EPOCH_CAP_USD,
-      putFull: b.putUsd >= PUT_EPOCH_CAP_USD,
+      putCapUsd: putEpoch,
+      putFull: b.putUsd >= putEpoch,
     }))
 
     const callUtilizedXlm = buckets.reduce((a, b) => a + b.callXlm, 0)
     const putUtilizedUsd = buckets.reduce((a, b) => a + b.putUsd, 0)
-    const callCapXlm = CALL_EPOCH_CAP_XLM * buckets.length
-    const putCapUsd = PUT_EPOCH_CAP_USD * buckets.length
+    const callCapXlm = callEpoch * buckets.length
+    const putCapUsd = putEpoch * buckets.length
     const callUtilizationPct = Math.min(
       100,
       callCapXlm > 0 ? (callUtilizedXlm / callCapXlm) * 100 : 0
@@ -84,6 +104,7 @@ export async function GET() {
     return NextResponse.json(
       {
         ok: true,
+        underlying: asset.symbol,
         distributor: LUSD_DISTRIBUTOR,
         xlmBalance,
         lusdBalance,

@@ -120,6 +120,40 @@ export function ensureSchema(): Promise<void> {
   return global.__pgSchemaInFlight
 }
 
+/**
+ * What a deposit's collateral was worth in dollars, at the moment it was
+ * written.
+ *
+ * The leaderboard summed `amount` and called the result USD — the view said
+ * so in a comment and the page printed it behind a dollar sign — but `amount`
+ * is a quantity of whatever was escrowed. That was already wrong with one
+ * underlying, where it overstated a lumen as a dollar. With two it stops being
+ * a rounding argument and becomes a ranking one: half a bitcoin scores half a
+ * point while half a million lumens scores half a million, so the writer who
+ * risked more money places last.
+ *
+ * A put escrows cash, which is dollars already. A call escrows the underlying,
+ * so its dollar value is the amount times the price the deposit route recorded
+ * at open — the only price anyone kept, and the same figure the APR is measured
+ * against.
+ *
+ * Null when that price was never recorded, which sums to nothing rather than
+ * to the raw amount. This repo already refuses to print an unmeasured APR as
+ * 0.00%; a collateral figure nobody priced is the same kind of unknown, and
+ * counting its units as dollars would be inventing the number rather than
+ * missing it.
+ */
+const COLLATERAL_USD_SQL = `
+        case
+          when t.type != 'deposit' then null
+          when t.subtype = 'swap' then null
+          when t.subtype = 'put' then t.amount
+          when jsonb_typeof(t.metadata->'spotAtOpen') = 'number'
+            then t.amount * (t.metadata->>'spotAtOpen')::numeric
+        end`
+
+export { COLLATERAL_USD_SQL }
+
 async function createSchema(): Promise<void> {
   const pool = getPool()
   console.log('ensureSchema: creating tables and views…')
@@ -302,21 +336,27 @@ async function createSchema(): Promise<void> {
   await pool.query(`
     create view leaderboard_view as
     select
-      t.address,
-      coalesce(sum(case when t.type = 'deposit' and (t.subtype is null or t.subtype != 'swap') then t.amount end), 0) as total_deposited,
-      coalesce(sum(case when t.type = 'deposit' and (t.subtype is null or t.subtype != 'swap') then t.premium_amount end), 0) as total_premium,
-      coalesce(sum(case when t.subtype = 'swap' then t.amount end), 0) as total_swapped,
-      count(*) filter (where t.type = 'deposit' and (t.subtype is null or t.subtype != 'swap')) as deposit_count,
-      count(*) filter (where t.subtype = 'swap') as swap_count,
-      count(*) filter (where t.type = 'claim') as claim_count,
-      count(*) filter (where t.type = 'faucet') as faucet_count,
+      address,
+      coalesce(sum(case when is_deposit then collateral_usd end), 0) as total_deposited,
+      coalesce(sum(case when is_deposit then premium_amount end), 0) as total_premium,
+      coalesce(sum(case when subtype = 'swap' then amount end), 0) as total_swapped,
+      count(*) filter (where is_deposit) as deposit_count,
+      count(*) filter (where subtype = 'swap') as swap_count,
+      count(*) filter (where type = 'claim') as claim_count,
+      count(*) filter (where type = 'faucet') as faucet_count,
       round(
-        coalesce(sum(case when t.type = 'deposit' and (t.subtype is null or t.subtype != 'swap') then t.amount end), 0) +
-        3 * coalesce(sum(case when t.type = 'deposit' and (t.subtype is null or t.subtype != 'swap') then t.premium_amount end), 0) +
-        0.5 * coalesce(sum(case when t.subtype = 'swap' then t.amount end), 0)
+        coalesce(sum(case when is_deposit then collateral_usd end), 0) +
+        3 * coalesce(sum(case when is_deposit then premium_amount end), 0) +
+        0.5 * coalesce(sum(case when subtype = 'swap' then amount end), 0)
       ) as points
-    from transactions t
-    group by t.address
+    from (
+      select
+        t.address, t.type, t.subtype, t.amount, t.premium_amount,
+        (t.type = 'deposit' and (t.subtype is null or t.subtype != 'swap')) as is_deposit,
+        ${COLLATERAL_USD_SQL} as collateral_usd
+      from transactions t
+    ) rows
+    group by address
   `).catch((err: any) => {
     // 42P07 = duplicate_table: another instance recreated the view in the gap
     // above. Its definition came from this same file, so the schema is correct
