@@ -11,6 +11,14 @@
 // client's utilization came from a stats poll that may not have landed yet, and
 // a quote priced against a stale or fabricated utilization is a quote the
 // co-signature will not reproduce.
+//
+// The underlying is named the same way, and for a stronger version of the same
+// reason: the endpoint reads an absent `asset` as XLM, because that is what
+// Tranche 1's callers meant by silence. A screen opened at /earn/btc that says
+// nothing is therefore not asking for BTC — it is asking for XLM under a BTC
+// heading, and would be answered with XLM's spot, XLM's vol and XLM's vault.
+
+import type { UnderlyingSymbol } from './assets'
 
 export interface QuotedRung {
   index: number
@@ -58,9 +66,10 @@ async function getQuote(
 export async function fetchLadder(
   side: 'call' | 'put',
   expiryIso: string,
+  asset: UnderlyingSymbol,
   signal?: AbortSignal,
 ): Promise<LadderQuote> {
-  const d = await getQuote({ side, expiry: expiryIso }, signal)
+  const d = await getQuote({ side, expiry: expiryIso, asset }, signal)
   if (!Array.isArray(d.strikes) || d.strikes.length === 0) {
     throw new Error('quote returned no strikes')
   }
@@ -85,10 +94,11 @@ export async function fetchStrikeQuote(
   side: 'call' | 'put',
   expiryIso: string,
   strike: number,
+  asset: UnderlyingSymbol,
   signal?: AbortSignal,
 ): Promise<StrikeQuote> {
   const d = await getQuote(
-    { side, expiry: expiryIso, strike: String(strike) },
+    { side, expiry: expiryIso, strike: String(strike), asset },
     signal,
   )
   const q = d.quote

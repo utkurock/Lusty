@@ -62,7 +62,10 @@ export function AssetList({ tab, onTabChange, capacity }: AssetListProps) {
         // cannot reach takes about twelve seconds to give up, so waiting for
         // that is waiting to be told nothing.
         const signal = AbortSignal.timeout(QUOTE_DEADLINE_MS)
-        const aprs = (await fetchLadder(side, expiry, signal)).strikes.map((s) => s.apr)
+        // XLM by name, not by default: this row is XLM's, and the headline it
+        // feeds should stop being right the moment the row becomes another
+        // asset's rather than keep quoting XLM under a new symbol.
+        const aprs = (await fetchLadder(side, expiry, 'XLM', signal)).strikes.map((s) => s.apr)
         return aprs.length > 0 ? aprs : undefined
       } catch {
         return undefined

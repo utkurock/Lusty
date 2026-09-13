@@ -6,10 +6,17 @@
 // was asked about — it refuses, and the position simply never opens.
 
 import type { OptionSide } from './vault-contract'
+import type { UnderlyingSymbol } from './assets'
 
 export interface CosignRequest {
   address: string
   side: OptionSide
+  /**
+   * The book this position is being written to. The quoter reprices before it
+   * signs, so an unnamed asset is not a missing label — it is the server
+   * pricing one option and the transaction opening another.
+   */
+  asset: UnderlyingSymbol
   collateralAmount: number
   strikePrice: number
   expiryIso: string

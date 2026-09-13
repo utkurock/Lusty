@@ -22,6 +22,8 @@ import { buildTrustlineTx, hasLusdTrustline } from '@/lib/swap'
 import { openPosition, coveredUnits } from '@/lib/vault-contract'
 import { activeQuoter, cosignWithQuoter } from '@/lib/quoter'
 import { fetchLadder, fetchStrikeQuote, type QuotedRung } from '@/lib/quote-client'
+import { recordDeposit } from '@/lib/deposit-client'
+import { resolveUnderlying } from '@/lib/assets'
 import { TransactionBuilder, Networks } from '@stellar/stellar-sdk'
 import { ChevronDown, TrendingUp, TrendingDown } from 'lucide-react'
 
@@ -58,6 +60,11 @@ interface StrikeSelectorProps {
 type Rung = QuotedRung
 
 export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
+  // The underlying this screen is actually for. The route param is a string the
+  // user can type, so it is resolved against the registry rather than trusted:
+  // null means the asset is unknown or still gated, and quoting it would mean
+  // pricing XLM under this page's heading.
+  const asset = useMemo(() => resolveUnderlying(assetSymbol), [assetSymbol])
   const { connected, connect, address, signTransaction, syncAddress } =
     useWalletContext()
   const { price: xlmPrice, change24h } = useXlmPrice()
@@ -169,13 +176,18 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
   const loadLadder = useCallback(
     (signal?: AbortSignal) => {
       if (!expiryIso) return Promise.resolve()
+      if (!asset) {
+        setStrikes([])
+        setQuoteError(`${assetSymbol} is not being quoted yet`)
+        return Promise.resolve()
+      }
       setQuoteLoading(true)
       // The previous failure stays on screen until a retry actually succeeds.
       // Clearing it here put the panel back on "Pricing strikes…" every 30s,
       // and since a blocked upstream takes ~12s to fail, the screen spent its
       // life looking like a request that was about to arrive rather than one
       // that had already failed four times.
-      return fetchLadder(type, expiryIso, signal)
+      return fetchLadder(type, expiryIso, asset.symbol, signal)
         .then((ladder) => {
           setStrikes(ladder.strikes)
           setQuoteError(null)
@@ -189,7 +201,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
           if (!signal?.aborted) setQuoteLoading(false)
         })
     },
-    [type, expiryIso],
+    [type, expiryIso, asset, assetSymbol],
   )
 
   // Keep the ladder live on a timer of its own. It used to refresh as a side
@@ -285,6 +297,14 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
 
   const handleEarn = async () => {
     setError(null); setSuccess(null)
+    // Before anything is signed. An unresolvable asset here is not a label
+    // problem: every call below would fall through to XLM's quote, XLM's
+    // co-signature and XLM's vault, which is the one failure this screen must
+    // not be able to produce.
+    if (!asset) {
+      setError(`${assetSymbol} is not available to write against yet.`)
+      return
+    }
     if (!connected) { await connect(); return }
     // Fail-closed: never send collateral while the wallet's per-expiry usage is
     // unknown (positions read still pending or failed). Retry the read so a
@@ -373,7 +393,12 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
       //    produced "premium exceeds the quote" on every downward tick — and,
       //    when the tick went the other way, quietly paid the smaller one.
       setSuccess('Refreshing the quote…')
-      const fresh = await fetchStrikeQuote(type, expiryIso, selectedStrike.strike)
+      const fresh = await fetchStrikeQuote(
+        type,
+        expiryIso,
+        selectedStrike.strike,
+        asset.symbol,
+      )
       const paidPremium =
         fresh.userPremium * coveredUnits(type, amount, selectedStrike.strike)
 
@@ -400,6 +425,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
       const opened = await openPosition({
         owner: address,
         side: type,
+        asset,
         collateral: amount,
         strike: selectedStrike.strike,
         expiry: expiry.date,
@@ -410,6 +436,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
           cosignWithQuoter({
             address,
             side: type,
+            asset: asset.symbol,
             collateralAmount: amount,
             strikePrice: selectedStrike.strike,
             expiryIso,
@@ -422,19 +449,16 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
       // 4. Record the position the contract just wrote, for the leaderboard
       //    and analytics. Best-effort: the position exists on chain either way.
       const depositHash = opened.txHash
-      await fetch('/api/vault/deposit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          address,
-          txHash: depositHash,
-          positionId: opened.id,
-          type,
-          collateralAmount: amount,
-          strikePrice: selectedStrike.strike,
-          daysToExpiry: fresh.daysToExpiry,
-          expiryIso,
-        }),
+      await recordDeposit({
+        address,
+        txHash: depositHash,
+        positionId: opened.id,
+        type,
+        asset: asset.symbol,
+        collateralAmount: amount,
+        strikePrice: selectedStrike.strike,
+        daysToExpiry: fresh.daysToExpiry,
+        expiryIso,
       }).catch((recordErr) => {
         console.warn('vault deposit recorded on chain but not indexed', recordErr)
       })
