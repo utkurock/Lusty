@@ -1,6 +1,6 @@
 'use client'
 import { useState } from 'react'
-import { useXlmPrice } from '@/hooks/useXlmPrice'
+import { useXlmPrice } from '@/hooks/useSpotPrice'
 import { useVaultStats } from '@/hooks/useVaultStats'
 import { EpochCapProgress } from '@/components/earn/EpochCapProgress'
 import { AssetList, type Tab } from '@/components/earn/AssetList'

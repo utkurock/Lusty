@@ -1,12 +1,19 @@
 import { NextResponse } from 'next/server'
-import { getSpotXlmUsd } from '@/lib/spot'
+import { getSpot } from '@/lib/spot'
 import { rateLimit } from '@/lib/rate-limit'
+import { resolveUnderlying, type UnderlyingAsset } from '@/lib/assets'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
 /**
- * XLM/USD for the browser.
+ * Spot for the browser, per underlying.
+ *
+ * Was /api/price/xlm, with the ticker and the CoinGecko id written into it. A
+ * BTC screen reading that endpoint is not reading a slightly wrong price, it is
+ * reading a price three orders of magnitude away — and every figure derived
+ * from it, the USD value of a deposit above all, is wrong by the same factor
+ * while looking perfectly ordinary.
  *
  * The client used to read Binance directly — a REST seed and a websocket — and
  * on any network where Binance is unreachable the header price never loaded at
@@ -29,11 +36,11 @@ export const revalidate = 0
  * somewhere else. Both sources are tried and neither is required: an unknown
  * change is reported as null and the UI simply omits it.
  */
-async function change24h(): Promise<number | null> {
+async function change24h(asset: UnderlyingAsset): Promise<number | null> {
   const t = 6_000
   try {
     const r = await fetch(
-      'https://api.binance.com/api/v3/ticker/24hr?symbol=XLMUSDT',
+      `https://api.binance.com/api/v3/ticker/24hr?symbol=${asset.binanceSymbol}`,
       { cache: 'no-store', signal: AbortSignal.timeout(t) }
     )
     if (r.ok) {
@@ -46,12 +53,12 @@ async function change24h(): Promise<number | null> {
   }
   try {
     const r = await fetch(
-      'https://api.coingecko.com/api/v3/simple/price?ids=stellar&vs_currencies=usd&include_24hr_change=true',
+      `https://api.coingecko.com/api/v3/simple/price?ids=${asset.coingeckoId}&vs_currencies=usd&include_24hr_change=true`,
       { cache: 'no-store', signal: AbortSignal.timeout(t) }
     )
     if (r.ok) {
       const j = await r.json()
-      const p = Number(j?.stellar?.usd_24h_change)
+      const p = Number(j?.[asset.coingeckoId]?.usd_24h_change)
       if (isFinite(p)) return p
     }
   } catch {
@@ -60,8 +67,22 @@ async function change24h(): Promise<number | null> {
   return null
 }
 
-export async function GET() {
-  const rl = rateLimit('price-xlm', 60_000, 240)
+export async function GET(
+  _req: Request,
+  { params }: { params: Promise<{ asset: string }> },
+) {
+  const { asset: raw } = await params
+  // A gated asset is refused rather than served XLM's price. The screen that
+  // asked for it is the screen that would have shown the answer.
+  const asset = resolveUnderlying(raw)
+  if (!asset) {
+    return NextResponse.json(
+      { error: `${raw} is not a tradeable underlying` },
+      { status: 404 }
+    )
+  }
+
+  const rl = rateLimit(`price-${asset.symbol}`, 60_000, 240)
   if (!rl.ok) {
     return NextResponse.json(
       { error: `rate limited — retry after ${rl.retryAfter}s` },
@@ -72,10 +93,11 @@ export async function GET() {
   try {
     // The price is required; the change is not, so a slow change source must
     // never hold up the number the page is actually waiting for.
-    const [quote, chg] = await Promise.all([getSpotXlmUsd(), change24h()])
+    const [quote, chg] = await Promise.all([getSpot(asset), change24h(asset)])
     return NextResponse.json(
       {
         ok: true,
+        asset: asset.symbol,
         price: quote.price,
         change24h: chg,
         source: quote.source,
@@ -86,7 +108,7 @@ export async function GET() {
   } catch (e: any) {
     // Say so rather than serving a number nobody stands behind: a hardcoded
     // fallback price on a trading screen is worse than a blank one.
-    console.error('price/xlm: no source could answer', e)
+    console.error(`price/${asset.symbol}: no source could answer`, e)
     return NextResponse.json(
       { error: 'price unavailable', detail: e?.message ?? 'unknown' },
       { status: 503 }

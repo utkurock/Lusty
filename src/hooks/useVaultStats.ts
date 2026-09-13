@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
+import type { UnderlyingSymbol } from '@/lib/assets'
 
 export interface VaultSideStats {
   utilized: number
@@ -34,15 +35,23 @@ export interface VaultStatsPayload {
   baseline: number
 }
 
-// Polls /api/vault/stats (no-store) every `intervalMs`.
-export function useVaultStats(intervalMs = 30_000) {
+// Polls /api/vault/stats (no-store) every `intervalMs`, for one book.
+//
+// The asset is a parameter because these are per-instance numbers: the caps,
+// the per-expiry buckets and the utilization that prices the ladder all belong
+// to one vault. Reading XLM's and rendering them on a BTC screen would show a
+// book that is 0% full against a cap of 1.5 million, and quote against it.
+export function useVaultStats(
+  intervalMs = 30_000,
+  asset: UnderlyingSymbol = 'XLM',
+) {
   const [stats, setStats] = useState<VaultStatsPayload | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch('/api/vault/stats', { cache: 'no-store' })
+      const res = await fetch(`/api/vault/stats?asset=${asset}`, { cache: 'no-store' })
       const d = await res.json()
       if (d.ok) {
         setStats({
@@ -74,7 +83,7 @@ export function useVaultStats(intervalMs = 30_000) {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [asset])
 
   useEffect(() => {
     load()

@@ -13,7 +13,7 @@ import {
   formatExpiry,
   formatUsdc,
 } from '@/lib/utils'
-import { useXlmPrice } from '@/hooks/useXlmPrice'
+import { useSpotPrice } from '@/hooks/useSpotPrice'
 import { useVaultStats } from '@/hooks/useVaultStats'
 import { getExpiryOptions, ExpiryOption } from '@/lib/expiries'
 import { StablePicker, Stable } from '@/components/shared/StablePicker'
@@ -67,26 +67,31 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
   const asset = useMemo(() => resolveUnderlying(assetSymbol), [assetSymbol])
   const { connected, connect, address, signTransaction, syncAddress } =
     useWalletContext()
-  const { price: xlmPrice, change24h } = useXlmPrice()
-  const { stats: vaultStats, refresh: refreshVaultStats } = useVaultStats(30_000)
+  // This screen's own asset, not the app's default one. Every USD figure below
+  // is an amount multiplied by this number.
+  const { price: spot, change24h } = useSpotPrice(asset?.symbol ?? 'XLM')
+  const { stats: vaultStats, refresh: refreshVaultStats } = useVaultStats(
+    30_000,
+    asset?.symbol ?? 'XLM',
+  )
   const pricePositive = change24h >= 0
   const [txLoading, setTxLoading] = useState(false)
 
-  // USD-denominated cap/util for the dynamic APR engine (call: XLM × spot).
+  // USD-denominated cap/util for the dynamic APR engine (call: collateral × spot).
   const realStats = useMemo(() => {
     if (!vaultStats) return undefined
     if (type === 'call') {
-      if (!xlmPrice) return undefined
+      if (!spot) return undefined
       return {
-        totalDeposited: vaultStats.call.utilized * xlmPrice,
-        vaultCap: vaultStats.call.cap * xlmPrice,
+        totalDeposited: vaultStats.call.utilized * spot,
+        vaultCap: vaultStats.call.cap * spot,
       }
     }
     return {
       totalDeposited: vaultStats.put.utilized,
       vaultCap: vaultStats.put.cap,
     }
-  }, [vaultStats, xlmPrice, type])
+  }, [vaultStats, spot, type])
 
   // Expiries derived from real on-chain utilization when available so the
   // dynamic APR engine drops the offered APR as the vault fills up.
@@ -289,11 +294,11 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
   }, [type, selectedBucket])
 
   const minAmount =
-    type === 'call' ? MIN_DEPOSIT_XLM : MIN_DEPOSIT_XLM * (xlmPrice || 0.1)
+    type === 'call' ? MIN_DEPOSIT_XLM : MIN_DEPOSIT_XLM * (spot || 0.1)
   const maxAmount =
-    type === 'call' ? MAX_DEPOSIT_XLM : MAX_DEPOSIT_XLM * (xlmPrice || 0.1)
+    type === 'call' ? MAX_DEPOSIT_XLM : MAX_DEPOSIT_XLM * (spot || 0.1)
   const usdValue =
-    type === 'call' ? amount * (xlmPrice || 0) : amount
+    type === 'call' ? amount * (spot || 0) : amount
 
   const handleEarn = async () => {
     setError(null); setSuccess(null)
@@ -508,7 +513,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
       setExpiries((prev) =>
         prev.map((e, i) => {
           if (i !== selectedExpiryIdx) return e
-          const depositedUsd = type === 'call' ? amount * xlmPrice : amount
+          const depositedUsd = type === 'call' ? amount * spot : amount
           const newDeposited = e.totalDeposited + depositedUsd
           return {
             ...e,
@@ -597,7 +602,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
 
         <div className="hidden sm:flex items-center gap-1.5 px-4 border-l border-line-light">
           <span className="num text-ink font-semibold">
-            {xlmPrice ? formatUsdc(xlmPrice) : '—'}
+            {spot ? formatUsdc(spot) : '—'}
           </span>
           <span className={`num text-micro flex items-center gap-0.5 ${pricePositive ? 'text-accent-green' : 'text-accent-red'}`}>
             {pricePositive ? <TrendingUp size={10} /> : <TrendingDown size={10} />}

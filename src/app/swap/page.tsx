@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react'
 import { ArrowDown, Loader2, Settings2, Info } from 'lucide-react'
 import { useWalletContext } from '@/providers/WalletProvider'
-import { useXlmPrice } from '@/hooks/useXlmPrice'
+import { useXlmPrice } from '@/hooks/useSpotPrice'
 import {
   buildTrustlineTx,
   hasLusdTrustline,

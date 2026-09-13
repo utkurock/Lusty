@@ -1,5 +1,6 @@
 'use client'
 import { useCallback, useEffect, useState } from 'react'
+import type { UnderlyingSymbol } from '@/lib/assets'
 
 interface PriceData {
   price: number
@@ -17,7 +18,16 @@ interface PriceData {
 // is as live as this app needs to be.
 const POLL_MS = 10_000
 
-export function useXlmPrice(): PriceData {
+/**
+ * Spot for one underlying, polled.
+ *
+ * Takes the symbol because the screens that use it are no longer all about the
+ * same asset. The USD figures on an earn screen — the value of a deposit, the
+ * cap it counts against — are this number multiplied by an amount, so a hook
+ * that always answered XLM would not make a BTC screen slightly wrong, it would
+ * make every dollar figure on it wrong by a factor of four hundred thousand.
+ */
+export function useSpotPrice(symbol: UnderlyingSymbol): PriceData {
   const [data, setData] = useState<PriceData>({
     price: 0,
     change24h: 0,
@@ -28,7 +38,7 @@ export function useXlmPrice(): PriceData {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch('/api/price/xlm', { cache: 'no-store' })
+      const res = await fetch(`/api/price/${symbol.toLowerCase()}`, { cache: 'no-store' })
       const json = await res.json().catch(() => null)
       if (!res.ok || !json?.ok || typeof json.price !== 'number') {
         throw new Error(json?.error ?? `price unavailable (${res.status})`)
@@ -45,14 +55,14 @@ export function useXlmPrice(): PriceData {
     } catch (e: any) {
       // Keep the last good price on screen and say the feed is stale. The old
       // hook seeded 0.10 and left it there when Binance was unreachable, which
-      // put a number nobody stood behind next to the word "XLM / USD".
+      // put a number nobody stood behind next to a currency label.
       setData((prev) => ({
         ...prev,
         loading: false,
         error: e?.message ?? 'price unavailable',
       }))
     }
-  }, [])
+  }, [symbol])
 
   useEffect(() => {
     load()
@@ -68,4 +78,9 @@ export function useXlmPrice(): PriceData {
   }, [load])
 
   return data
+}
+
+/** XLM spot, for the screens that are about XLM whatever else is listed. */
+export function useXlmPrice(): PriceData {
+  return useSpotPrice('XLM')
 }
