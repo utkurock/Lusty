@@ -10,6 +10,7 @@ import { MIN_DAYS_TO_EXPIRY } from '@/lib/expiries'
 import { assertQuoteAllowed, PolicyRejection } from '@/lib/quote-policy'
 import { getBreakerState } from '@/lib/circuit-breaker'
 import { requestedUnderlying } from '@/lib/assets'
+import { hasTrustline } from '@/lib/swap'
 import {
   NETWORK_PASSPHRASE,
   expectedOpenInvocation,
@@ -139,6 +140,27 @@ export async function POST(req: Request) {
     }
     if (typeof body.premium !== 'number' || !isFinite(body.premium) || body.premium < 0) {
       return NextResponse.json({ error: 'invalid premium' }, { status: 400 })
+    }
+
+    // The writer has to be able to receive the underlying before the protocol
+    // co-signs a position that will one day pay it to them: a call's escrow
+    // returns to this account when it expires out of the money, and an assigned
+    // put delivers the asset it just bought. Both are paid by `settle`, so a
+    // missing trustline does not fail here — it fails weeks from now, on the
+    // one call that releases collateral, for a position that is already open.
+    //
+    // Only for an issued underlying, and only ever one Horizon read: native
+    // XLM is nobody's trustline, so the XLM book pays nothing for this check.
+    if (asset.stellarAsset.kind === 'issued') {
+      if (!(await hasTrustline(body.address, asset.stellarAsset))) {
+        return NextResponse.json(
+          {
+            error: `Your account has no ${asset.stellarAsset.code} trustline — open one before writing ${asset.symbol}.`,
+            code: 'trustline_required',
+          },
+          { status: 400 },
+        )
+      }
     }
 
     const expiryMs = new Date(body.expiryIso).getTime()

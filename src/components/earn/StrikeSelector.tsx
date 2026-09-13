@@ -18,7 +18,7 @@ import { useVaultStats } from '@/hooks/useVaultStats'
 import { getExpiryOptions, ExpiryOption } from '@/lib/expiries'
 import { StablePicker, Stable } from '@/components/shared/StablePicker'
 import { savePosition } from '@/lib/positions'
-import { buildTrustlineTx, hasLusdTrustline } from '@/lib/swap'
+import { buildTrustlineTx, hasTrustline, trustlinesRequired } from '@/lib/swap'
 import { openPosition, coveredUnits } from '@/lib/vault-contract'
 import { activeQuoter, cosignWithQuoter } from '@/lib/quoter'
 import { fetchLadder, fetchStrikeQuote, type QuotedRung } from '@/lib/quote-client'
@@ -364,11 +364,22 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
         return
       }
 
-      // 1. Ensure LUSD trustline so the user can receive the premium.
-      const hasTrust = await hasLusdTrustline(address)
-      if (!hasTrust) {
-        setSuccess('Opening LUSD trustline — confirm in wallet')
-        const trustXdr = await buildTrustlineTx(address)
+      // 1. Ensure every trustline this position will need to pay out, before
+      //    any collateral moves.
+      //
+      //    Cash, for the premium — that one has always been here. And the
+      //    underlying, when it is an issued asset: a call's escrow comes back
+      //    to this account when it expires out of the money, and an assigned
+      //    put delivers it. Both are paid by the settlement call, which is not
+      //    a place to discover a missing trustline: the position is already
+      //    open by then and the account that cannot be paid is the one holding
+      //    the collateral. XLM asks for nothing here, which is why this only
+      //    ever needed to be one asset before.
+      for (const needed of trustlinesRequired(asset)) {
+        if (await hasTrustline(address, needed)) continue
+        const code = needed.kind === 'issued' ? needed.code : 'XLM'
+        setSuccess(`Opening ${code} trustline — confirm in wallet`)
+        const trustXdr = await buildTrustlineTx(address, needed)
         const signedTrust = await signTransaction(trustXdr)
         const trustTx = TransactionBuilder.fromXDR(signedTrust, Networks.TESTNET)
         const trustRes = await fetch('https://horizon-testnet.stellar.org/transactions', {
@@ -380,7 +391,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
           const body = await trustRes.json().catch(() => ({}))
           throw new Error(
             body?.extras?.result_codes?.operations?.[0] ??
-              'Trustline submission failed'
+              `${code} trustline submission failed`
           )
         }
       }

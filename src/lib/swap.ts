@@ -21,6 +21,43 @@ const horizon = new Horizon.Server(HORIZON_URL)
 // imports of these from './swap' keep working.
 import { LUSD_CODE, LUSD_ISSUER, LUSD_DISTRIBUTOR } from './lusd'
 export { LUSD_CODE, LUSD_ISSUER, LUSD_DISTRIBUTOR }
+import type { StellarAsset, UnderlyingAsset } from './assets'
+
+/** LUSD as the registry spells an issued asset, so one shape covers both legs. */
+const LUSD_TRUSTLINE: StellarAsset = {
+  kind: 'issued',
+  code: LUSD_CODE,
+  issuer: LUSD_ISSUER,
+}
+
+/**
+ * Every classic asset a position on this underlying can deliver to the writer.
+ *
+ * A trustline is permission to be paid, and both legs pay in two directions:
+ * the premium always arrives in cash, and the underlying arrives when a call
+ * expires out of the money and its escrow comes back, or when a put is
+ * assigned and the vault buys. Miss one and the failure lands at settlement —
+ * the contract call that pays the writer fails, and the position that could not
+ * be paid is the one already holding their collateral.
+ *
+ * Native XLM is nobody's trustline, so an XLM book asks for nothing extra: this
+ * is the whole reason it never came up before BTC.
+ */
+export function trustlinesRequired(asset: UnderlyingAsset): StellarAsset[] {
+  const needed = [LUSD_TRUSTLINE]
+  // Only what can actually be trusted. A half-configured entry — issued, no
+  // issuer — is gated by the registry long before this, and returning it here
+  // would hand the wallet a changeTrust to nothing.
+  if (classicAsset(asset.stellarAsset)) needed.push(asset.stellarAsset)
+  return needed
+}
+
+/** The classic asset a registry entry names, or null when it is native XLM. */
+export function classicAsset(a: StellarAsset): Asset | null {
+  if (a.kind === 'native') return null
+  if (!a.issuer) return null
+  return new Asset(a.code, a.issuer)
+}
 
 export type AssetCode = 'XLM' | 'LUSD'
 
@@ -30,33 +67,48 @@ export function assetOf(code: AssetCode): Asset {
 }
 
 /**
- * Build a changeTrust tx so the user can hold LUSD. Must be signed and
- * submitted by the user's own wallet.
+ * Build a changeTrust tx so the user can hold an asset. Must be signed and
+ * submitted by the user's own wallet. Defaults to LUSD, which is what every
+ * caller wanted while cash was the only issued asset in the protocol.
  */
-export async function buildTrustlineTx(userAddress: string): Promise<string> {
+export async function buildTrustlineTx(
+  userAddress: string,
+  asset: StellarAsset = LUSD_TRUSTLINE,
+): Promise<string> {
+  const classic = classicAsset(asset)
+  if (!classic) throw new Error('this asset cannot be trusted: it is native, or has no issuer')
   const account = await horizon.loadAccount(userAddress)
   const tx = new TransactionBuilder(account, {
     fee: BASE_FEE,
     networkPassphrase: NETWORK_PASSPHRASE,
   })
-    .addOperation(
-      Operation.changeTrust({ asset: new Asset(LUSD_CODE, LUSD_ISSUER) })
-    )
+    .addOperation(Operation.changeTrust({ asset: classic }))
     .setTimeout(60)
     .build()
   return tx.toXDR()
 }
 
-/** Check whether `userAddress` already has a LUSD trustline. */
-export async function hasLusdTrustline(userAddress: string): Promise<boolean> {
+/** Check whether `userAddress` can hold `asset`. Native is always holdable. */
+export async function hasTrustline(
+  userAddress: string,
+  asset: StellarAsset,
+): Promise<boolean> {
+  const classic = classicAsset(asset)
+  if (!classic) return true
   try {
     const acc = await horizon.loadAccount(userAddress)
     return acc.balances.some(
-      (b: any) => b.asset_code === LUSD_CODE && b.asset_issuer === LUSD_ISSUER
+      (b: any) =>
+        b.asset_code === classic.getCode() && b.asset_issuer === classic.getIssuer()
     )
   } catch {
     return false
   }
+}
+
+/** Check whether `userAddress` already has a LUSD trustline. */
+export async function hasLusdTrustline(userAddress: string): Promise<boolean> {
+  return hasTrustline(userAddress, LUSD_TRUSTLINE)
 }
 
 export interface SwapQuote {
