@@ -201,14 +201,37 @@ rather than at deploy:
   assignments; `fund_underlying` covers the asset a put assignment delivers. A
   put cannot be opened against an empty underlying pool — the contract refuses
   rather than promise a delivery it cannot make.
-- **Give the treasury a trustline for the cash token.** An assigned put sends
-  its cash collateral to the treasury, and a classic asset cannot be received
-  without a trustline. Miss this and puts open normally but revert at
-  settlement, from inside the token contract rather than the vault. Calls do
-  not hit it, since assigned calls route native XLM.
+- **Give the treasury a trustline for every asset it can be sent.** An assigned
+  put sends its cash collateral to the treasury, and an assigned call sends the
+  underlying — and a classic asset cannot be received without a trustline. Miss
+  either and positions open normally but revert at settlement, from inside the
+  token contract rather than the vault. On the XLM book only the cash side
+  applied, because assigned calls route native XLM; an issued underlying makes
+  the second one real.
 
 The application reads the deployed instance from `NEXT_PUBLIC_VAULT_CONTRACT`
 and co-signs with `VAULT_QUOTER_SECRET`.
+
+### A second book
+
+One underlying, one instance. `scripts/deploy-vault.mjs <SYMBOL>` deploys one:
+
+```sh
+node scripts/deploy-vault.mjs BTC --dry-run   # what it would construct
+node scripts/deploy-vault.mjs BTC             # deploy, then read it back
+node scripts/deploy-vault.mjs BTC --check     # what still has to be true
+```
+
+It does not rebuild or re-upload the wasm. It reads the hash the reference
+instance (`NEXT_PUBLIC_VAULT_CONTRACT`) is running and deploys *that*, so the
+two books provably run the same code rather than two binaries that ought to
+match. Oracle, treasury, admin and the quoter set are copied from the reference
+instance for the same reason: what differs between two books is then exactly
+what the registry says differs — the feed, the collateral, and the limits.
+
+The deployer is `lusty-runner`, not the admin: the admin account is behind a
+2-of-3 multisig and cannot source a single-signature transaction at all. It is
+a constructor argument here, not a signer.
 
 ### Verifying a deployment
 
@@ -243,6 +266,30 @@ enforced on chain.
 Limits at deploy: 10,000 per position on both legs; 500,000 per expiry on both
 legs; premium ceiling 2,000 bps (20% of collateral at spot). Pools seeded with
 20,000 LUSD and 100,000 XLM.
+
+### The BTC book (2026-09-13)
+
+Same code — deployed from wasm hash `ceb612f2…b35b`, the hash the XLM instance
+runs — with its own escrow, exposure, limits and solvency guard.
+
+| What | Address |
+| --- | --- |
+| **Vault v4, BTC** | `CBQEACXAOZMCU3YOUWDC3MWXDSQBWKNGKBA6XMRPY5D5JQRNP2HLMVEU` |
+| Feed asset | `Other("BTC")`, 14 decimals, 300 s resolution — same oracle |
+| Underlying — LBTC SAC | `CDLI2GIDMYZQHK2K3TIGV5O2HQQRT36C5MV3IQWO6LX22YFTF43X74LU` |
+| LBTC issuer (ours, a test asset) | `GB6274FEMTPWDEZ47P2YCXQ6JZCPRTHB5NMSFVPIUFB6MK5RXNBWZ2E2` |
+| Cash — LUSD SAC | same as the XLM book |
+| Treasury, admin, quoter set | same as the XLM book |
+
+Limits at deploy: 0.05 BTC per call position, 5 BTC per expiry; 1,500 LUSD per
+put position, 150,000 per expiry; premium ceiling 2,000 bps. Sized in BTC
+rather than ported from XLM — XLM's 10,000 would read as 10,000 BTC.
+
+No anchor issues wrapped BTC on testnet, so the underlying is LBTC, issued by
+`scripts/mint-lbtc.mjs` the way LUSD is: a test asset with no reserve, no
+redemption and no custody claim. It changes nothing about settlement, which
+prices off the Reflector BTC/USD feed rather than off the issuer. Mainnet
+replaces one configuration key.
 
 The v3 instance is retired but its pools are not recoverable: `fund` and
 `fund_underlying` are one-way, and collateral leaves only through `settle`. A
