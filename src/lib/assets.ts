@@ -224,6 +224,20 @@ export function underlyingByVault(contractId: unknown): UnderlyingAsset | null {
   return allUnderlyings().find((a) => a.contracts.vault === contractId) ?? null
 }
 
+/**
+ * Decimals worth showing for a symbol that may not be an underlying at all.
+ *
+ * Position records carry the collateral's ticker, and on the put leg that is
+ * cash rather than a book — so this answers for anything, and answers two for
+ * what it does not know, which is what every caller used to hardcode.
+ */
+export function displayDecimalsOf(symbol: string, fallback = 2): number {
+  const found = (REGISTRY as Record<string, UnderlyingAsset>)[
+    String(symbol).trim().toUpperCase()
+  ]
+  return found ? found.displayDecimals : fallback
+}
+
 /** Registry lookup by exact symbol. Throws — a bad symbol is a bug, not input. */
 export function underlying(symbol: UnderlyingSymbol): UnderlyingAsset {
   return REGISTRY[symbol]

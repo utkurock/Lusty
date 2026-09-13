@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useWalletContext } from '@/providers/WalletProvider'
-import { formatUsdc, formatXlm } from '@/lib/utils'
+import { formatUsdc, formatUnits, formatStrike } from '@/lib/utils'
 import {
   ExternalLink,
   Loader2,
@@ -16,6 +16,11 @@ import { Panel } from '@/components/shared/Panel'
 import { StatStrip } from '@/components/shared/StatStrip'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { PageHeader } from '@/components/shared/PageHeader'
+import {
+  enabledUnderlyings,
+  displayDecimalsOf,
+  type UnderlyingSymbol,
+} from '@/lib/assets'
 import { withinOracleWindow } from '@/lib/oracle-window'
 
 // Mirrors DbPosition from the /api/vault/positions response. Positions are read
@@ -43,7 +48,8 @@ interface Position {
    */
   outcome?: 'open' | 'kept' | 'assigned'
   /** What settlement actually paid, in the token it paid in. */
-  payout?: { amount: number; asset: 'XLM' | 'LUSD' } | null
+  /** What settlement paid, in whichever asset paid it — cash, or the book's own. */
+  payout?: { amount: number; asset: string } | null
   /**
    * Where the APR came from: measured at open, or reconstructed afterwards
    * from the day's close. Shown so a derived figure is never mistaken for the
@@ -139,7 +145,13 @@ function signed(n: number, digits = 2): string {
  * reader who assumes these are the option's Greeks reads every number
  * backwards, and that is a worse failure than showing nothing.
  */
-function RiskPanel({ portfolio }: { portfolio: Portfolio }) {
+function RiskPanel({
+  portfolio,
+  symbol,
+}: {
+  portfolio: Portfolio
+  symbol: string
+}) {
   const g = portfolio.greeks
 
   // Absent Greeks are not zero risk, and must never render as zero. Say which
@@ -163,8 +175,8 @@ function RiskPanel({ portfolio }: { portfolio: Portfolio }) {
               {
                 label: 'Net delta',
                 value: signed(g.netDelta),
-                unit: 'XLM',
-                sub: `${g.netDelta < 0 ? 'short' : 'long'} the underlying · the same directional exposure as holding ${signed(g.netDelta, 0)} XLM`,
+                unit: symbol,
+                sub: `${g.netDelta < 0 ? 'short' : 'long'} the underlying · the same directional exposure as holding ${signed(g.netDelta, 0)} ${symbol}`,
               },
               {
                 label: 'Net vega',
@@ -311,8 +323,9 @@ function ExposurePanel({ portfolio }: { portfolio: Portfolio }) {
 }
 
 /** Token-tagged, because which token arrived is the point of the whole line. */
-function payoutAmount(payout: { amount: number; asset: 'XLM' | 'LUSD' }): string {
-  const digits = payout.asset === 'XLM' ? 2 : 4
+function payoutAmount(payout: { amount: number; asset: string }): string {
+  // Cash pays to four places; an underlying to whatever its own book shows.
+  const digits = payout.asset === 'LUSD' ? 4 : displayDecimalsOf(payout.asset)
   return `${payout.amount.toLocaleString('en-US', {
     minimumFractionDigits: 2,
     maximumFractionDigits: digits,
@@ -424,7 +437,7 @@ function PositionRow({ p }: { p: Position }) {
               {p.asset} {isCall ? 'Covered Call' : 'Cash-Secured Put'}
             </div>
             <div className="font-mono text-tiny text-ink-2">
-              strike ${(p.strikePrice ?? 0).toFixed(4)} · {p.expiryLabel}
+              strike ${formatStrike(p.strikePrice ?? 0)} · {p.expiryLabel}
             </div>
           </div>
         </div>
@@ -435,7 +448,11 @@ function PositionRow({ p }: { p: Position }) {
           </div>
           <div className="num text-body text-ink font-semibold mt-0.5">
             {isCall
-              ? formatXlm(p.collateralAmount)
+              ? formatUnits(
+                  p.collateralAmount,
+                  p.asset,
+                  displayDecimalsOf(p.asset),
+                )
               : formatUsdc(p.collateralAmount)}
           </div>
         </div>
@@ -544,6 +561,12 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(false)
   const [toast, setToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
   const [showArchive, setShowArchive] = useState(false)
+  // Which book is being read. Positions, risk and every figure derived from
+  // them belong to one instance — a position id is only unique within one, and
+  // a net delta measured in XLM cannot have BTC added to it. So the screen
+  // shows one book at a time rather than a total that means nothing.
+  const books = enabledUnderlyings()
+  const [book, setBook] = useState<UnderlyingSymbol>('XLM')
 
   const refresh = async () => {
     if (!address) {
@@ -557,8 +580,8 @@ export default function DashboardPage() {
     // is the more fragile of the two. If it fails the position list still
     // renders, which is the part the user needs to act on.
     const [list, risk] = await Promise.allSettled([
-      fetch(`/api/vault/positions?address=${q}`).then((r) => r.json()),
-      fetch(`/api/vault/portfolio?address=${q}`).then((r) => r.json()),
+      fetch(`/api/vault/positions?address=${q}&asset=${book}`).then((r) => r.json()),
+      fetch(`/api/vault/portfolio?address=${q}&asset=${book}`).then((r) => r.json()),
     ])
     if (list.status === 'fulfilled' && list.value?.ok) {
       setPositions(list.value.positions as Position[])
@@ -572,7 +595,7 @@ export default function DashboardPage() {
   useEffect(() => {
     refresh()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [address])
+  }, [address, book])
 
   // What is still live, and what is only history. Both are this wallet's
   // record; only one of them is a thing to watch.
@@ -604,6 +627,29 @@ export default function DashboardPage() {
           </Link>
         }
       />
+
+      {/* Only worth showing once there is more than one book to switch between:
+          a single-tab strip is a control that does nothing. */}
+      {books.length > 1 && (
+        <div role="tablist" className="inline-flex gap-1 p-1 rounded-sm bg-surface-2 mb-4">
+          {books.map((b) => (
+            <button
+              key={b.symbol}
+              role="tab"
+              aria-selected={book === b.symbol}
+              onClick={() => setBook(b.symbol)}
+              className={
+                'press press-sm font-mono text-caption px-3 py-1.5 rounded-inner ' +
+                (book === b.symbol
+                  ? 'bg-brand text-ink shadow-button'
+                  : 'text-ink-2 hover:text-ink')
+              }
+            >
+              {b.symbol}
+            </button>
+          ))}
+        </div>
+      )}
 
       {toast && (
         <div
@@ -766,7 +812,7 @@ export default function DashboardPage() {
           )}
 
           {connected && portfolio && positions.length > 0 && (
-            <RiskPanel portfolio={portfolio} />
+            <RiskPanel portfolio={portfolio} symbol={book} />
           )}
 
           <Panel title="Earn more">

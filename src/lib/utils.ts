@@ -69,6 +69,20 @@ export function formatXlm(amount: number): string {
   return formatUnits(amount, 'XLM', 2)
 }
 
+/**
+ * A strike, at a precision the price justifies.
+ *
+ * Four decimals is right for an asset that trades under a dollar and absurd for
+ * one in the tens of thousands, where it pads every strike on screen with two
+ * zeros that mean nothing.
+ */
+export function formatStrike(price: number): string {
+  return price.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: price >= 100 ? 2 : 4,
+  })
+}
+
 export function formatAPR(apr: number): string {
   return `${apr.toFixed(2)}%`
 }

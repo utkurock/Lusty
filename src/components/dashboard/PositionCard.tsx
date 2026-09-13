@@ -1,6 +1,7 @@
 'use client'
 import { ClaimButton } from './ClaimButton'
-import { formatUsdc, formatXlm, formatExpiry } from '@/lib/utils'
+import { formatUsdc, formatUnits, formatStrike, formatExpiry } from '@/lib/utils'
+import { displayDecimalsOf } from '@/lib/assets'
 
 interface PositionCardProps {
   asset: string
@@ -45,12 +46,14 @@ export function PositionCard({
       <div className="grid grid-cols-3 gap-4 pt-4 border-t border-line">
         <div>
           <div className="label">Strike</div>
-          <div className="num font-bold text-ink">${strike.toFixed(4)}</div>
+          <div className="num font-bold text-ink">${formatStrike(strike)}</div>
         </div>
         <div>
           <div className="label">Deposited</div>
           <div className="num font-bold text-ink">
-            {amountSymbol === 'USDC' ? formatUsdc(amount) : formatXlm(amount)}
+            {amountSymbol === 'USDC'
+              ? formatUsdc(amount)
+              : formatUnits(amount, amountSymbol, displayDecimalsOf(amountSymbol))}
           </div>
         </div>
         <div>
