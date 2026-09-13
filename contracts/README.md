@@ -237,15 +237,23 @@ a constructor argument here, not a signer.
 
 The Stellar CLI cannot open a position: `open` needs authorization from the
 writer and the quoter, and only one of them is the transaction source, so the
-quoter's entry has to be signed on its own. `scripts/verify-vault.mjs` does
+quoter's entry has to be signed on its own. `scripts/verify-lifecycle.mjs` does
 that round trip locally — the same one `/api/vault/authorize` performs in
-production — and exercises both legs on both sides of the strike:
+production — and exercises both legs on both sides of the strike, for whichever
+book it is pointed at:
 
 ```sh
-node scripts/verify-vault.mjs open           # writes 4 positions, prints ids
-node scripts/verify-vault.mjs settle 0 1 2 3 # after expiry
-node scripts/verify-vault.mjs stats          # pools, escrow, exposure, solvency
+node scripts/verify-lifecycle.mjs BTC fund 5000 0.5  # both pools, one-way
+node scripts/verify-lifecycle.mjs BTC open           # 4 positions, prints ids
+node scripts/verify-lifecycle.mjs BTC settle 2 3 4 5 # after expiry
+node scripts/verify-lifecycle.mjs BTC stats          # pools, escrow, solvency
 ```
+
+Strikes are placed around the price the oracle is publishing when `open` runs,
+not around a number written into the script: one of each pair assigns and the
+other is kept, so a single run exercises both settlement branches on both legs.
+A fresh instance has to be funded first — the contract refuses to write against
+an empty pool rather than promise a premium or a delivery it cannot make.
 
 ## Testnet deployment
 
