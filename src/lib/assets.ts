@@ -81,7 +81,11 @@ function contractId(raw: string | undefined): string {
 }
 
 // The anchor that issues the wrapped BTC the vault accepts as collateral.
-// Unset on testnet until an anchor is chosen; see docs/ARCHITECTURE.md.
+// On testnet that is LBTC, issued by this repo (scripts/mint-lbtc.mjs) for the
+// same reason LUSD is: nobody anchors wrapped BTC to a network whose BTC has no
+// reserve behind it. Settlement is unaffected — the price comes from the
+// Reflector BTC/USD feed, never from the issuer. Mainnet replaces this key with
+// a real anchor's, and nothing else changes.
 const BTC_ISSUER = process.env.NEXT_PUBLIC_BTC_ANCHOR_ISSUER || null
 const BTC_CODE = process.env.NEXT_PUBLIC_BTC_ANCHOR_CODE || 'BTC'
 
