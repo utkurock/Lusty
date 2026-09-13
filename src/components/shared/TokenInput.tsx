@@ -12,6 +12,8 @@ interface TokenInputProps {
   max?: number
   usdValue?: number
   symbolSlot?: ReactNode
+  /** How many decimals this asset is worth showing. Two reads 0.001 as zero. */
+  decimals?: number
 }
 
 export function TokenInput({
@@ -25,6 +27,7 @@ export function TokenInput({
   max,
   usdValue,
   symbolSlot,
+  decimals = 2,
 }: TokenInputProps) {
   const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
     let v = e.target.value.replace(/[^0-9.]/g, '')
@@ -91,9 +94,9 @@ export function TokenInput({
         <span>
           {min !== undefined && max !== undefined && (
             <>
-              min <span className="text-ink">{min.toLocaleString()}</span>
+              min <span className="text-ink">{min.toLocaleString(undefined, { maximumFractionDigits: decimals })}</span>
               {' · '}
-              max <span className="text-ink">{max.toLocaleString()}</span> {symbol}
+              max <span className="text-ink">{max.toLocaleString(undefined, { maximumFractionDigits: decimals })}</span> {symbol}
             </>
           )}
         </span>
@@ -107,8 +110,8 @@ export function TokenInput({
       {(belowMin || aboveMax) && (
         <div className="mt-1 font-mono text-micro text-accent-red">
           {belowMin
-            ? `minimum deposit is ${min!.toLocaleString()} ${symbol}`
-            : `maximum deposit is ${max!.toLocaleString()} ${symbol}`}
+            ? `minimum deposit is ${min!.toLocaleString(undefined, { maximumFractionDigits: decimals })} ${symbol}`
+            : `maximum deposit is ${max!.toLocaleString(undefined, { maximumFractionDigits: decimals })} ${symbol}`}
         </div>
       )}
     </div>

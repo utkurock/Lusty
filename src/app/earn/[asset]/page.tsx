@@ -20,8 +20,8 @@ export default function EarnAssetPage() {
         title={type === 'call' ? `Sell ${asset} calls` : `Sell ${asset} puts`}
         subtitle={
           type === 'call'
-            ? 'Deposit XLM, name the price you would sell at, and take the upfront now.'
-            : 'Deposit cash, name the price you would buy at, and take the upfront now.'
+            ? `Deposit ${asset}, name the price you would sell at, and take the upfront now.`
+            : `Deposit cash, name the price you would buy ${asset} at, and take the upfront now.`
         }
         action={
           <Link href="/earn" className="btn btn-ghost press">

@@ -65,6 +65,19 @@ export interface UnderlyingAsset {
   displayDecimals: number
   /** Smallest position the vault will write, in units of the underlying. */
   minSize: number
+  /**
+   * Largest single position, in units of the underlying, and the per-wallet
+   * allowance for one expiry. Both mirror limits enforced elsewhere — the
+   * first by the contract, the second by the quoter declining to sign — and
+   * exist here so the screen can refuse before a wallet is opened rather than
+   * after. Two records of one rule; keeping them equal is a job, not an
+   * assumption.
+   */
+  maxSize: number
+  userEpochCall: number
+  /** The put leg's equivalents, in cash rather than in the underlying. */
+  maxSizeCash: number
+  userEpochPutUsd: number
   /** Covered-call capacity per month, in units of the underlying. */
   callMonthlyCap: number
   /** Cash-secured-put capacity per month, in USD. */
@@ -135,6 +148,10 @@ const REGISTRY: Record<UnderlyingSymbol, UnderlyingAsset> = {
     unitDecimals: 7,
     displayDecimals: 2,
     minSize: num(process.env.VAULT_MIN_SIZE_XLM, 100),
+    maxSize: num(process.env.VAULT_MAX_SIZE_XLM, 10_000),
+    userEpochCall: num(process.env.MAX_USER_EPOCH_CALL_XLM, 10_000),
+    maxSizeCash: num(process.env.VAULT_MAX_SIZE_CASH_XLM, 10_000),
+    userEpochPutUsd: num(process.env.MAX_USER_EPOCH_PUT_USD, 10_000),
     callMonthlyCap: num(process.env.VAULT_CALL_MONTHLY_CAP_XLM, 1_500_000),
     putMonthlyCapUsd: num(process.env.VAULT_PUT_MONTHLY_CAP_USD, 150_000),
   }),
@@ -156,6 +173,12 @@ const REGISTRY: Record<UnderlyingSymbol, UnderlyingAsset> = {
     unitDecimals: 7,
     displayDecimals: 6,
     minSize: num(process.env.VAULT_MIN_SIZE_BTC, 0.001),
+    // The deployed instance's own limits: 0.05 BTC a call position, 1,500 cash
+    // a put position. XLM's 10,000 would read as 10,000 BTC.
+    maxSize: num(process.env.VAULT_MAX_SIZE_BTC, 0.05),
+    userEpochCall: num(process.env.MAX_USER_EPOCH_CALL_BTC, 0.05),
+    maxSizeCash: num(process.env.VAULT_MAX_SIZE_CASH_BTC, 1_500),
+    userEpochPutUsd: num(process.env.MAX_USER_EPOCH_PUT_USD_BTC, 1_500),
     // BTC keeps its own books: its capacity is not a share of XLM's, and
     // filling one leaves the other untouched.
     callMonthlyCap: num(process.env.VAULT_CALL_MONTHLY_CAP_BTC, 5),

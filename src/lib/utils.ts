@@ -50,8 +50,23 @@ export function formatUsdc(amount: number): string {
   }).format(amount)
 }
 
+/**
+ * An amount in an asset's own units.
+ *
+ * The decimals are a parameter because two decimal places is not a formatting
+ * preference, it is a claim about the asset: it reads 0.001 BTC as zero, and a
+ * minimum written as "0 BTC" is not a minimum anybody can meet.
+ */
+export function formatUnits(
+  amount: number,
+  symbol: string,
+  decimals = 2,
+): string {
+  return `${amount.toLocaleString('en-US', { maximumFractionDigits: decimals })} ${symbol}`
+}
+
 export function formatXlm(amount: number): string {
-  return `${amount.toLocaleString('en-US', { maximumFractionDigits: 2 })} XLM`
+  return formatUnits(amount, 'XLM', 2)
 }
 
 export function formatAPR(apr: number): string {

@@ -5,14 +5,7 @@ import { TokenInput } from '@/components/shared/TokenInput'
 import { PositionSummary } from './PositionSummary'
 import { EarnButton } from './EarnButton'
 import { useWalletContext } from '@/providers/WalletProvider'
-import {
-  MIN_DEPOSIT_XLM,
-  MAX_DEPOSIT_XLM,
-  MAX_USER_EPOCH_CALL_XLM,
-  MAX_USER_EPOCH_PUT_USD,
-  formatExpiry,
-  formatUsdc,
-} from '@/lib/utils'
+import { formatExpiry, formatUsdc } from '@/lib/utils'
 import { useSpotPrice } from '@/hooks/useSpotPrice'
 import { useVaultStats } from '@/hooks/useVaultStats'
 import { getExpiryOptions, ExpiryOption } from '@/lib/expiries'
@@ -273,7 +266,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
   }, [walletDeposits, expiry, type])
 
   const walletAllowance =
-    type === 'call' ? MAX_USER_EPOCH_CALL_XLM : MAX_USER_EPOCH_PUT_USD
+    type === 'call' ? (asset?.userEpochCall ?? 0) : (asset?.userEpochPutUsd ?? 0)
   const remainingAllowance = Math.max(0, walletAllowance - usedThisExpiry)
   const allowanceUnit = type === 'call' ? assetSymbol : 'USD'
   // Epsilon so a floating-point collateral sum doesn't false-trip exactly at
@@ -293,12 +286,24 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
     return c > 0 ? Math.min(1, u / c) : 0
   }, [type, selectedBucket])
 
-  const minAmount =
-    type === 'call' ? MIN_DEPOSIT_XLM : MIN_DEPOSIT_XLM * (spot || 0.1)
+  // Sizes are the asset's own. A put's floor is still the underlying's minimum
+  // read in cash, because what a put escrows is what it would pay for that much
+  // of the asset.
+  const minSize = asset?.minSize ?? 0
+  const decimals = asset?.displayDecimals ?? 2
+  const minAmount = type === 'call' ? minSize : minSize * (spot || 0.1)
   const maxAmount =
-    type === 'call' ? MAX_DEPOSIT_XLM : MAX_DEPOSIT_XLM * (spot || 0.1)
+    type === 'call' ? (asset?.maxSize ?? 0) : (asset?.maxSizeCash ?? 0)
   const usdValue =
     type === 'call' ? amount * (spot || 0) : amount
+
+  // Allowances are written in whole units on the XLM book, where they are in
+  // the thousands. On the BTC book the whole allowance is 0.05, and rounding it
+  // to zero decimals reports it as nothing at all.
+  const fmtAllowance = (n: number) =>
+    n.toLocaleString(undefined, {
+      maximumFractionDigits: type === 'call' ? decimals : 0,
+    })
 
   const handleEarn = async () => {
     setError(null); setSuccess(null)
@@ -331,18 +336,18 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
     }
     if (amount <= 0) { setError('Enter an amount'); return }
     if (amount < minAmount) {
-      setError(`Minimum deposit is ${minAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${type === 'call' ? assetSymbol : stable}`)
+      setError(`Minimum deposit is ${minAmount.toLocaleString(undefined, { maximumFractionDigits: type === 'call' ? decimals : 2 })} ${type === 'call' ? assetSymbol : stable}`)
       return
     }
     if (amount > maxAmount) {
-      setError(`Maximum deposit is ${maxAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${type === 'call' ? assetSymbol : stable}`)
+      setError(`Maximum deposit is ${maxAmount.toLocaleString(undefined, { maximumFractionDigits: type === 'call' ? decimals : 2 })} ${type === 'call' ? assetSymbol : stable}`)
       return
     }
     // Per-wallet per-expiry allowance — checked BEFORE sending collateral so we
     // never let the user lock funds in a deposit the server will 409.
     if (allowanceExceeded) {
       setError(
-        `You've used ${usedThisExpiry.toLocaleString(undefined, { maximumFractionDigits: 0 })} of ${walletAllowance.toLocaleString()} ${allowanceUnit} for this expiry — ${remainingAllowance.toLocaleString(undefined, { maximumFractionDigits: 0 })} ${allowanceUnit} left. Lower the amount or pick another expiry.`
+        `You've used ${fmtAllowance(usedThisExpiry)} of ${fmtAllowance(walletAllowance)} ${allowanceUnit} for this expiry — ${fmtAllowance(remainingAllowance)} ${allowanceUnit} left. Lower the amount or pick another expiry.`
       )
       return
     }
@@ -658,6 +663,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
         symbol={type === 'call' ? assetSymbol : stable}
         min={minAmount}
         max={maxAmount}
+        decimals={type === 'call' ? decimals : 2}
         usdValue={usdValue}
         symbolSlot={
           type === 'put' ? <StablePicker value={stable} onChange={setStable} /> : undefined
@@ -668,7 +674,9 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
         <PositionSummary
           premium={premium}
           apr={apr}
-          xlmAmount={type === 'call' ? amount : 0}
+          assetSymbol={assetSymbol}
+          decimals={decimals}
+          underlyingAmount={type === 'call' ? amount : 0}
           usdcAmount={type === 'put' ? amount : 0}
           strikePrice={selectedStrike.strike}
           expiryDate={expiry.date}
@@ -740,11 +748,11 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
           ) : (
             <>
               Wallet allowance for this expiry:{' '}
-              {usedThisExpiry.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              {fmtAllowance(usedThisExpiry)}
               {' / '}
-              {walletAllowance.toLocaleString()} {allowanceUnit} used ·{' '}
+              {fmtAllowance(walletAllowance)} {allowanceUnit} used ·{' '}
               <span className="text-ink font-semibold">
-                {remainingAllowance.toLocaleString(undefined, { maximumFractionDigits: 0 })} {allowanceUnit} left
+                {fmtAllowance(remainingAllowance)} {allowanceUnit} left
               </span>
               {allowanceExceeded && ' — lower the amount to stay within it.'}
             </>

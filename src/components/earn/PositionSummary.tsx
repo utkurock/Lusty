@@ -1,10 +1,14 @@
 import { ArrowDownRight, ArrowUpRight } from 'lucide-react'
-import { cn, formatUsdc, formatXlm, formatAPR, formatExpiry } from '@/lib/utils'
+import { cn, formatUsdc, formatUnits, formatAPR, formatExpiry } from '@/lib/utils'
 
 interface PositionSummaryProps {
   premium: number
   apr: number
-  xlmAmount: number
+  /** Collateral on the call leg, in the underlying's own units. */
+  underlyingAmount: number
+  /** What that underlying is called, and how many decimals it is worth. */
+  assetSymbol: string
+  decimals: number
   strikePrice: number
   expiryDate: Date
   type?: 'call' | 'put'
@@ -50,7 +54,10 @@ function Outcome({
       </span>
       <div className="min-w-0">
         <div className="font-mono text-tiny text-ink-2">
-          If {asset} {direction} ${strike.toFixed(4)}
+          If {asset} {direction} ${strike.toLocaleString('en-US', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: strike >= 100 ? 2 : 4,
+          })}
         </div>
         <div className="num font-semibold text-ink mt-1">{headline}</div>
         <div className="font-mono text-tiny text-ink-faint mt-0.5">{consequence}</div>
@@ -60,10 +67,12 @@ function Outcome({
 }
 
 export function PositionSummary({
-  premium, apr, xlmAmount, strikePrice, expiryDate, type = 'call', usdcAmount,
+  premium, apr, underlyingAmount, assetSymbol, decimals, strikePrice,
+  expiryDate, type = 'call', usdcAmount,
 }: PositionSummaryProps) {
-  const usdcIfCalled = xlmAmount * strikePrice
-  const xlmIfPut = (usdcAmount ?? 0) / Math.max(strikePrice, 1e-9)
+  const usdcIfCalled = underlyingAmount * strikePrice
+  const underlyingIfPut = (usdcAmount ?? 0) / Math.max(strikePrice, 1e-9)
+  const units = (n: number) => formatUnits(n, assetSymbol, decimals)
 
   return (
     <div className="light-card rounded-sm overflow-hidden">
@@ -84,35 +93,35 @@ export function PositionSummary({
           {type === 'call' ? (
             <>
               <Outcome
-                asset="XLM"
+                asset={assetSymbol}
                 direction="below"
                 strike={strikePrice}
-                headline={`Get ${formatXlm(xlmAmount)} back`}
-                consequence="not called — you keep the XLM"
+                headline={`Get ${units(underlyingAmount)} back`}
+                consequence={`not called — you keep the ${assetSymbol}`}
               />
               <Outcome
-                asset="XLM"
+                asset={assetSymbol}
                 direction="above"
                 strike={strikePrice}
                 headline={`Receive ${formatUsdc(usdcIfCalled)}`}
-                consequence="called — your XLM sells at the strike"
+                consequence={`called — your ${assetSymbol} sells at the strike`}
               />
             </>
           ) : (
             <>
               <Outcome
-                asset="XLM"
+                asset={assetSymbol}
                 direction="above"
                 strike={strikePrice}
                 headline={`Get ${formatUsdc(usdcAmount ?? 0)} back`}
                 consequence="not assigned — you keep the collateral"
               />
               <Outcome
-                asset="XLM"
+                asset={assetSymbol}
                 direction="below"
                 strike={strikePrice}
-                headline={`Receive ${formatXlm(xlmIfPut)}`}
-                consequence="assigned — you buy XLM at the strike"
+                headline={`Receive ${units(underlyingIfPut)}`}
+                consequence={`assigned — you buy ${assetSymbol} at the strike`}
               />
             </>
           )}

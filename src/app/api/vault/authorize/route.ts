@@ -77,8 +77,9 @@ const MAX_DAYS_TO_EXPIRY = 365
 // how much of it any one wallet or strike carries, and are enforced by
 // declining to sign rather than by holding anything.
 const MAX_USER_NOTIONAL_USD = Number(process.env.MAX_USER_NOTIONAL_USD ?? 50_000)
-const MAX_USER_EPOCH_CALL_XLM = Number(process.env.MAX_USER_EPOCH_CALL_XLM ?? 10_000)
-const MAX_USER_EPOCH_PUT_USD = Number(process.env.MAX_USER_EPOCH_PUT_USD ?? 10_000)
+// The per-expiry allowances are the asset's own — see lib/assets. A wallet
+// allowance of 10,000 means one thing against a 1.5M XLM book and something
+// unrecognisable against a 5 BTC one, where it exceeds the whole instance.
 const STRIKE_INVENTORY_LIMIT_USD = Number(process.env.STRIKE_INVENTORY_LIMIT_USD ?? 30_000)
 // Two deposits count against the same strike when their prices are within this
 // fraction of each other, so trivially-different strikes can't bypass the cap.
@@ -240,8 +241,8 @@ export async function POST(req: Request) {
         expiryIso,
         maxUserNotionalUsd: MAX_USER_NOTIONAL_USD,
         strikeInventoryLimitUsd: STRIKE_INVENTORY_LIMIT_USD,
-        maxUserEpochCallXlm: MAX_USER_EPOCH_CALL_XLM,
-        maxUserEpochPutUsd: MAX_USER_EPOCH_PUT_USD,
+        maxUserEpochCallXlm: asset.userEpochCall,
+        maxUserEpochPutUsd: asset.userEpochPutUsd,
       })
     } catch (policyErr) {
       if (policyErr instanceof PolicyRejection) {
