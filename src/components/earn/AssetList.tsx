@@ -1,19 +1,18 @@
 'use client'
-import { ReactNode, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { AssetRow } from './AssetRow'
+import { EpochCapProgress } from './EpochCapProgress'
 import { cn } from '@/lib/utils'
 import { useVaultStats } from '@/hooks/useVaultStats'
 import { upcomingExpiryDates } from '@/lib/expiries'
 import { fetchLadder } from '@/lib/quote-client'
+import { enabledUnderlyings, type UnderlyingAsset } from '@/lib/assets'
 
 export type Tab = 'calls' | 'puts'
 
 interface AssetListProps {
   tab: Tab
   onTabChange: (tab: Tab) => void
-  /** This side's remaining capacity. It lives inside the section because the
-      tab above chooses which side it describes. */
-  capacity?: ReactNode
 }
 
 // How long the headline range may keep a placeholder on screen. A healthy
@@ -26,82 +25,126 @@ interface AprRange {
   min: number
 }
 
-export function AssetList({ tab, onTabChange, capacity }: AssetListProps) {
-  const { stats } = useVaultStats()
+/**
+ * One listed book.
+ *
+ * A component per asset rather than a loop over values, because everything on
+ * the row is per-instance: its own quote engine call, its own vault stats, its
+ * own capacity. The list used to hold one asset's figures and render them under
+ * a hardcoded XLM label, which is a shape that cannot show two.
+ */
+function AssetBook({ asset, tab }: { asset: UnderlyingAsset; tab: Tab }) {
+  const { stats } = useVaultStats(30_000, asset.symbol)
+  const isCalls = tab === 'calls'
+  const side = isCalls ? 'call' : 'put'
 
-  // Real APR range from the quote engine (same engine that pays the premium),
-  // not hardcoded. APR rises with tenor and with proximity to spot, so the full
-  // offered range spans two corners:
-  //   MAX = longest expiry, nearest strike   (highest yield on offer)
-  //   MIN = shortest expiry, deepest OTM      (lowest/safest yield on offer)
-  const [callApr, setCallApr] = useState<AprRange | undefined>()
-  const [putApr, setPutApr] = useState<AprRange | undefined>()
-  // Whether the quote engine has answered for each side yet. Without this, an
-  // APR that is still on its way and one the engine could not produce render
-  // the same way, and the placeholder never resolves into anything.
-  //
-  // Per side, not one flag for both: the two sides are quoted independently and
-  // the screen only ever shows one of them, so making the visible tab wait on
-  // the hidden one is a placeholder held up by a request nobody is looking at.
-  const [answered, setAnswered] = useState({ call: false, put: false })
+  const [apr, setApr] = useState<AprRange | undefined>()
+  // Whether the quote engine has answered yet. Without it, an APR that is still
+  // on its way and one the engine could not produce render the same way, and
+  // the placeholder never resolves into anything.
+  const [answered, setAnswered] = useState(false)
 
   useEffect(() => {
     let cancelled = false
+    setApr(undefined)
+    setAnswered(false)
+
     // Quote by expiry, so the range advertised here is priced against the same
     // tenor AND the same pool utilization the earn screen and the co-signature
     // use. Asking by `days` alone quoted an empty pool, which overstated the
     // headline as the vault filled up.
+    //
+    // APR rises with tenor and with proximity to spot, so the full offered
+    // range spans two corners:
+    //   MAX = longest expiry, nearest strike   (highest yield on offer)
+    //   MIN = shortest expiry, deepest OTM     (lowest/safest yield on offer)
     const dates = upcomingExpiryDates()
     const shortExpiry = dates[0].toISOString()
     const longExpiry = dates[dates.length - 1].toISOString()
 
-    const ladder = async (side: 'call' | 'put', expiry: string): Promise<number[] | undefined> => {
+    const ladder = async (expiry: string): Promise<number[] | undefined> => {
       try {
         // The headline range is a summary, not the money path — it is worth
         // less than a placeholder that sits there. An upstream the engine
         // cannot reach takes about twelve seconds to give up, so waiting for
         // that is waiting to be told nothing.
         const signal = AbortSignal.timeout(QUOTE_DEADLINE_MS)
-        // XLM by name, not by default: this row is XLM's, and the headline it
-        // feeds should stop being right the moment the row becomes another
-        // asset's rather than keep quoting XLM under a new symbol.
-        const aprs = (await fetchLadder(side, expiry, 'XLM', signal)).strikes.map((s) => s.apr)
+        const aprs = (await fetchLadder(side, expiry, asset.symbol, signal)).strikes.map(
+          (s) => s.apr,
+        )
         return aprs.length > 0 ? aprs : undefined
       } catch {
         return undefined
       }
     }
-    const range = async (side: 'call' | 'put'): Promise<AprRange | undefined> => {
-      const [longL, shortL] = await Promise.all([ladder(side, longExpiry), ladder(side, shortExpiry)])
-      if (!longL || !shortL) return undefined
-      return { max: Math.max(...longL), min: Math.min(...shortL) }
-    }
 
-    range('call').then((r) => {
+    Promise.all([ladder(longExpiry), ladder(shortExpiry)]).then(([longL, shortL]) => {
       if (cancelled) return
-      setCallApr(r)
-      setAnswered((a) => ({ ...a, call: true }))
-    })
-    range('put').then((r) => {
-      if (cancelled) return
-      setPutApr(r)
-      setAnswered((a) => ({ ...a, put: true }))
+      setApr(longL && shortL ? { max: Math.max(...longL), min: Math.min(...shortL) } : undefined)
+      setAnswered(true)
     })
 
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [asset.symbol, side])
 
   // Only block the entry point when every open expiry is full.
-  const callsFull =
-    !!stats &&
-    stats.buckets.length > 0 &&
-    stats.buckets.every((b) => b.callFull)
-  const putsFull =
-    !!stats &&
-    stats.buckets.length > 0 &&
-    stats.buckets.every((b) => b.putFull)
+  const buckets = stats?.buckets ?? []
+  const full =
+    buckets.length > 0 && buckets.every((b) => (isCalls ? b.callFull : b.putFull))
+
+  const capacity = isCalls ? stats?.call : stats?.put
+  const segments = buckets.map((b) =>
+    isCalls
+      ? { label: b.label, utilized: b.callXlm, cap: b.callCapXlm, full: b.callFull }
+      : { label: b.label, utilized: b.putUsd, cap: b.putCapUsd, full: b.putFull },
+  )
+
+  return (
+    <div className="space-y-2">
+      <AssetRow
+        symbol={asset.symbol}
+        name={asset.name}
+        type={isCalls ? 'Covered Call' : 'Cash Secured Put'}
+        maxAPR={apr?.max}
+        minAPR={apr?.min}
+        quoted={answered}
+        href={`/earn/${asset.slug}${isCalls ? '' : '?type=put'}`}
+        disabled={full}
+        disabledReason="Vault full"
+      />
+
+      {/* Capacity belongs to the book, not to the page: two instances have two
+          independent caps, and one bar above a list of them describes neither. */}
+      {capacity && (
+        <EpochCapProgress
+          utilized={capacity.utilized}
+          cap={capacity.cap}
+          unit={isCalls ? asset.symbol : 'USD'}
+          decimals={isCalls ? asset.displayDecimals : 0}
+          segments={segments}
+        />
+      )}
+
+      {/* The engine answered and had nothing to offer. Say so once, under the
+          row, rather than leaving two columns of dashes to be read as zero
+          yield — and keep the row itself navigable, because the strike screen
+          reports the reason in full. */}
+      {answered && !apr && (
+        <div className="notice notice-quiet">
+          Live pricing is unavailable right now, so the offered range cannot be
+          shown. Open the asset to see what the quote engine reports.
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function AssetList({ tab, onTabChange }: AssetListProps) {
+  // Whatever the registry will actually quote. A declared-but-gated asset is
+  // not listed at all: a row that cannot be opened is worse than no row.
+  const books = enabledUnderlyings()
 
   return (
     <div>
@@ -135,9 +178,7 @@ export function AssetList({ tab, onTabChange, capacity }: AssetListProps) {
         </div>
       </div>
 
-      {capacity && <div className="mb-6">{capacity}</div>}
-
-      <div className="space-y-2">
+      <div className="space-y-6">
         <div className="hidden md:grid grid-cols-12 px-5 label">
           <div className="col-span-4">Asset</div>
           <div className="col-span-3">Type</div>
@@ -146,41 +187,13 @@ export function AssetList({ tab, onTabChange, capacity }: AssetListProps) {
           <div className="col-span-2 text-right">Action</div>
         </div>
 
-        {tab === 'calls' ? (
-          <AssetRow
-            symbol="XLM"
-            name="Stellar Lumens"
-            type="Covered Call"
-            maxAPR={callApr?.max}
-            minAPR={callApr?.min}
-            quoted={answered.call}
-            href="/earn/xlm"
-            disabled={callsFull}
-            disabledReason="Vault full"
-          />
-        ) : (
-          <AssetRow
-            symbol="XLM"
-            name="Stellar Lumens"
-            type="Cash Secured Put"
-            maxAPR={putApr?.max}
-            minAPR={putApr?.min}
-            quoted={answered.put}
-            href="/earn/xlm?type=put"
-            disabled={putsFull}
-            disabledReason="Vault full"
-          />
-        )}
+        {books.map((asset) => (
+          <AssetBook key={asset.symbol} asset={asset} tab={tab} />
+        ))}
 
-        {/* The engine answered and had nothing to offer. Say so once, under the
-            row, rather than leaving two columns of dashes to be read as zero
-            yield — and keep the row itself navigable, because the strike screen
-            reports the reason in full. */}
-        {(tab === 'calls' ? answered.call : answered.put) &&
-          !(tab === 'calls' ? callApr : putApr) && (
+        {books.length === 0 && (
           <div className="notice notice-quiet">
-            Live pricing is unavailable right now, so the offered range cannot be
-            shown. Open the asset to see what the quote engine reports.
+            No underlying is configured to quote right now.
           </div>
         )}
       </div>

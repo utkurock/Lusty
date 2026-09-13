@@ -1,28 +1,15 @@
 'use client'
 import { useState } from 'react'
 import { useXlmPrice } from '@/hooks/useSpotPrice'
-import { useVaultStats } from '@/hooks/useVaultStats'
-import { EpochCapProgress } from '@/components/earn/EpochCapProgress'
 import { AssetList, type Tab } from '@/components/earn/AssetList'
 import { formatUsdc } from '@/lib/utils'
 import { TrendingUp, TrendingDown } from 'lucide-react'
 
 export default function EarnPage() {
   const { price, change24h, loading } = useXlmPrice()
-  const { stats: vaultStats } = useVaultStats(30_000)
   const [tab, setTab] = useState<Tab>('calls')
 
   const positive = change24h >= 0
-  // Each side has its own independent capacity; show the bar that matches the
-  // active tab (call → XLM cap, put → USD cap).
-  const isCalls = tab === 'calls'
-  const side = isCalls ? vaultStats?.call : vaultStats?.put
-  // Map each open expiry bucket to this side's numbers for the timeline.
-  const segments = (vaultStats?.buckets ?? []).map((b) =>
-    isCalls
-      ? { label: b.label, utilized: b.callXlm, cap: b.callCapXlm, full: b.callFull }
-      : { label: b.label, utilized: b.putUsd, cap: b.putCapUsd, full: b.putFull }
-  )
 
   return (
     <div className="page-glow max-w-content mx-auto px-6 py-10 space-y-8">
@@ -64,23 +51,11 @@ export default function EarnPage() {
         </div>
       </section>
 
-      {/* Capacity belongs under the tab that selects the side it measures, not
-          above it — and in the same section as the asset it gates. */}
+      {/* Capacity moved into the list, one bar per book: with two instances
+          there is no such thing as "the vault's" remaining capacity, and a
+          single bar above the list would describe whichever one it read. */}
       <section>
-        <AssetList
-          tab={tab}
-          onTabChange={setTab}
-          capacity={
-            side && vaultStats ? (
-              <EpochCapProgress
-                utilized={side.utilized}
-                cap={side.cap}
-                unit={isCalls ? 'XLM' : 'USD'}
-                segments={segments}
-              />
-            ) : undefined
-          }
-        />
+        <AssetList tab={tab} onTabChange={setTab} />
       </section>
     </div>
   )

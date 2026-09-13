@@ -8,7 +8,10 @@ interface EpochSegment {
 interface EpochCapProgressProps {
   utilized: number
   cap: number
-  unit?: 'XLM' | 'USD'
+  /** 'USD' renders as dollars; anything else is the asset's own ticker. */
+  unit?: string
+  /** Decimals the unit is worth. Whole numbers hide a 5 BTC cap's movement. */
+  decimals?: number
   segments: EpochSegment[]
 }
 
@@ -25,6 +28,7 @@ export function EpochCapProgress({
   utilized,
   cap,
   unit = 'XLM',
+  decimals = 0,
   segments,
 }: EpochCapProgressProps) {
   const rawPct = cap > 0 ? (utilized / cap) * 100 : 0
@@ -33,7 +37,7 @@ export function EpochCapProgress({
   const fmt = (n: number) =>
     unit === 'USD'
       ? `$${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
-      : `${n.toLocaleString(undefined, { maximumFractionDigits: 0 })} XLM`
+      : `${n.toLocaleString(undefined, { maximumFractionDigits: decimals })} ${unit}`
 
   return (
     <div className="w-full">
