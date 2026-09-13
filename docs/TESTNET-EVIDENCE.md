@@ -70,3 +70,97 @@ token contract, for a position already holding the writer's collateral.
 
 Both pools are one-way in: `fund` and `fund_underlying` never pay back, and collateral
 leaves only through `settle`.
+
+## The run
+
+Six positions, one expiry, both legs on both sides of the strike — so each of the four
+settlement branches happens once and none of them is argued from the others.
+
+Strikes were placed ±2% around the price the oracle was publishing when the positions were
+written (**$77,305.02**), not around a number chosen in advance. Expiry `1789321200`
+(2026-09-13 08:20:00 UTC), on the feed's own 300-second grid.
+
+| # | Leg | Collateral | Strike | Premium paid | Opened |
+| --- | --- | --- | --- | --- | --- |
+| 0 | call | 0.01 LBTC | $78,851.12 | 8 LUSD | first run |
+| 1 | call | 0.01 LBTC | $75,758.92 | 12 LUSD | first run |
+| 2 | call | 0.01 LBTC | $78,851.12 | 8 LUSD | `b9f18c1b27d188102cc909dce13e7c00cfbac28cdc9b03a42be5bfba4e01fd5d` |
+| 3 | call | 0.01 LBTC | $75,758.92 | 12 LUSD | `f3c3936d2d2589cbee3af8e9d509764e4ae713ed9427120c6dce7a18bbf71713` |
+| 4 | put | 500 LUSD | $75,758.92 | 5 LUSD | `b81acd96b2e3dc29c071bfac8a3f9ba45ecb05090e99257a95a24b8ad2d51388` |
+| 5 | put | 500 LUSD | $78,851.12 | 7.5 LUSD | `eee32e498c040152c609e020c711544eb23a1bd887fd1264e94d01dd72ebe7aa` |
+
+Escrow and premium are one transaction. The writer signs it, the quoter co-signs the
+premium and nothing else, and no server-held account touches the collateral at any point —
+which is why the premium column has no second hash beside it.
+
+## Settlement
+
+Priced at the expiry, not at the moment somebody got around to settling:
+
+**`Other("BTC")` at `1789321200` = $77,251.76** — the oracle record whose own timestamp is
+the expiry, read back from `CCYOZJCO…KOMJRN63`.
+
+| # | Leg | Strike vs $77,251.76 | Outcome | Transaction |
+| --- | --- | --- | --- | --- |
+| 0 | call | strike above | kept | `fc9d7041ef5ee4abea1b96ce720f58e1e5cd560a9def13f0390f1f3426eb8911` |
+| 1 | call | strike below | assigned | `84d569004f4cf89024a5bab5313e2257aee2ef26a55cfb7cad34d9f268d16575` |
+| 2 | call | strike above | kept | `6af40e7d1af1066b7835b43aa7bff5ced7107ba6816ec2974780b14c2425cdc8` |
+| 3 | call | strike below | assigned | `0573d3dec8ac4acc902b86e3301798354b15741e83ac603793dae55188c4a12c` |
+| 4 | put | strike below | kept | `304b4eb908b628ea50768f3f8e30face5cccaa6c408e2fb0bb7fb16e8b076877` |
+| 5 | put | strike above | assigned | `537cc2a530559c05df31411c6a405ddfc1e5d00d9262f5c534b07fe2bd647ed5` |
+
+Settlement is permissionless: these six calls carry no admin or quoter signature. Anyone
+can settle any expired position, and the outcome is the same whoever sends it, because the
+price is pinned to the expiry rather than to the moment of the call.
+
+## What moved, and whether it adds up
+
+The point of writing the balances down is that they can be checked against the rules rather
+than taken on trust.
+
+**The writer** ends with **0.496341 LBTC** and **4,167.18 LUSD**, from 0.46 LBTC and
+2,152.00 LUSD before settlement:
+
+- kept calls (#0, #2) returned their collateral whole: **+0.02 LBTC**
+- assigned calls (#1, #3) sold at the strike: 2 × 0.01 × $75,758.92 = **+1,515.18 LUSD**
+- the kept put (#4) returned its cash collateral: **+500.00 LUSD**
+- the assigned put (#5) bought BTC at the strike, as agreed: 500 ÷ $78,851.12 =
+  **+0.006341 LBTC**
+- and a 0.01 LBTC faucet drip landed in between, which is the remaining difference
+
+**The treasury** holds **0.02 LBTC** — exactly the collateral of the two assigned calls,
+and nothing else. That is the covered-call economics the contract implements: the writer is
+paid the strike in cash, the asset goes to the treasury.
+
+**The vault** ends solvent on both legs with nothing escrowed and nothing owed:
+
+| | Before the run | After settlement |
+| --- | --- | --- |
+| Cash pool | 5,000.00 LUSD | 3,432.32 LUSD |
+| Underlying pool | 0.500000 LBTC | 0.493659 LBTC |
+| Escrowed | — | none |
+| Owed if assigned | — | none |
+
+The cash pool is down by the 1,515.18 it paid the two assigned calls and the 500 it returned
+to the kept put, less the 32.5 of premiums it took in. The underlying pool is down by the
+0.006341 it delivered on the assigned put. Everything else that left the contract went back
+to the writer or to the treasury.
+
+## XLM, beside it, untouched
+
+The XLM instance was not redeployed, not upgraded and not configured during any of this.
+Separate escrow, separate exposure, separate limits and a separate solvency guard are not a
+claim about the code here — they are what a second instance *is*.
+
+## Reproducing it
+
+```sh
+node scripts/deploy-vault.mjs BTC --check       # what still has to be true
+node scripts/verify-lifecycle.mjs BTC fund 5000 0.5
+node scripts/verify-lifecycle.mjs BTC open      # prints the ids and the expiry
+node scripts/verify-lifecycle.mjs BTC settle <ids>   # after the expiry passes
+node scripts/verify-lifecycle.mjs BTC stats
+```
+
+Strikes are placed around whatever the oracle is publishing at the time, so a rerun
+exercises the same four branches at a different price rather than repeating these numbers.
