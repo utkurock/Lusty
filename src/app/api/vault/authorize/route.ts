@@ -10,6 +10,7 @@ import { MIN_DAYS_TO_EXPIRY } from '@/lib/expiries'
 import { assertQuoteAllowed, PolicyRejection } from '@/lib/quote-policy'
 import { getBreakerState } from '@/lib/circuit-breaker'
 import { requestedUnderlying } from '@/lib/assets'
+import { limitsRefusal } from '@/lib/vault-limits'
 import { hasTrustline } from '@/lib/swap'
 import {
   NETWORK_PASSPHRASE,
@@ -123,6 +124,17 @@ export async function POST(req: Request) {
             { error: 'vault contract not configured on the server' },
             { status: 500 },
           )
+    }
+
+    // Same refusal the quote endpoint raises, repeated here because the money
+    // path is reachable without one: a book whose limits do not reconcile with
+    // its instance does not get written to.
+    const unreconciled = await limitsRefusal(asset)
+    if (unreconciled) {
+      return NextResponse.json(
+        { error: unreconciled, code: 'limits_unreconciled' },
+        { status: 503 },
+      )
     }
     if (!isValidStellarAddress(body.address)) {
       return NextResponse.json({ error: 'invalid address' }, { status: 400 })

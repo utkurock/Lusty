@@ -17,6 +17,10 @@ const logTransaction = vi.fn()
 vi.mock('@/lib/vault-contract', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../vault-contract')>()),
   getPosition: (...a: any[]) => getPosition(...a),
+  // A healthy book answers `limits()` with what the registry says it holds.
+  // Both routes reconcile the two before they write, so leaving this to the
+  // real reader would refuse every request below for want of an RPC.
+  getVaultLimits: async (asset: any) => asset.onchainLimits,
 }))
 vi.mock('@/lib/spot', () => ({
   getSpot: (...a: any[]) => getSpot(...a),

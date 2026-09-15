@@ -3,6 +3,7 @@ import { Horizon } from '@stellar/stellar-sdk'
 import { LUSD_DISTRIBUTOR } from '@/lib/lusd'
 import { getSpot, resetSpotCache } from '@/lib/spot'
 import { allUnderlyings } from '@/lib/assets'
+import { reconcileAll } from '@/lib/vault-limits'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -101,15 +102,49 @@ async function checkPriceFeeds(): Promise<FeedStatus[]> {
   )
 }
 
+// Whether each book's limits still agree with the instance enforcing them.
+// A book that fails this is refusing quotes and deposits, so it belongs in the
+// same place an operator already looks to find out why, and it counts against
+// the overall status for the same reason a dead feed does: the vault is not
+// writable.
+interface LimitsStatus {
+  underlying: string
+  vault: string
+  ok: boolean
+  drift: string[]
+  stale?: boolean
+  error?: string
+}
+
+async function checkLimits(): Promise<LimitsStatus[]> {
+  const all = await reconcileAll()
+  return all.map((r) => ({
+    underlying: r.symbol,
+    vault: r.vault,
+    ok: r.ok,
+    drift: r.drift.map((d) => d.detail),
+    ...(r.stale ? { stale: true } : {}),
+    ...(r.error ? { error: r.error } : {}),
+  }))
+}
+
 export async function GET() {
-  const [horizon, db, priceFeeds] = await Promise.all([
+  const [horizon, db, priceFeeds, limits] = await Promise.all([
     checkHorizon(),
     checkDb(),
     checkPriceFeeds(),
+    checkLimits(),
   ])
 
   const tradeable = priceFeeds.filter((f) => f.enabled)
-  const allOk = horizon.ok && db.ok && tradeable.every((f) => f.ok)
+  const enabled = new Set<string>(
+    allUnderlyings().filter((a) => a.enabled).map((a) => a.symbol)
+  )
+  const allOk =
+    horizon.ok &&
+    db.ok &&
+    tradeable.every((f) => f.ok) &&
+    limits.every((l) => l.ok || !enabled.has(l.underlying))
 
   return NextResponse.json(
     {
@@ -119,6 +154,7 @@ export async function GET() {
         horizon,
         db,
         priceFeeds,
+        limits,
         // The XLM feed under its old name, so an existing status check keeps
         // reading the field it has always read.
         priceFeed: priceFeeds.find((f) => f.underlying === 'XLM'),

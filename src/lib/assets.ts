@@ -33,6 +33,26 @@ export interface UnderlyingContracts {
   cash: string
 }
 
+/**
+ * The risk limits the underlying's vault instance was deployed with, in the
+ * collateral's own units: the underlying for a call, cash for a put.
+ *
+ * The contract's own copy is the one that binds. This is a second record of
+ * it, kept beside the operating envelope below so the two can be compared
+ * against the instance rather than assumed to agree. What it catches is a
+ * `set_limits` nobody planned, or an instance deployed from numbers other
+ * than these, either of which silently moves the bound the desk quotes
+ * inside.
+ */
+export interface OnchainLimits {
+  maxPositionCall: number
+  maxPositionPut: number
+  maxExpiryCall: number
+  maxExpiryPut: number
+  /** Premium ceiling in bps of escrowed collateral, the bound on a quoter. */
+  maxPremiumBps: number
+}
+
 export interface UnderlyingAsset {
   symbol: UnderlyingSymbol
   name: string
@@ -82,6 +102,12 @@ export interface UnderlyingAsset {
   callMonthlyCap: number
   /** Cash-secured-put capacity per month, in USD. */
   putMonthlyCapUsd: number
+  /**
+   * What the deployed instance's `Limits` are supposed to be. Reconciled
+   * against the instance itself before the asset is quoted, see
+   * lib/vault-limits.
+   */
+  onchainLimits: OnchainLimits
 }
 
 function num(raw: string | undefined, fallback: number): number {
@@ -154,6 +180,16 @@ const REGISTRY: Record<UnderlyingSymbol, UnderlyingAsset> = {
     userEpochPutUsd: num(process.env.MAX_USER_EPOCH_PUT_USD, 10_000),
     callMonthlyCap: num(process.env.VAULT_CALL_MONTHLY_CAP_XLM, 1_500_000),
     putMonthlyCapUsd: num(process.env.VAULT_PUT_MONTHLY_CAP_USD, 150_000),
+    // Read off CBJZGTCF…UCJZ on 2026-09-15. The expiry caps are ten times the
+    // envelope's own per-expiry put bucket, which is deliberate: the contract
+    // is the outer bound, the desk quotes inside it.
+    onchainLimits: {
+      maxPositionCall: 10_000,
+      maxPositionPut: 10_000,
+      maxExpiryCall: 500_000,
+      maxExpiryPut: 500_000,
+      maxPremiumBps: 2_000,
+    },
   }),
   BTC: declare({
     symbol: 'BTC',
@@ -183,6 +219,15 @@ const REGISTRY: Record<UnderlyingSymbol, UnderlyingAsset> = {
     // filling one leaves the other untouched.
     callMonthlyCap: num(process.env.VAULT_CALL_MONTHLY_CAP_BTC, 5),
     putMonthlyCapUsd: num(process.env.VAULT_PUT_MONTHLY_CAP_USD_BTC, 150_000),
+    // Read off CBQEACXA…MVEU on 2026-09-15, the values scripts/deploy-vault.mjs
+    // constructed it with.
+    onchainLimits: {
+      maxPositionCall: 0.05,
+      maxPositionPut: 1_500,
+      maxExpiryCall: 5,
+      maxExpiryPut: 150_000,
+      maxPremiumBps: 2_000,
+    },
   }),
 }
 

@@ -4,6 +4,7 @@ import { getSpot } from '@/lib/spot'
 import { rateLimit } from '@/lib/rate-limit'
 import { pricingInputsFor } from '@/lib/quote-inputs'
 import { requestedUnderlying } from '@/lib/assets'
+import { limitsRefusal } from '@/lib/vault-limits'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -49,6 +50,18 @@ export async function GET(req: Request) {
       return NextResponse.json(
         { error: `${assetRaw} is not a tradeable underlying` },
         { status: 400 },
+      )
+    }
+
+    // The instance's own limits, read before its book is priced. When the
+    // registry's record of what the contract enforces and the contract itself
+    // disagree, neither number can be trusted to bound what is quoted, so the
+    // book closes until they agree again.
+    const unreconciled = await limitsRefusal(asset)
+    if (unreconciled) {
+      return NextResponse.json(
+        { error: unreconciled, code: 'limits_unreconciled' },
+        { status: 503 },
       )
     }
 

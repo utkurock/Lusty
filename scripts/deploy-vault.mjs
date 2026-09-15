@@ -62,11 +62,15 @@ const stroops = (n) => BigInt(Math.round(Number(n) * 1e7))
 
 // What each underlying's instance is constructed with.
 //
-// The caps are the contract's own — trustless, enforced on every write, and
+// The caps are the contract's own: trustless, enforced on every write, and
 // deliberately the outer bound rather than the operating envelope. The tighter
-// figures the desk actually quotes to live in the app (VAULT_*_CAP_*), and the
-// two being separate records of one rule is why they have to be reconciled
-// rather than assumed equal.
+// figures the desk actually quotes live in the app (VAULT_*_CAP_*).
+//
+// Whatever is set here has to be copied into the book's `onchainLimits` in
+// src/lib/assets.ts, which is what src/lib/vault-limits.ts reconciles the
+// instance against before anything is quoted. Deploying one and forgetting the
+// other takes the book offline, on purpose: two records of one rule that
+// nobody compares is how a limit stops being in force without anyone noticing.
 const BOOKS = {
   BTC: {
     feed: process.env.REFLECTOR_FEED_SYMBOL_BTC ?? 'BTC',
@@ -77,11 +81,12 @@ const BOOKS = {
     // disagree with what XLM is actually escrowing against.
     cash: process.env.NEXT_PUBLIC_LUSD_CONTRACT ?? null,
     limits: {
-      // 0.05 BTC a position, 5 BTC across one expiry: the expiry cap is the
-      // app's monthly capacity, so the contract bounds the book without
-      // binding before the quoter's own tier does, and one writer can take at
-      // most a hundredth of an expiry. Sized in BTC, not ported from XLM —
-      // XLM's 10,000 would be 10,000 BTC.
+      // 0.05 BTC a position, 5 BTC across one expiry. The app spreads its own
+      // monthly capacity of 5 BTC across the three expiries it keeps open, so
+      // it quotes at most 1.667 against a date the contract would take 5 on.
+      // The contract is the looser of the two by design, and it is the one
+      // that binds. Sized in BTC, not ported from XLM: XLM's 10,000 would read
+      // as 10,000 BTC.
       max_position_call: stroops(0.05),
       max_expiry_call: stroops(5),
       // Puts escrow cash, so their caps are in LUSD: $1,500 a position and

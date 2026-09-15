@@ -7,6 +7,7 @@ import { getPosition } from '@/lib/vault-contract'
 import { getSpot } from '@/lib/spot'
 import { realizedApr } from '@/lib/apr'
 import { requestedUnderlying } from '@/lib/assets'
+import { limitsRefusal } from '@/lib/vault-limits'
 
 export const dynamic = 'force-dynamic'
 
@@ -84,6 +85,17 @@ export async function POST(req: Request) {
             { error: 'vault contract not configured on the server' },
             { status: 500 },
           )
+    }
+
+    // Same refusal the quote endpoint raises, repeated here because the money
+    // path is reachable without one: a book whose limits do not reconcile with
+    // its instance does not get written to.
+    const unreconciled = await limitsRefusal(asset)
+    if (unreconciled) {
+      return NextResponse.json(
+        { error: unreconciled, code: 'limits_unreconciled' },
+        { status: 503 },
+      )
     }
 
     const rl = rateLimit(`deposit:${body.address}`, 3600_000, 30)
