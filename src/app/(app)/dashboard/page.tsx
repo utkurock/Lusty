@@ -19,6 +19,7 @@ import { PageHeader } from '@/components/shared/PageHeader'
 import {
   enabledUnderlyings,
   displayDecimalsOf,
+  logoOf,
   type UnderlyingSymbol,
 } from '@/lib/assets'
 import { withinOracleWindow } from '@/lib/oracle-window'
@@ -421,7 +422,10 @@ function PositionRow({ p }: { p: Position }) {
   const expired = isExpired(p.expiryIso)
   const stranded = isStranded(p)
   const isCall = p.type === 'call'
-  const iconSrc = isCall ? '/xlm.png' : '/lusd.png'
+  // A call escrows the underlying, a put escrows cash, so the row shows
+  // whichever one this position actually locked up. The put leg's ticker is a
+  // stable rather than a book, which is what the fallback answers for.
+  const iconSrc = logoOf(p.asset, '/lusd.png')
   return (
     <div className="light-card card-interactive p-5">
       <div className="grid grid-cols-1 md:grid-cols-[1.3fr_1fr_1fr_1fr_auto] gap-5 items-center">

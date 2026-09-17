@@ -35,6 +35,7 @@ function declaration(
     name: 'Test Underlying',
     slug: 'zzz',
     icon: '◆',
+    logo: '/zzz.png',
     contracts: { vault: VAULT, token: TOKEN, cash: CASH },
     feedSymbol: 'ZZZ',
     binanceSymbol: 'ZZZUSDT',

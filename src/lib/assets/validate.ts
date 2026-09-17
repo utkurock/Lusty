@@ -135,6 +135,13 @@ export function validateAsset(a: ResolvedAsset): AssetIssue[] {
     issues.invalid('slug', `must be a lower-case URL segment, got "${a.slug}"`)
   }
   if (!a.name.trim()) issues.invalid('name', 'is empty')
+  if (!a.icon.trim()) issues.invalid('icon', 'is empty')
+  // A path under public/, so it has to be rooted. A bare filename resolves
+  // against whatever route is open and 404s on one screen while working on
+  // another, which is worse than not having a mark at all.
+  if (!a.logo.startsWith('/')) {
+    issues.invalid('logo', `must be a path under public/, got "${a.logo}"`)
+  }
 
   // Where it settles. No vault means no book; no cash means no premium can be
   // paid; no token means a call has nothing to escrow.

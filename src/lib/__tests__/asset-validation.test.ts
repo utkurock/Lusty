@@ -16,6 +16,7 @@ function declaration(
     name: 'Test Underlying',
     slug: 'zzz',
     icon: '◆',
+    logo: '/zzz.png',
     contracts: { vault: VAULT, token: TOKEN, cash: CASH },
     feedSymbol: 'ZZZ',
     binanceSymbol: 'ZZZUSDT',
@@ -107,6 +108,8 @@ describe('dropping a required field takes the asset offline', () => {
     ['no name', { name: '  ' }, 'name'],
     ['unusable slug', { slug: 'Not A Slug' }, 'slug'],
     ['unusable symbol', { symbol: 'zz zz' }, 'symbol'],
+    ['no glyph', { icon: ' ' }, 'icon'],
+    ['a logo that is not a path', { logo: 'zzz.png' }, 'logo'],
   ]
 
   for (const [label, override, field] of cases) {

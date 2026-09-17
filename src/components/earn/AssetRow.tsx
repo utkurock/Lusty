@@ -7,6 +7,8 @@ import { formatAPR } from '@/lib/utils'
 interface AssetRowProps {
   symbol: string
   name: string
+  /** The book's mark, off the registry. See lib/assets. */
+  logo: string
   type: string
   /** Undefined while the live quote is still loading, and also when it failed. */
   maxAPR?: number
@@ -27,6 +29,7 @@ interface AssetRowProps {
 export function AssetRow({
   symbol,
   name,
+  logo,
   type,
   maxAPR,
   minAPR,
@@ -78,14 +81,8 @@ export function AssetRow({
       {/* Desktop grid */}
       <div className="hidden md:grid grid-cols-12 items-center w-full">
         <div className="col-span-4 flex items-center gap-3">
-          {symbol === 'XLM' ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src="/xlm.png" alt="XLM" className="w-9 h-9 rounded-full" />
-          ) : (
-            <div className="w-9 h-9 rounded-full bg-inverse text-brand font-mono font-bold flex items-center justify-center">
-              {symbol[0]}
-            </div>
-          )}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={logo} alt={symbol} className="w-9 h-9 rounded-full" />
           <div>
             <div className="font-display text-lead text-ink">{symbol}</div>
             <div className="font-mono text-caption text-ink-2">{name}</div>
@@ -129,14 +126,8 @@ export function AssetRow({
       {/* Mobile stacked */}
       <div className="md:hidden">
         <div className="flex items-center gap-3">
-          {symbol === 'XLM' ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src="/xlm.png" alt="XLM" className="w-10 h-10 rounded-full" />
-          ) : (
-            <div className="w-10 h-10 rounded-full bg-inverse text-brand font-mono font-bold flex items-center justify-center">
-              {symbol[0]}
-            </div>
-          )}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={logo} alt={symbol} className="w-10 h-10 rounded-full" />
           <div className="flex-1 min-w-0">
             <div className="font-display text-lead text-ink">{symbol}</div>
             <div className="font-mono text-tiny text-ink-2 truncate">{name} · {type}</div>

@@ -106,6 +106,7 @@ function AssetBook({ asset, tab }: { asset: UnderlyingAsset; tab: Tab }) {
       <AssetRow
         symbol={asset.symbol}
         name={asset.name}
+        logo={asset.logo}
         type={isCalls ? 'Covered Call' : 'Cash Secured Put'}
         maxAPR={apr?.max}
         minAPR={apr?.min}

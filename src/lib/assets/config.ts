@@ -74,6 +74,7 @@ export const DECLARATIONS: AssetDeclaration[] = [
     name: 'Stellar Lumens',
     slug: 'xlm',
     icon: '✦',
+    logo: '/xlm.png',
     contracts: {
       // Keeps its Tranche 1 spelling: it named the only instance there was.
       vault: { env: ['NEXT_PUBLIC_VAULT_CONTRACT', 'VAULT_CONTRACT'], fallback: '' },
@@ -116,6 +117,7 @@ export const DECLARATIONS: AssetDeclaration[] = [
     name: 'Bitcoin',
     slug: 'btc',
     icon: '₿',
+    logo: '/btc.png',
     // No fallback on the vault: falling back to XLM's would put BTC's money in
     // XLM's contract.
     contracts: {

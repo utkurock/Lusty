@@ -557,13 +557,9 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
           already selected could be picked. */}
       <div className="light-card flex items-stretch font-mono text-caption relative">
         <div className="flex items-center gap-2 px-4 border-r border-line-light">
-          {assetSymbol === 'XLM' ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src="/xlm.png" alt="XLM" className="w-6 h-6 rounded-full" />
-          ) : (
-            <div className="w-6 h-6 rounded-full bg-inverse text-brand font-bold flex items-center justify-center text-micro">
-              {assetSymbol[0]}
-            </div>
+          {asset && (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img src={asset.logo} alt={assetSymbol} className="w-6 h-6 rounded-full" />
           )}
           <span className="text-ink font-semibold">{assetSymbol}</span>
         </div>

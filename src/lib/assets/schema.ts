@@ -127,7 +127,15 @@ export interface UnderlyingAsset {
   name: string
   /** URL segment, e.g. /earn/xlm. */
   slug: string
+  /** Glyph fallback for a surface with no room for an image. */
   icon: string
+  /**
+   * Path under `public/` to the asset's mark, e.g. `/xlm.png`. Declared
+   * because the screens used to test the symbol — `symbol === 'XLM' ? <img> :
+   * a circle with the first letter in it` — which draws every book but the
+   * first one as an initial.
+   */
+  logo: string
   /**
    * Whether the vault will quote and write this underlying. False means the
    * asset is declared but not servable; every entry point should check this
@@ -220,6 +228,7 @@ export interface AssetDeclaration {
   name: string
   slug: string
   icon: string
+  logo: string
   contracts: {
     vault: DeclaredText
     token: DeclaredText
@@ -362,6 +371,7 @@ export function declare(
     name: d.name,
     slug: d.slug,
     icon: d.icon,
+    logo: d.logo,
     contracts: {
       vault: text(d.contracts.vault),
       token: text(d.contracts.token),

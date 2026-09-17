@@ -151,6 +151,19 @@ export function displayDecimalsOf(symbol: string, fallback = 2): number {
 }
 
 /**
+ * The mark for a symbol that may not be an underlying at all.
+ *
+ * A position record carries the collateral's ticker, and on the put leg that
+ * is cash rather than a book — so this answers for anything, and hands back
+ * the caller's fallback for what it does not know. The alternative every
+ * screen used was testing for 'XLM' and drawing an initial for everything
+ * else, which is a list that can only ever show one asset properly.
+ */
+export function logoOf(symbol: string, fallback: string): string {
+  return lookup(symbol)?.logo ?? fallback
+}
+
+/**
  * Resolve untrusted input (a route param, a query string, a DB column) to an
  * underlying. Returns null for anything unknown or not yet enabled, so a
  * caller cannot accidentally quote a gated asset by typing its name into a URL.
