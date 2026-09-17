@@ -134,4 +134,38 @@ describe('underlying() — direct lookup', () => {
     expect(reg.underlying('XLM')).toBe(reg.XLM)
     expect(reg.underlying('BTC')).toBe(reg.BTC)
   })
+
+  // The symbol is an open string now, so an undeclared one is a runtime
+  // question. It has to be loud: this is the lookup callers use when they
+  // already know which book they mean, and a silent undefined would reach the
+  // money path as a missing cap rather than as a bug.
+  it('throws for a symbol nobody declared', () => {
+    expect(() => reg.underlying('ETH')).toThrow(/not declared/)
+  })
+})
+
+describe('registry — strike and expiry parameters', () => {
+  it('gives every book its own ladder and its own expiry schedule', () => {
+    for (const a of reg.allUnderlyings()) {
+      expect(a.strike.callOtm.length).toBeGreaterThan(0)
+      expect(a.strike.putOtm.length).toBeGreaterThan(0)
+      expect(a.strike.tickFraction).toBeGreaterThan(0)
+      expect(a.expiry.openExpiries).toBeGreaterThan(0)
+      expect(a.expiry.tenorDays).toBeGreaterThan(0)
+      expect(a.expiry.minDaysToExpiry).toBeGreaterThan(0)
+    }
+  })
+
+  it('ladders out of the money in the direction the leg is written', () => {
+    for (const a of reg.allUnderlyings()) {
+      expect(Math.min(...a.strike.callOtm)).toBeGreaterThan(1)
+      expect(Math.max(...a.strike.putOtm)).toBeLessThan(1)
+    }
+  })
+
+  // The divisor that turns a monthly capacity into the per-expiry bucket
+  // reconciled against the contract — see lib/vault-limits.
+  it('matches the epoch count the capacity is split across', () => {
+    expect(reg.XLM.expiry.openExpiries).toBe(3)
+  })
 })
