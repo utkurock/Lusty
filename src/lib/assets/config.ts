@@ -6,7 +6,39 @@
 //
 // Order is the order surfaces list them in.
 
-import type { AssetDeclaration, StrikeParams, ExpiryParams } from './schema'
+import type {
+  AssetDeclaration,
+  ExpiryParams,
+  InlinedEnv,
+  StrikeParams,
+} from './schema'
+
+/**
+ * Every `NEXT_PUBLIC_*` key the declarations below name, written out literally
+ * so the bundler can substitute it into the browser build.
+ *
+ * It has to be spelled out here. The bundler rewrites the public keys it can
+ * see in the source, and a declaration names its keys as data, which it cannot
+ * see. Leave one out and that asset works on the server and is gated in the
+ * browser — the page renders and then disagrees with itself on hydration.
+ *
+ * So: **an asset declared with a new `NEXT_PUBLIC_` key adds it here too.**
+ * `asset-browser-env.test.ts` fails if one is missing, because nothing else
+ * can catch it: the test runner and `next build` both have a real
+ * `process.env`, and only the browser does not.
+ *
+ * Server-only keys stay out of this. They have never reached the browser, and
+ * a cap that is not public falls back to its default there as it always has.
+ */
+export const BROWSER_ENV: InlinedEnv = {
+  NEXT_PUBLIC_VAULT_CONTRACT: process.env.NEXT_PUBLIC_VAULT_CONTRACT,
+  NEXT_PUBLIC_XLM_CONTRACT: process.env.NEXT_PUBLIC_XLM_CONTRACT,
+  NEXT_PUBLIC_LUSD_CONTRACT: process.env.NEXT_PUBLIC_LUSD_CONTRACT,
+  NEXT_PUBLIC_VAULT_CONTRACT_BTC: process.env.NEXT_PUBLIC_VAULT_CONTRACT_BTC,
+  NEXT_PUBLIC_BTC_CONTRACT: process.env.NEXT_PUBLIC_BTC_CONTRACT,
+  NEXT_PUBLIC_BTC_ANCHOR_CODE: process.env.NEXT_PUBLIC_BTC_ANCHOR_CODE,
+  NEXT_PUBLIC_BTC_ANCHOR_ISSUER: process.env.NEXT_PUBLIC_BTC_ANCHOR_ISSUER,
+}
 
 // Premiums are paid in one cash today, and both books escrow puts in it. Named
 // once so the two declarations cannot drift apart, and still declared per

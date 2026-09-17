@@ -247,16 +247,61 @@ export interface AssetDeclaration {
 }
 
 /**
+ * The `NEXT_PUBLIC_*` values, already substituted, for the bundle that runs in
+ * a browser.
+ *
+ * This exists because of how those keys reach the client at all. There is no
+ * `process.env` there; the bundler rewrites each literal `process.env.NEXT_PUBLIC_X`
+ * it can see in the source into the value, and it can only see the ones
+ * written out by name. A declaration names its keys as data — that is the
+ * point of it — so `process.env[key]` is a lookup the bundler cannot rewrite,
+ * and every public value would come back undefined in the browser while
+ * working perfectly on the server. What that looks like is every asset gated
+ * on the client and none on the server: a hydration mismatch, not an error.
+ *
+ * So config.ts writes the public keys out literally, once, and passes the
+ * table through. Server-only keys are absent from it and read from
+ * `process.env` as before, which is also what they did under the old registry:
+ * a cap that is not `NEXT_PUBLIC_` has always fallen back to its default in
+ * the browser.
+ */
+export type InlinedEnv = Record<string, string | undefined>
+
+/**
  * First env key that carries something. Blank counts as unset: an env file
  * that names a key it has no value for is stating absence, and treating `''`
  * as a contract address would list an asset with nowhere to settle.
  */
-function readEnv(keys: string | string[]): string | undefined {
+function readEnv(keys: string | string[], inlined: InlinedEnv): string | undefined {
   for (const key of Array.isArray(keys) ? keys : [keys]) {
-    const raw = process.env[key]
+    const raw = inlined[key] ?? process.env[key]
     if (typeof raw === 'string' && raw.trim() !== '') return raw.trim()
   }
   return undefined
+}
+
+/**
+ * Every environment key a declaration names, walked out of the declaration
+ * itself so the list cannot fall behind it. What it is for: checking that the
+ * public ones are all in the inlined table, which nothing else can check —
+ * tests and `next build` both run where `process.env` is real.
+ */
+export function declaredEnvKeys(d: AssetDeclaration): string[] {
+  const out = new Set<string>()
+  const walk = (value: unknown) => {
+    if (!value || typeof value !== 'object') return
+    const record = value as Record<string, unknown>
+    if ('env' in record) {
+      const named = record.env
+      for (const key of Array.isArray(named) ? named : [named]) {
+        if (typeof key === 'string') out.add(key)
+      }
+      return
+    }
+    for (const child of Object.values(record)) walk(child)
+  }
+  walk(d)
+  return [...out]
 }
 
 /**
@@ -264,22 +309,31 @@ function readEnv(keys: string | string[]): string | undefined {
  * because a cap of zero, NaN or minus one is not a tighter limit — it is a
  * typo that would take the book offline or open it without a bound.
  */
-export function resolveNumber(declared: DeclaredNumber): number {
+export function resolveNumber(
+  declared: DeclaredNumber,
+  inlined: InlinedEnv = {}
+): number {
   if (typeof declared === 'number') return declared
-  const n = Number(readEnv(declared.env))
+  const n = Number(readEnv(declared.env, inlined))
   return isFinite(n) && n > 0 ? n : declared.fallback
 }
 
 /** A contract id, a feed symbol, an asset code. */
-export function resolveText(declared: DeclaredText): string {
+export function resolveText(
+  declared: DeclaredText,
+  inlined: InlinedEnv = {}
+): string {
   if (typeof declared === 'string') return declared
-  return readEnv(declared.env) ?? declared.fallback
+  return readEnv(declared.env, inlined) ?? declared.fallback
 }
 
 /** An issuer, where null is a real answer: nobody anchors this asset yet. */
-export function resolveIssuer(declared: DeclaredIssuer): string | null {
+export function resolveIssuer(
+  declared: DeclaredIssuer,
+  inlined: InlinedEnv = {}
+): string | null {
   if (declared === null || typeof declared === 'string') return declared
-  return readEnv(declared.env) ?? declared.fallback
+  return readEnv(declared.env, inlined) ?? declared.fallback
 }
 
 /**
@@ -287,14 +341,20 @@ export function resolveIssuer(declared: DeclaredIssuer): string | null {
  * the environment is where most of the holes are, so a declaration cannot be
  * judged before it is resolved.
  */
-export function declare(d: AssetDeclaration): UnderlyingAsset {
+export function declare(
+  d: AssetDeclaration,
+  inlined: InlinedEnv = {}
+): UnderlyingAsset {
+  const text = (v: DeclaredText) => resolveText(v, inlined)
+  const num = (v: DeclaredNumber) => resolveNumber(v, inlined)
+
   const stellarAsset: StellarAsset =
     d.collateral.kind === 'native'
       ? { kind: 'native' }
       : {
           kind: 'issued',
-          code: resolveText(d.collateral.code),
-          issuer: resolveIssuer(d.collateral.issuer),
+          code: text(d.collateral.code),
+          issuer: resolveIssuer(d.collateral.issuer, inlined),
         }
 
   const resolved: ResolvedAsset = {
@@ -303,11 +363,11 @@ export function declare(d: AssetDeclaration): UnderlyingAsset {
     slug: d.slug,
     icon: d.icon,
     contracts: {
-      vault: resolveText(d.contracts.vault),
-      token: resolveText(d.contracts.token),
-      cash: resolveText(d.contracts.cash),
+      vault: text(d.contracts.vault),
+      token: text(d.contracts.token),
+      cash: text(d.contracts.cash),
     },
-    feedSymbol: resolveText(d.feedSymbol),
+    feedSymbol: text(d.feedSymbol),
     binanceSymbol: d.binanceSymbol,
     coingeckoId: d.coingeckoId,
     stellarAsset,
@@ -315,13 +375,13 @@ export function declare(d: AssetDeclaration): UnderlyingAsset {
     displayDecimals: d.displayDecimals,
     strike: d.strike,
     expiry: d.expiry,
-    minSize: resolveNumber(d.envelope.minSize),
-    maxSize: resolveNumber(d.envelope.maxSize),
-    userEpochCall: resolveNumber(d.envelope.userEpochCall),
-    maxSizeCash: resolveNumber(d.envelope.maxSizeCash),
-    userEpochPutUsd: resolveNumber(d.envelope.userEpochPutUsd),
-    callMonthlyCap: resolveNumber(d.envelope.callMonthlyCap),
-    putMonthlyCapUsd: resolveNumber(d.envelope.putMonthlyCapUsd),
+    minSize: num(d.envelope.minSize),
+    maxSize: num(d.envelope.maxSize),
+    userEpochCall: num(d.envelope.userEpochCall),
+    maxSizeCash: num(d.envelope.maxSizeCash),
+    userEpochPutUsd: num(d.envelope.userEpochPutUsd),
+    callMonthlyCap: num(d.envelope.callMonthlyCap),
+    putMonthlyCapUsd: num(d.envelope.putMonthlyCapUsd),
     onchainLimits: d.onchainLimits,
   }
 

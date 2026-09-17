@@ -18,7 +18,7 @@
 // and limits of one asset out of another's. An asset stays gated until
 // everything it needs to settle is named.
 
-import { DECLARATIONS } from './config'
+import { BROWSER_ENV, DECLARATIONS } from './config'
 import { declare, type UnderlyingAsset, type UnderlyingSymbol } from './schema'
 import { describeIssues } from './validate'
 
@@ -40,7 +40,7 @@ export type {
 const REGISTRY: Map<string, UnderlyingAsset> = new Map()
 
 for (const d of DECLARATIONS) {
-  const asset = declare(d)
+  const asset = declare(d, BROWSER_ENV)
   // A repeated symbol is the one configuration error that cannot be gated
   // around: the second entry would replace the first, and every lookup would
   // quietly answer with a book nobody meant. Nothing downstream can recover

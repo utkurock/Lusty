@@ -279,8 +279,9 @@ describe('the registry under a broken declaration', () => {
   it('refuses to load a registry that declares one symbol twice', async () => {
     bothBooksConfigured()
     vi.resetModules()
-    const { DECLARATIONS } = await import('../assets/config')
+    const { DECLARATIONS, BROWSER_ENV } = await import('../assets/config')
     vi.doMock('../assets/config', () => ({
+      BROWSER_ENV,
       DECLARATIONS: [DECLARATIONS[0], { ...DECLARATIONS[0] }],
     }))
     await expect(import('../assets')).rejects.toThrow(/declared twice/)
