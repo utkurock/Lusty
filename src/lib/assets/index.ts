@@ -20,9 +20,11 @@
 
 import { DECLARATIONS } from './config'
 import { declare, type UnderlyingAsset, type UnderlyingSymbol } from './schema'
+import { describeIssues } from './validate'
 
 export type {
   AssetDeclaration,
+  AssetIssue,
   ExpiryParams,
   OnchainLimits,
   StellarAsset,
@@ -35,12 +37,34 @@ export type {
 // A Map rather than an object, because symbols now come from untrusted input
 // and an object answers for keys nobody declared: `REGISTRY['constructor']` is
 // a function, not an asset, and every lookup below would have to say so.
-const REGISTRY: Map<string, UnderlyingAsset> = new Map(
-  DECLARATIONS.map((d) => {
-    const asset = declare(d)
-    return [asset.symbol, asset] as const
-  })
-)
+const REGISTRY: Map<string, UnderlyingAsset> = new Map()
+
+for (const d of DECLARATIONS) {
+  const asset = declare(d)
+  // A repeated symbol is the one configuration error that cannot be gated
+  // around: the second entry would replace the first, and every lookup would
+  // quietly answer with a book nobody meant. Nothing downstream can recover
+  // from that, so it stops the process instead.
+  if (REGISTRY.has(asset.symbol)) {
+    throw new Error(`assets: ${asset.symbol} is declared twice`)
+  }
+  REGISTRY.set(asset.symbol, asset)
+}
+
+// Say why a book is off, once, where an operator reading boot logs will see
+// it. Test runs stay quiet: they gate assets deliberately, several times a
+// file, and the noise would bury a real one.
+if (process.env.NODE_ENV !== 'test') {
+  for (const asset of REGISTRY.values()) {
+    if (asset.enabled) continue
+    for (const line of describeIssues(asset.issues)) {
+      const label = asset.issues.some((i) => i.kind === 'invalid')
+        ? 'misconfigured'
+        : 'not configured'
+      console.warn(`[assets] ${asset.symbol} gated (${label}): ${line}`)
+    }
+  }
+}
 
 function lookup(raw: unknown): UnderlyingAsset | null {
   if (typeof raw !== 'string') return null
@@ -69,6 +93,25 @@ export function allUnderlyings(): UnderlyingAsset[] {
 /** The underlyings a user can actually write against right now. */
 export function enabledUnderlyings(): UnderlyingAsset[] {
   return allUnderlyings().filter((a) => a.enabled)
+}
+
+/**
+ * The declared books that are gated, with the reasons attached. What an
+ * operator asks for when a screen is missing an asset, and what /api/health
+ * reports so the answer does not depend on having the boot log.
+ */
+export function gatedUnderlyings(): Array<{
+  symbol: UnderlyingSymbol
+  issues: UnderlyingAsset['issues']
+  reasons: string[]
+}> {
+  return allUnderlyings()
+    .filter((a) => !a.enabled)
+    .map((a) => ({
+      symbol: a.symbol,
+      issues: a.issues,
+      reasons: describeIssues(a.issues),
+    }))
 }
 
 /**

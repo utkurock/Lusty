@@ -23,6 +23,8 @@
 // could change between two reads is not something the money path should be
 // asking twice.
 
+import { validateAsset, type ResolvedAsset } from './validate'
+
 /**
  * A listed underlying's ticker. Open on purpose: an asset is listed by being
  * declared, not by being added to a union. The cost is that an unknown symbol
@@ -105,6 +107,21 @@ export interface ExpiryParams {
   tenorDays: number
 }
 
+/**
+ * One reason an asset cannot be served.
+ *
+ * `unconfigured` is a value this deployment has not supplied yet — expected on
+ * a fresh environment, and fixed by filling in the env. `invalid` is a value
+ * that is there and cannot be right, which is a bug somebody shipped. The
+ * split matters because it decides whether a gated book is news.
+ */
+export interface AssetIssue {
+  kind: 'unconfigured' | 'invalid'
+  /** Dotted path into the declaration, e.g. `contracts.vault`. */
+  field: string
+  reason: string
+}
+
 export interface UnderlyingAsset {
   symbol: UnderlyingSymbol
   name: string
@@ -113,11 +130,18 @@ export interface UnderlyingAsset {
   icon: string
   /**
    * Whether the vault will quote and write this underlying. False means the
-   * asset is declared but not yet wired end to end; every entry point should
-   * check this rather than assuming a listed asset is tradeable. Derived, not
-   * declared — see `tradeable()`.
+   * asset is declared but not servable; every entry point should check this
+   * rather than assuming a listed asset is tradeable. Derived, not declared —
+   * it is exactly `issues.length === 0`.
    */
   enabled: boolean
+  /**
+   * Every reason the asset is gated, empty when it is not. Carried on the
+   * asset rather than thrown at load because one broken book must not take the
+   * others down with it, and because "BTC is off" is a question somebody asks
+   * at 3am — the answer belongs where they are already looking.
+   */
+  issues: AssetIssue[]
   contracts: UnderlyingContracts
   /** Reflector `Other(Symbol)` feed name — THE settlement price source. */
   feedSymbol: string
@@ -259,17 +283,10 @@ export function resolveIssuer(declared: DeclaredIssuer): string | null {
 }
 
 /**
- * Tradeable when nothing it needs to settle is missing: an issuer for the
- * collateral it escrows, and all three contracts. Half-configured is gated —
- * the failure that matters is a position written somewhere it cannot settle.
+ * Resolve a declaration against the environment and check it, in that order:
+ * the environment is where most of the holes are, so a declaration cannot be
+ * judged before it is resolved.
  */
-export function tradeable(a: Omit<UnderlyingAsset, 'enabled'>): boolean {
-  if (a.stellarAsset.kind === 'issued' && !a.stellarAsset.issuer) return false
-  const { vault, token, cash } = a.contracts
-  return Boolean(vault && token && cash)
-}
-
-/** Resolve a declaration against the environment into a listed asset. */
 export function declare(d: AssetDeclaration): UnderlyingAsset {
   const stellarAsset: StellarAsset =
     d.collateral.kind === 'native'
@@ -280,7 +297,7 @@ export function declare(d: AssetDeclaration): UnderlyingAsset {
           issuer: resolveIssuer(d.collateral.issuer),
         }
 
-  const resolved: Omit<UnderlyingAsset, 'enabled'> = {
+  const resolved: ResolvedAsset = {
     symbol: d.symbol.trim().toUpperCase(),
     name: d.name,
     slug: d.slug,
@@ -308,5 +325,6 @@ export function declare(d: AssetDeclaration): UnderlyingAsset {
     onchainLimits: d.onchainLimits,
   }
 
-  return { ...resolved, enabled: tradeable(resolved) }
+  const issues = validateAsset(resolved)
+  return { ...resolved, issues, enabled: issues.length === 0 }
 }

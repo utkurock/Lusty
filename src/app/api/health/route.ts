@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { Horizon } from '@stellar/stellar-sdk'
 import { LUSD_DISTRIBUTOR } from '@/lib/lusd'
 import { getSpot, resetSpotCache } from '@/lib/spot'
-import { allUnderlyings } from '@/lib/assets'
+import { allUnderlyings, type AssetIssue } from '@/lib/assets'
 import { reconcileAll } from '@/lib/vault-limits'
 
 export const dynamic = 'force-dynamic'
@@ -128,6 +128,31 @@ async function checkLimits(): Promise<LimitsStatus[]> {
   }))
 }
 
+// Which books are servable, and why the rest are not.
+//
+// A gated asset is invisible everywhere else: it is simply absent from the
+// screens, which looks identical whether somebody has not filled in an env key
+// yet or shipped a declaration that contradicts itself. This says which.
+//
+// Only `invalid` counts against the overall status. An asset nobody has
+// finished wiring is a plan — BTC sat that way for most of the tranche — and
+// turning the probe red for it would train everyone to ignore it. A
+// declaration that cannot be right is a bug that reached a deployment, and
+// that is worth waking somebody for.
+interface AssetStatus {
+  underlying: string
+  enabled: boolean
+  issues: AssetIssue[]
+}
+
+function checkAssets(): AssetStatus[] {
+  return allUnderlyings().map((a) => ({
+    underlying: a.symbol,
+    enabled: a.enabled,
+    issues: a.issues,
+  }))
+}
+
 export async function GET() {
   const [horizon, db, priceFeeds, limits] = await Promise.all([
     checkHorizon(),
@@ -135,14 +160,19 @@ export async function GET() {
     checkPriceFeeds(),
     checkLimits(),
   ])
+  const assets = checkAssets()
 
   const tradeable = priceFeeds.filter((f) => f.enabled)
   const enabled = new Set<string>(
     allUnderlyings().filter((a) => a.enabled).map((a) => a.symbol)
   )
+  const misconfigured = assets.filter((a) =>
+    a.issues.some((i) => i.kind === 'invalid')
+  )
   const allOk =
     horizon.ok &&
     db.ok &&
+    misconfigured.length === 0 &&
     tradeable.every((f) => f.ok) &&
     limits.every((l) => l.ok || !enabled.has(l.underlying))
 
@@ -153,6 +183,7 @@ export async function GET() {
       components: {
         horizon,
         db,
+        assets,
         priceFeeds,
         limits,
         // The XLM feed under its old name, so an existing status check keeps
