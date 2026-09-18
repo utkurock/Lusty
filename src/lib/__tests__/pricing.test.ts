@@ -9,11 +9,12 @@ import {
   niceStrikeStep,
   roundStrike,
   calculateAPR,
-  CALL_STRIKE_MULTIPLIERS,
-  PUT_STRIKE_MULTIPLIERS,
+  strikeRungs,
+  nearestRung,
   callStrikeLabel,
   putStrikeLabel,
 } from '../pricing'
+import { XLM, BTC } from '../assets'
 
 describe('normalCDF (Abramowitz-Stegun)', () => {
   it('is 0.5 at zero', () => {
@@ -235,14 +236,38 @@ describe('calculateAPR', () => {
 
 describe('strike ladders', () => {
   it('call rungs go up, put rungs go down, nearest first', () => {
-    expect(CALL_STRIKE_MULTIPLIERS[0]).toBeGreaterThan(1)
-    expect([...CALL_STRIKE_MULTIPLIERS]).toEqual(
-      [...CALL_STRIKE_MULTIPLIERS].sort((a, b) => a - b)
-    )
-    expect(PUT_STRIKE_MULTIPLIERS[0]).toBeLessThan(1)
-    expect([...PUT_STRIKE_MULTIPLIERS]).toEqual(
-      [...PUT_STRIKE_MULTIPLIERS].sort((a, b) => b - a)
-    )
+    for (const asset of [XLM, BTC]) {
+      const calls = strikeRungs('call', asset.strike)
+      expect(calls[0]).toBeGreaterThan(1)
+      expect([...calls]).toEqual([...calls].sort((a, b) => a - b))
+      const puts = strikeRungs('put', asset.strike)
+      expect(puts[0]).toBeLessThan(1)
+      expect([...puts]).toEqual([...puts].sort((a, b) => b - a))
+    }
+  })
+
+  it('the nearest rung is index 0, which is what the engine normalizes against', () => {
+    expect(nearestRung('call', XLM.strike)).toBe(XLM.strike.callOtm[0])
+    expect(nearestRung('put', XLM.strike)).toBe(XLM.strike.putOtm[0])
+  })
+
+  // The point of the parameter: a book declaring a tighter tick gets a tighter
+  // tick, and the same nominal rung lands on a different strike because of it.
+  it('the tick is the asset\'s own fraction of spot', () => {
+    expect(niceStrikeStep(100, 0.01)).toBe(1)
+    expect(niceStrikeStep(100, 0.05)).toBe(5)
+    expect(niceStrikeStep(81_000, 0.01)).toBe(1000)
+    expect(niceStrikeStep(0.19, 0.01)).toBeCloseTo(0.002, 10)
+    // A tick that is not a positive number is not a ladder; fall back rather
+    // than round every strike to the same number.
+    expect(niceStrikeStep(100, 0)).toBe(niceStrikeStep(100))
+    expect(niceStrikeStep(100, NaN)).toBe(niceStrikeStep(100))
+  })
+
+  it('rounds a rung to the asset\'s own tick', () => {
+    const spot = 81_000
+    expect(roundStrike(spot * 1.02, spot, 0.01)).toBe(83_000)
+    expect(roundStrike(spot * 1.02, spot, 0.002)).toBe(82_600)
   })
 
   it('labels render the OTM distance', () => {

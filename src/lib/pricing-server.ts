@@ -32,12 +32,12 @@ import {
   black76Vega,
   calculateAPR,
   roundStrike,
-  CALL_STRIKE_MULTIPLIERS,
-  PUT_STRIKE_MULTIPLIERS,
+  strikeRungs,
+  nearestRung,
   callStrikeLabel,
   putStrikeLabel,
 } from './pricing'
-import { XLM, type UnderlyingAsset } from './assets'
+import { XLM, type StrikeParams, type UnderlyingAsset } from './assets'
 import { getRealizedVol } from './vol'
 import { getForward } from './forward'
 import { smileVol } from './smile'
@@ -138,6 +138,16 @@ export interface QuoteInput {
   utilization?: number
   /** Time-scaling reference (days). Defaults to the farthest open expiry. */
   timeRefDays?: number
+  /**
+   * The book's own ladder, which fixes the rung this quote is normalized
+   * against and the tick its reference rung is rounded to. Absent means XLM's,
+   * the same default the rest of this file takes for an unnamed asset.
+   *
+   * It moves the premium and the APR, not the Greeks: delta and vega come off
+   * this strike's own smile-adjusted σ and never touch the reference rung. A
+   * caller that wants Greeks only (`lib/portfolio`) can leave it out.
+   */
+  strikes?: StrikeParams
 }
 
 export interface Quote {
@@ -271,8 +281,9 @@ export function quoteOption(input: QuoteInput): Quote {
   // fall away in a smooth, distinct gradient (no two strikes share a number).
   // This is computable from (spot, days, σ, util) alone, so the deposit route
   // reproduces the exact same scaling for any strike it reprices.
-  const nearMult = side === 'call' ? CALL_STRIKE_MULTIPLIERS[0] : PUT_STRIKE_MULTIPLIERS[0]
-  const nearStrike = roundStrike(spot * nearMult, spot)
+  const ladder = input.strikes ?? XLM.strike
+  const nearMult = nearestRung(side, ladder)
+  const nearStrike = roundStrike(spot * nearMult, spot, ladder.tickFraction)
   const ref = rawStrike(side, forward, spot, nearStrike, timeYears, daysToExpiry, sigmaOffered, baseHaircut)
 
   // Time-scaled ceiling for the top strike (longer tenor → higher target).
@@ -393,9 +404,9 @@ export async function quoteLadder(
   asset: UnderlyingAsset = XLM,
 ): Promise<{ context: MarketContext; rungs: LadderRung[] }> {
   const context = await getMarketContext(spot, daysToExpiry, asset)
-  const mults = side === 'call' ? CALL_STRIKE_MULTIPLIERS : PUT_STRIKE_MULTIPLIERS
+  const mults = strikeRungs(side, asset.strike)
   const rungs = mults.map((mult, index) => {
-    const strike = roundStrike(spot * mult, spot)
+    const strike = roundStrike(spot * mult, spot, asset.strike.tickFraction)
     const q = quoteOption({
       side,
       spot,
@@ -404,6 +415,7 @@ export async function quoteLadder(
       daysToExpiry,
       sigmaRealized: context.sigmaRealized,
       utilization,
+      strikes: asset.strike,
     })
     const label = side === 'call' ? callStrikeLabel(mult) : putStrikeLabel(mult)
     return { ...q, index, label }
@@ -421,11 +433,8 @@ export async function quoteOptionLive(input: {
   /** Which underlying's σ and forward to price against. Defaults to XLM. */
   asset?: UnderlyingAsset
 }): Promise<{ context: MarketContext; quote: Quote }> {
-  const context = await getMarketContext(
-    input.spot,
-    input.daysToExpiry,
-    input.asset ?? XLM,
-  )
+  const asset = input.asset ?? XLM
+  const context = await getMarketContext(input.spot, input.daysToExpiry, asset)
   const quote = quoteOption({
     side: input.side,
     spot: input.spot,
@@ -434,6 +443,11 @@ export async function quoteOptionLive(input: {
     daysToExpiry: input.daysToExpiry,
     sigmaRealized: context.sigmaRealized,
     utilization: input.utilization ?? 0,
+    // The ladder the submitted strike is normalized against has to be the
+    // book's own. Priced against another book's nearest rung, an off-ladder
+    // strike scales by the wrong factor and the vault pays a premium no screen
+    // ever showed.
+    strikes: asset.strike,
   })
   return { context, quote }
 }

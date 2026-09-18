@@ -1,6 +1,20 @@
 // Black-Scholes pricing in TypeScript for frontend display
 // Mirrors the Soroban contract logic but uses JS floats
 
+import type { StrikeParams } from './assets'
+
+// What a book's ladder looked like when there was one book. Kept as the
+// default for the two callers that price without naming an asset — the legacy
+// synchronous previews below — so an unnamed book behaves exactly as it did
+// before the ladder became a per-asset parameter. Every path that names an
+// asset reads the asset's own numbers instead.
+const DEFAULT_TICK_FRACTION = 0.01
+const DEFAULT_STRIKE_PARAMS: StrikeParams = {
+  callOtm: [1.02, 1.06, 1.12, 1.2],
+  putOtm: [0.98, 0.94, 0.88, 0.8],
+  tickFraction: DEFAULT_TICK_FRACTION,
+}
+
 export function normalCDF(x: number): number {
   // Standard normal CDF via the Abramowitz-Stegun 7.1.26 erf approximation:
   //   Φ(x) = ½ · (1 + erf(x / √2))
@@ -208,10 +222,16 @@ export const PROTOCOL_FEE = PROTOCOL_FEE_BPS / 10_000
 // Round a strike to a Deribit-style "nice" tick size based on the spot price.
 // The tick is chosen from a 1-2-5 ladder so strikes like $0.23, $42, $1500
 // always look clean instead of $0.1768 / $41.7 / $1497.3.
-export function niceStrikeStep(spot: number): number {
+//
+// `tickFraction` is the asset's own `strike.tickFraction` — what fraction of
+// spot a rung should move by before the 1-2-5 rounding. It is a fraction and
+// not an absolute step because an absolute one is either meaningless at $0.19
+// or meaningless at $81,000. Absent, it is the 1% every book used when there
+// was only one book.
+export function niceStrikeStep(spot: number, tickFraction: number = DEFAULT_TICK_FRACTION): number {
   if (spot <= 0) return 1
-  // Aim for a tick that is roughly 1% of spot.
-  const target = spot * 0.01
+  const frac = isFinite(tickFraction) && tickFraction > 0 ? tickFraction : DEFAULT_TICK_FRACTION
+  const target = spot * frac
   const exp = Math.floor(Math.log10(target))
   const base = Math.pow(10, exp)
   const norm = target / base
@@ -223,8 +243,12 @@ export function niceStrikeStep(spot: number): number {
   return mult * base
 }
 
-export function roundStrike(strike: number, spot: number): number {
-  const step = niceStrikeStep(spot)
+export function roundStrike(
+  strike: number,
+  spot: number,
+  tickFraction: number = DEFAULT_TICK_FRACTION,
+): number {
+  const step = niceStrikeStep(spot, tickFraction)
   return Math.round(strike / step) * step
 }
 
@@ -245,13 +269,26 @@ export interface StrikeOption {
   label: string
 }
 
-// Strike ladders. The OTM multipliers below define the rungs; the canonical
-// pricing/APR for each rung comes from the server engine (quote.ts via
-// /api/vault/quote) using real realized vol + forward, so what the user sees
-// equals what the vault pays. These exported ladder definitions are shared so
-// the server and any client preview agree on the strike set.
-export const CALL_STRIKE_MULTIPLIERS = [1.02, 1.06, 1.12, 1.20]
-export const PUT_STRIKE_MULTIPLIERS = [0.98, 0.94, 0.88, 0.80]
+// Strike ladders. The rungs are the asset's own `strike.callOtm` /
+// `strike.putOtm`, read off the registry rather than written here: how far an
+// underlying travels in a week is a question about that underlying, and a
+// ladder that answers it for a lumen answers nothing at $81,000. The canonical
+// pricing/APR for each rung still comes from the server engine (pricing-server
+// via /api/vault/quote) using real realized vol + forward, so what the user
+// sees equals what the vault pays.
+//
+// Order is load-bearing: index 0 is the rung nearest the money, and
+// pricing-server normalizes the whole ladder against it. `lib/assets/validate`
+// refuses a declaration whose rungs sit on the wrong side of the money or turn
+// back toward it, so a ladder that reaches here is already ordered.
+export function strikeRungs(side: 'call' | 'put', params: StrikeParams): number[] {
+  return side === 'call' ? params.callOtm : params.putOtm
+}
+
+/** The rung the ladder is normalized against: nearest the money. */
+export function nearestRung(side: 'call' | 'put', params: StrikeParams): number {
+  return strikeRungs(side, params)[0]
+}
 
 export function callStrikeLabel(mult: number): string {
   return `+${((mult - 1) * 100).toFixed(0)}% OTM`
@@ -266,11 +303,12 @@ export function putStrikeLabel(mult: number): string {
 export function generateCallStrikes(
   spotPrice: number,
   impliedVol: number = 0.80,
-  daysToExpiry: number = 7
+  daysToExpiry: number = 7,
+  params: StrikeParams = DEFAULT_STRIKE_PARAMS
 ): StrikeOption[] {
   const timeYears = daysToExpiry / 365
-  return CALL_STRIKE_MULTIPLIERS.map((mult, i) => {
-    const strike = roundStrike(spotPrice * mult, spotPrice)
+  return strikeRungs('call', params).map((mult, i) => {
+    const strike = roundStrike(spotPrice * mult, spotPrice, params.tickFraction)
     const premium = black76Call(spotPrice, strike, timeYears, impliedVol)
     const apr = calculateAPR(premium, spotPrice, daysToExpiry)
     return { index: i, strike, premium, apr, label: callStrikeLabel(mult) }
@@ -280,11 +318,12 @@ export function generateCallStrikes(
 export function generatePutStrikes(
   spotPrice: number,
   impliedVol: number = 0.80,
-  daysToExpiry: number = 7
+  daysToExpiry: number = 7,
+  params: StrikeParams = DEFAULT_STRIKE_PARAMS
 ): StrikeOption[] {
   const timeYears = daysToExpiry / 365
-  return PUT_STRIKE_MULTIPLIERS.map((mult, i) => {
-    const strike = roundStrike(spotPrice * mult, spotPrice)
+  return strikeRungs('put', params).map((mult, i) => {
+    const strike = roundStrike(spotPrice * mult, spotPrice, params.tickFraction)
     const premium = black76Put(spotPrice, strike, timeYears, impliedVol)
     // Cash-secured put: capital at risk is the strike (cash locked), not spot.
     const apr = calculateAPR(premium, strike, daysToExpiry)

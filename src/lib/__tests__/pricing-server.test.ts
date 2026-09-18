@@ -7,11 +7,15 @@ import {
 } from '../pricing-server'
 import {
   roundStrike,
-  CALL_STRIKE_MULTIPLIERS,
-  PUT_STRIKE_MULTIPLIERS,
+  strikeRungs,
+  nearestRung,
   black76Delta,
   black76Vega,
 } from '../pricing'
+import { XLM } from '../assets'
+
+const CALL_RUNGS = strikeRungs('call', XLM.strike)
+const PUT_RUNGS = strikeRungs('put', XLM.strike)
 
 // Defaults assumed by these tests (env unset in the test runner):
 //   VOL_SPREAD_REL=0.10  VOL_SPREAD_ABS=0.03  MAX_PRICING_SIGMA=1.0
@@ -111,7 +115,7 @@ describe('quoteOption — money-path invariants', () => {
   })
 
   it('nearest rung quotes at the ceiling when raw BS APR is rich (high vol)', () => {
-    const near = roundStrike(SPOT * CALL_STRIKE_MULTIPLIERS[0], SPOT)
+    const near = roundStrike(SPOT * nearestRung('call', XLM.strike), SPOT)
     const quote = q({ strike: near, daysToExpiry: 21, sigmaRealized: 1.6 })
     const targetTop = MAX_APR * Math.min(1, 21 / TIME_REF)
     expect(quote.apr).toBeCloseTo(targetTop * (1 - FEE), 6)
@@ -173,7 +177,7 @@ describe('quoteOption — Greeks', () => {
   // That only holds if the Greeks are evaluated at the σ the strike was priced
   // at — the smile-adjusted one — and not at the at-the-money level.
   it('are evaluated at sigmaStrike, not sigmaOffered', () => {
-    for (const mult of CALL_STRIKE_MULTIPLIERS) {
+    for (const mult of CALL_RUNGS) {
       const strike = roundStrike(SPOT * mult, SPOT)
       const quote = q({ strike })
       const T = quote.daysToExpiry / 365
@@ -193,12 +197,12 @@ describe('quoteOption — Greeks', () => {
   })
 
   it('carries the option holder\'s sign, leaving the writer flip to callers', () => {
-    for (const mult of CALL_STRIKE_MULTIPLIERS) {
+    for (const mult of CALL_RUNGS) {
       const call = q({ strike: roundStrike(SPOT * mult, SPOT) })
       expect(call.delta).toBeGreaterThan(0)
       expect(call.vega).toBeGreaterThan(0)
     }
-    for (const mult of PUT_STRIKE_MULTIPLIERS) {
+    for (const mult of PUT_RUNGS) {
       const put = q({ side: 'put', strike: roundStrike(SPOT * mult, SPOT) })
       expect(put.delta).toBeLessThan(0)
       expect(put.vega).toBeGreaterThan(0)
@@ -216,8 +220,8 @@ describe('quoteOption — Greeks', () => {
   })
 
   it('falls away across the ladder as strikes go further out', () => {
-    const deltas = CALL_STRIKE_MULTIPLIERS.map(
-      (m) => q({ strike: roundStrike(SPOT * m, SPOT) }).delta,
+    const deltas = CALL_RUNGS.map(
+      (m: number) => q({ strike: roundStrike(SPOT * m, SPOT) }).delta,
     )
     for (let i = 1; i < deltas.length; i++) {
       expect(deltas[i]).toBeLessThan(deltas[i - 1])
