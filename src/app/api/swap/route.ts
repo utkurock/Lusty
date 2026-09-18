@@ -17,6 +17,11 @@ import {
   confirmAction,
 } from '@/lib/idempotency'
 import { LUSD_CODE, LUSD_ISSUER, LUSD_DISTRIBUTOR } from '@/lib/lusd'
+import {
+  verifyFunding,
+  type ProofOperation,
+  type ProofTransaction,
+} from '@/lib/swap-proof'
 import { fetchXlmUsd } from '@/lib/spot'
 import { getPool, ensureSchema } from '@/lib/db'
 
@@ -162,56 +167,35 @@ export async function POST(req: Request) {
 
     const server = new Horizon.Server(HORIZON)
 
-    // Verify the user's payment tx on Horizon
+    // Verify the user's payment tx on Horizon.
+    //
+    // What counts as proof lives in lib/swap-proof, not here: it is the only
+    // thing between the distributor's balances and anybody with a hash, and a
+    // rule that decides that belongs somewhere a test can reach it.
     const tx = await server
       .transactions()
       .transaction(body.txHash)
       .call()
       .catch(() => null)
-    if (!tx) {
-      return NextResponse.json(
-        { error: 'payment transaction not found on Horizon' },
-        { status: 404 }
-      )
-    }
-    if (tx.source_account !== body.address) {
-      return NextResponse.json(
-        { error: 'tx source does not match claimed address' },
-        { status: 403 }
-      )
-    }
+    const operations = tx
+      ? (await server.operations().forTransaction(body.txHash).call()).records
+      : []
 
-    const ops = await server.operations().forTransaction(body.txHash).call()
-    const payment = ops.records.find((o: any) => o.type === 'payment') as any
-    if (!payment || payment.to !== LUSD_DISTRIBUTOR) {
+    const proof = verifyFunding({
+      tx: tx as ProofTransaction | null,
+      operations: operations as ProofOperation[],
+      direction: body.direction,
+      address: body.address,
+      sourceAmount: body.sourceAmount,
+    })
+    if (!('ok' in proof)) {
       return NextResponse.json(
-        { error: 'tx does not pay the distributor' },
-        { status: 400 }
+        { error: proof.error, code: proof.code },
+        { status: proof.status }
       )
     }
-
-    // Verify the correct asset was sent
-    const paidNative = payment.asset_type === 'native'
-    if (body.direction === 'xlm_to_lusd' && !paidNative) {
-      return NextResponse.json(
-        { error: 'expected XLM payment for xlm_to_lusd swap' },
-        { status: 400 }
-      )
-    }
-    if (body.direction === 'lusd_to_xlm' && paidNative) {
-      return NextResponse.json(
-        { error: 'expected LUSD payment for lusd_to_xlm swap' },
-        { status: 400 }
-      )
-    }
-
-    const paidAmount = parseFloat(payment.amount)
-    if (Math.abs(paidAmount - body.sourceAmount) > 0.01) {
-      return NextResponse.json(
-        { error: `paid amount ${paidAmount} does not match claim ${body.sourceAmount}` },
-        { status: 400 }
-      )
-    }
+    // Sized from the ledger's number, never from the caller's.
+    const paidAmount = proof.paidAmount
 
     // Compute the output amount using live Binance price
     const spot = await fetchXlmUsd()
