@@ -58,6 +58,22 @@ export function describeMismatch(
     return `function ${name} is not ${expected.functionName}`
   }
 
+  // The signature covers the whole authorization tree, not just its root, and
+  // only the root was ever compared. Nothing is exploitable through that today:
+  // `open` requires the quoter's auth for itself and makes no nested call under
+  // it — its two transfers move the owner's collateral and the contract's own
+  // cash, neither of which consults the quoter — so a sub-invocation the caller
+  // invented is never matched against a `require_auth` and authorizes nothing.
+  //
+  // It is checked anyway because that is a fact about today's contract, not
+  // about this function. The moment `open` makes one call on the quoter's
+  // behalf, an unchecked tree hanging off the root is a signature over
+  // arguments nobody here read. `open` has no sub-invocations, so the honest
+  // expectation is none.
+  if (entry.rootInvocation().subInvocations().length > 0) {
+    return 'the entry authorizes further calls beneath the one quoted'
+  }
+
   const args = call.args()
   if (args.length !== expected.args.length) {
     return `expected ${expected.args.length} arguments, got ${args.length}`

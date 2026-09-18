@@ -9,6 +9,8 @@ import {
 } from '@stellar/stellar-sdk'
 import { isAdmin } from '@/lib/db-queries'
 import { isValidStellarAddress } from '@/lib/utils'
+import { rateLimit } from '@/lib/rate-limit'
+import { getClientIp } from '@/lib/anti-spam'
 import { createChallenge, consumeChallenge, createSession } from '@/lib/admin-sessions'
 
 export const dynamic = 'force-dynamic'
@@ -24,6 +26,19 @@ export const dynamic = 'force-dynamic'
 export async function POST(req: Request) {
   try {
     const body = await req.json()
+
+    // Nothing here is expensive, but nothing here was bounded either: issuing a
+    // challenge is a database read and a map entry per request, and verifying
+    // one parses caller-supplied XDR. Both are open to anyone who knows an
+    // admin address, which is a public key.
+    const ip = getClientIp(req)
+    const rl = rateLimit(`admin-auth:${ip}`, 600_000, 20)
+    if (!rl.ok) {
+      return NextResponse.json(
+        { error: `rate limited — retry after ${rl.retryAfter}s` },
+        { status: 429 },
+      )
+    }
 
     if (body.action === 'challenge') {
       const { address } = body
@@ -94,6 +109,15 @@ export async function POST(req: Request) {
       )
       if (!authOp || authOp.value?.toString() !== challenge.nonce) {
         return NextResponse.json({ error: 'nonce mismatch' }, { status: 403 })
+      }
+
+      // Checked again, not only when the challenge was issued. The allowlist
+      // is the authorization and it is revocable; between the two steps sits a
+      // two-minute window in which a removed admin would still be handed an
+      // hour-long session. Whoever revokes access expects it to have taken
+      // effect when they did it.
+      if (!(await isAdmin(challenge.address))) {
+        return NextResponse.json({ error: 'not authorized' }, { status: 403 })
       }
 
       const token = createSession(challenge.address)

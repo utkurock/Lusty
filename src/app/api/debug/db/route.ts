@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getPool, ensureSchema } from '@/lib/db'
+import { requireAdmin } from '@/lib/admin-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -9,10 +10,21 @@ export const dynamic = 'force-dynamic'
  * app uses. Returns plain JSON describing what worked and what didn't,
  * so we can diagnose 500s on /api/leaderboard, /api/users/connect, etc.
  *
- * Safe to expose: it never reveals env vars or row contents, only
- * counts and error messages.
+ * Admin only. The old comment called it safe to expose because it reveals no
+ * env vars and no row contents — which was true of what it meant to return and
+ * false of what it returned. Counts are facts about the business (how many
+ * wallets, how many positions, how many admins), the table names are the
+ * schema, and the error strings are the driver's: a connection failure names
+ * the host and the role it tried. It also runs `ensureSchema`, so an anonymous
+ * caller could drive DDL and a database round trip per request.
+ *
+ * Behind the same session the rest of /api/admin uses, all of that is exactly
+ * what makes it worth keeping.
  */
-export async function GET() {
+export async function GET(req: Request) {
+  const admin = requireAdmin(req)
+  if (admin instanceof NextResponse) return admin
+
   const result: Record<string, unknown> = {
     databaseUrlSet: Boolean(process.env.DATABASE_URL),
     sslRejectUnauthorizedRaw: process.env.DB_SSL_REJECT_UNAUTHORIZED ?? '(unset)',

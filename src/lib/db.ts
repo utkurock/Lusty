@@ -227,6 +227,27 @@ async function createSchema(): Promise<void> {
     create index if not exists transactions_underlying_idx
       on transactions(underlying, subtype);
 
+    -- One row per position, per book.
+    --
+    -- The deposit route reads the position back off the ledger, so it cannot be
+    -- lied to about what a position is. What it had no answer for was being
+    -- told about the same position twice: its only replay key was the caller's
+    -- own txHash string, which nothing verifies on chain, so the same real
+    -- position could be indexed again under any number of invented hashes.
+    --
+    -- That is not a cosmetic duplicate. computeExpirySold SUMS these rows to
+    -- decide how much of an expiry's capacity is gone, so extra rows raise the
+    -- utilization every quote is haircut against — the APR offered to everyone
+    -- falls, and at the top of the range the book reads as full and the screen
+    -- closes it. The leaderboard sums them too.
+    --
+    -- Ids restart from zero on each instance, so the book is half of the key.
+    create unique index if not exists transactions_position_uniq
+      on transactions (underlying, ((metadata->>'positionId')::bigint))
+      where type = 'deposit'
+        and underlying is not null
+        and metadata ? 'positionId';
+
     -- Admin users whitelist
     create table if not exists admin_users (
       address  text primary key,

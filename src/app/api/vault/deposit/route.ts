@@ -222,6 +222,20 @@ export async function POST(req: Request) {
       // The position is on chain regardless. Release the reservation so a
       // retry can index it rather than leaving it permanently unrecorded.
       await releaseAction('deposit', body.txHash)
+
+      // Already indexed, under some other hash. The replay ledger is keyed on
+      // the caller's txHash and nothing verifies that string on chain, so it
+      // cannot answer this; the unique index on (underlying, positionId) can,
+      // and does. A duplicate is not a failure — the position is recorded,
+      // which is what the caller wanted — so it is reported the same way a
+      // repeated hash is.
+      if (dbErr?.code === '23505') {
+        return NextResponse.json(
+          { ok: true, alreadyIndexed: true, positionId: position.id },
+          { status: 200 },
+        )
+      }
+
       console.error('vault/deposit: indexing failed', dbErr)
       return NextResponse.json(
         {

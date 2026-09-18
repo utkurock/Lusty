@@ -68,6 +68,35 @@ function entryFor(
 const openEntry = (overrides: Partial<OpenArgs> = {}) =>
   entryFor(QUOTER, VAULT, 'open', openArgs({ ...QUOTE, ...overrides }))
 
+/** The same entry, with a call hung beneath the one that was quoted. */
+function withSubInvocation(
+  entry: xdr.SorobanAuthorizationEntry,
+  contractId: string,
+  fn: string,
+  args: xdr.ScVal[],
+): xdr.SorobanAuthorizationEntry {
+  const root = entry.rootInvocation()
+  return new xdr.SorobanAuthorizationEntry({
+    credentials: entry.credentials(),
+    rootInvocation: new xdr.SorobanAuthorizedInvocation({
+      function: root.function(),
+      subInvocations: [
+        new xdr.SorobanAuthorizedInvocation({
+          function:
+            xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+              new xdr.InvokeContractArgs({
+                contractAddress: new Address(contractId).toScAddress(),
+                functionName: fn,
+                args,
+              }),
+            ),
+          subInvocations: [],
+        }),
+      ],
+    }),
+  })
+}
+
 describe('credentialAddress', () => {
   it('reads the address an entry authorizes for', () => {
     expect(credentialAddress(openEntry())).toBe(QUOTER)
@@ -76,6 +105,40 @@ describe('credentialAddress', () => {
   it('returns null for a source-account entry, which needs no co-signature', () => {
     const entry = entryFor(null, VAULT, 'open', openArgs(QUOTE))
     expect(credentialAddress(entry)).toBeNull()
+  })
+})
+
+describe('describeMismatch — the tree, not only its root', () => {
+  // The quoter's signature covers the whole authorization tree. Only the root
+  // was compared, so anything hung beneath the quoted call went unread.
+  //
+  // Nothing is exploitable through it on today's contract: `open` requires the
+  // quoter's auth for itself and makes no nested call under it — its transfers
+  // move the owner's collateral and the contract's own cash, neither of which
+  // consults the quoter — so an invented sub-invocation is never matched
+  // against a `require_auth`. That is a fact about the contract, not about this
+  // function, and the day `open` makes one call on the quoter's behalf it stops
+  // being true.
+  it('refuses an entry carrying a call beneath the quoted one', () => {
+    const entry = withSubInvocation(openEntry(), VAULT, 'set_limits', [])
+    expect(describeMismatch(entry, expected())).toBe(
+      'the entry authorizes further calls beneath the one quoted',
+    )
+  })
+
+  it('refuses one naming a contract that is not the vault at all', () => {
+    const entry = withSubInvocation(
+      openEntry(),
+      'CDTMNV7F7P3LUH6LLBTXY4EQYBUYGVGYRC7P73HMFV5PXLO5NE6A74QB',
+      'transfer',
+      [],
+    )
+    expect(describeMismatch(entry, expected())).not.toBeNull()
+  })
+
+  it('accepts the bare entry the client actually builds', () => {
+    expect(openEntry().rootInvocation().subInvocations()).toHaveLength(0)
+    expect(describeMismatch(openEntry(), expected())).toBeNull()
   })
 })
 
