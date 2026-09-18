@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { AssetRow } from './AssetRow'
-import { EpochCapProgress } from './EpochCapProgress'
+import { CapacitySummary } from './CapacitySummary'
 import { cn } from '@/lib/utils'
 import { useVaultStats } from '@/hooks/useVaultStats'
 import { upcomingExpiryDates } from '@/lib/expiries'
@@ -94,12 +94,6 @@ function AssetBook({ asset, tab }: { asset: UnderlyingAsset; tab: Tab }) {
   const full =
     buckets.length > 0 && buckets.every((b) => (isCalls ? b.callFull : b.putFull))
 
-  const capacity = isCalls ? stats?.call : stats?.put
-  const segments = buckets.map((b) =>
-    isCalls
-      ? { label: b.label, utilized: b.callXlm, cap: b.callCapXlm, full: b.callFull }
-      : { label: b.label, utilized: b.putUsd, cap: b.putCapUsd, full: b.putFull },
-  )
 
   return (
     <div className="space-y-2">
@@ -115,18 +109,6 @@ function AssetBook({ asset, tab }: { asset: UnderlyingAsset; tab: Tab }) {
         disabled={full}
         disabledReason="Vault full"
       />
-
-      {/* Capacity belongs to the book, not to the page: two instances have two
-          independent caps, and one bar above a list of them describes neither. */}
-      {capacity && (
-        <EpochCapProgress
-          utilized={capacity.utilized}
-          cap={capacity.cap}
-          unit={isCalls ? asset.symbol : 'USD'}
-          decimals={isCalls ? asset.displayDecimals : 0}
-          segments={segments}
-        />
-      )}
 
       {/* The engine answered and had nothing to offer. Say so once, under the
           row, rather than leaving two columns of dashes to be read as zero
@@ -177,6 +159,16 @@ export function AssetList({ tab, onTabChange }: AssetListProps) {
             </button>
           ))}
         </div>
+      </div>
+
+      {/* One line for the screen, under the heading it belongs to. The
+          per-expiry split lives on the strike screen where an expiry is
+          actually being chosen: three dated chips per row answered a question
+          nobody asks while reading a list. Kept as a percentage per book rather
+          than a total, because the books do not share a unit and the only way
+          to add them is to price them. */}
+      <div className="mb-6">
+        <CapacitySummary books={books} side={tab === 'calls' ? 'call' : 'put'} />
       </div>
 
       <div className="space-y-6">
