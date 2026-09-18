@@ -58,7 +58,7 @@ function AssetBook({ asset, tab }: { asset: UnderlyingAsset; tab: Tab }) {
     // range spans two corners:
     //   MAX = longest expiry, nearest strike   (highest yield on offer)
     //   MIN = shortest expiry, deepest OTM     (lowest/safest yield on offer)
-    const dates = upcomingExpiryDates()
+    const dates = upcomingExpiryDates(new Date(), asset.expiry)
     const shortExpiry = dates[0].toISOString()
     const longExpiry = dates[dates.length - 1].toISOString()
 
@@ -87,7 +87,7 @@ function AssetBook({ asset, tab }: { asset: UnderlyingAsset; tab: Tab }) {
     return () => {
       cancelled = true
     }
-  }, [asset.symbol, side])
+  }, [asset, side])
 
   // Only block the entry point when every open expiry is full.
   const buckets = stats?.buckets ?? []

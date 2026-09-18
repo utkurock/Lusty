@@ -20,7 +20,7 @@
 // the code rather than a coincidence between two clocks.
 
 import { XLM, type UnderlyingAsset } from './assets'
-import { MIN_DAYS_TO_EXPIRY } from './expiries'
+import { minDaysToExpiry } from './expiries'
 import { expiryUtilizationFor } from './vault-state'
 
 export interface PricingInputs {
@@ -38,8 +38,12 @@ export interface PricingInputs {
  * bought for a short-dated lock, and so the browser and the server land on the
  * same integer from the same expiry.
  */
-export function pricingDaysFor(expiryMs: number, now: number = Date.now()): number {
-  return Math.max(MIN_DAYS_TO_EXPIRY, Math.ceil((expiryMs - now) / 86_400_000))
+export function pricingDaysFor(
+  expiryMs: number,
+  now: number = Date.now(),
+  asset: UnderlyingAsset = XLM,
+): number {
+  return Math.max(minDaysToExpiry(asset.expiry), Math.ceil((expiryMs - now) / 86_400_000))
 }
 
 /**

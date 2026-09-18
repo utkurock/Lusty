@@ -33,16 +33,23 @@ import { upcomingExpiryDates, expiryLabel, expiryUtilization } from './expiries'
 // positions. Override with VAULT_EXPOSURE_GRACE_DAYS.
 const EXPOSURE_GRACE_DAYS = Number(process.env.VAULT_EXPOSURE_GRACE_DAYS ?? 7)
 
-// Each open expiry ("epoch") is its own capacity bucket: EPOCHS_PER_MONTH
-// expiries are open at once, each capped independently (call in XLM, put in
-// USD). A full expiry blocks only itself.
-export const EPOCHS_PER_MONTH = Number(process.env.VAULT_EPOCHS_PER_MONTH ?? 3)
+// Each open expiry ("epoch") is its own capacity bucket: the book's own
+// `openExpiries` are open at once, each capped independently (call in the
+// underlying, put in USD). A full expiry blocks only itself.
+//
+// The count is the asset's since M2-04. It was one env value for every book,
+// which is the one number in the envelope that cannot be shared: it divides a
+// monthly capacity into the per-expiry figure M2-05 reconciles against the
+// instance's `max_expiry_*`, so a book dividing by another book's count would
+// be checked against a bound its own contract never enforces.
+export const epochsPerMonth = (asset: UnderlyingAsset = XLM): number =>
+  asset.expiry.openExpiries
 
-/** Per-expiry cap = the asset's own monthly budget / open expiries. */
+/** Per-expiry cap = the asset's own monthly budget / its own open expiries. */
 export const callEpochCap = (asset: UnderlyingAsset = XLM): number =>
-  asset.callMonthlyCap / EPOCHS_PER_MONTH
+  asset.callMonthlyCap / epochsPerMonth(asset)
 export const putEpochCap = (asset: UnderlyingAsset = XLM): number =>
-  asset.putMonthlyCapUsd / EPOCHS_PER_MONTH
+  asset.putMonthlyCapUsd / epochsPerMonth(asset)
 
 // XLM's numbers, kept for the surfaces that still name it directly.
 export const CALL_MONTHLY_CAP_XLM = XLM.callMonthlyCap
@@ -104,12 +111,12 @@ export interface ExpiryBucket {
   putUsd: number
 }
 
-// The open expiry buckets (next EPOCHS_PER_MONTH Fridays) with amounts sold.
+// The open expiry buckets (the book's own schedule) with amounts sold.
 export async function computeOpenBuckets(
   now = new Date(),
   asset: UnderlyingAsset = XLM
 ): Promise<ExpiryBucket[]> {
-  const dates = upcomingExpiryDates(now, EPOCHS_PER_MONTH)
+  const dates = upcomingExpiryDates(now, asset.expiry)
   const keys = dates.map((d) => expiryDateKey(d))
   const sold = await computeExpirySold(keys, asset)
   return dates.map((d) => {

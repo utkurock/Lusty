@@ -88,9 +88,12 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
 
   // Expiries derived from real on-chain utilization when available so the
   // dynamic APR engine drops the offered APR as the vault fills up.
+  // The schedule this book keeps, not the app's default one: how many expiries
+  // are offered, how close to settlement the nearest one sits and how far apart
+  // they are all come off the asset.
   const baseExpiries = useMemo(
-    () => getExpiryOptions(type, realStats),
-    [type, realStats],
+    () => getExpiryOptions(type, realStats, asset?.expiry),
+    [type, realStats, asset],
   )
   const [expiries, setExpiries] = useState<ExpiryOption[]>(baseExpiries)
   useEffect(() => setExpiries(baseExpiries), [baseExpiries])

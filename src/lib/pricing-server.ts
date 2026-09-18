@@ -37,7 +37,7 @@ import {
   callStrikeLabel,
   putStrikeLabel,
 } from './pricing'
-import { XLM, type StrikeParams, type UnderlyingAsset } from './assets'
+import { XLM, type ExpiryParams, type StrikeParams, type UnderlyingAsset } from './assets'
 import { getRealizedVol } from './vol'
 import { getForward } from './forward'
 import { smileVol } from './smile'
@@ -83,10 +83,14 @@ const PREMIUM_FEE_RATE = num(process.env.PREMIUM_FEE_RATE, 0.10) // 10% of upfro
 const TIME_REF_DAYS_ENV = num(process.env.TIME_REF_DAYS, 0)
 const TIME_REF_FALLBACK = 21 // used only if dynamic lookup is unavailable
 
-function resolveTimeRefDays(): number {
+// The reference is the farthest expiry THIS book keeps open. A book quoting
+// against another book's schedule would scale its whole ladder by the wrong
+// horizon: a shorter schedule reads every tenor as long and pays the ceiling
+// too early, a longer one strands its own farthest expiry below the cap.
+function resolveTimeRefDays(params: ExpiryParams = XLM.expiry): number {
   if (TIME_REF_DAYS_ENV > 0) return TIME_REF_DAYS_ENV
   try {
-    const d = maxOpenExpiryDays()
+    const d = maxOpenExpiryDays(new Date(), params)
     return d > 0 ? d : TIME_REF_FALLBACK
   } catch {
     return TIME_REF_FALLBACK
@@ -148,6 +152,11 @@ export interface QuoteInput {
    * caller that wants Greeks only (`lib/portfolio`) can leave it out.
    */
   strikes?: StrikeParams
+  /**
+   * The book's own schedule, which fixes the time reference the ladder is
+   * scaled against when `timeRefDays` is not pinned. Absent means XLM's.
+   */
+  expiries?: ExpiryParams
 }
 
 export interface Quote {
@@ -288,7 +297,9 @@ export function quoteOption(input: QuoteInput): Quote {
 
   // Time-scaled ceiling for the top strike (longer tenor → higher target).
   const timeRefDays =
-    input.timeRefDays && input.timeRefDays > 0 ? input.timeRefDays : resolveTimeRefDays()
+    input.timeRefDays && input.timeRefDays > 0
+      ? input.timeRefDays
+      : resolveTimeRefDays(input.expiries)
   const targetTop = MAX_APR * Math.min(1, daysToExpiry / timeRefDays)
   const scaleFactor = ref.apr > 0 ? Math.min(1, targetTop / ref.apr) : 1
 
@@ -416,6 +427,7 @@ export async function quoteLadder(
       sigmaRealized: context.sigmaRealized,
       utilization,
       strikes: asset.strike,
+      expiries: asset.expiry,
     })
     const label = side === 'call' ? callStrikeLabel(mult) : putStrikeLabel(mult)
     return { ...q, index, label }
@@ -448,6 +460,7 @@ export async function quoteOptionLive(input: {
     // strike scales by the wrong factor and the vault pays a premium no screen
     // ever showed.
     strikes: asset.strike,
+    expiries: asset.expiry,
   })
   return { context, quote }
 }

@@ -6,7 +6,7 @@ import { credentialAddress, describeMismatch } from '@/lib/vault-auth'
 import { quoteOptionLive } from '@/lib/pricing-server'
 import { getSpot } from '@/lib/spot'
 import { pricingInputsFor } from '@/lib/quote-inputs'
-import { MIN_DAYS_TO_EXPIRY } from '@/lib/expiries'
+import { minDaysToExpiry } from '@/lib/expiries'
 import { assertQuoteAllowed, PolicyRejection } from '@/lib/quote-policy'
 import { getBreakerState } from '@/lib/circuit-breaker'
 import { requestedUnderlying } from '@/lib/assets'
@@ -69,9 +69,9 @@ function premiumTolerance(quoted: number): number {
   return Math.max(PREMIUM_TOLERANCE_MIN, (quoted * bps) / 10_000)
 }
 
-// MIN_DAYS_TO_EXPIRY is the schedule's own minimum tenor, imported rather than
-// restated: it decides which expiries the UI offers and which ones this route
-// will still price, and those two must be the same number.
+// The minimum tenor is the book's own, read off the asset rather than restated
+// here: it decides which expiries the UI offers and which ones this route will
+// still price, and those two must be the same number for the same book.
 const MAX_DAYS_TO_EXPIRY = 365
 
 // Concentration policy. The contract's own caps bound vault risk; these bound
@@ -181,9 +181,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'invalid expiryIso' }, { status: 400 })
     }
     const daysToExpiry = (expiryMs - Date.now()) / 86400_000
-    if (daysToExpiry < MIN_DAYS_TO_EXPIRY) {
+    const minTenor = minDaysToExpiry(asset.expiry)
+    if (daysToExpiry < minTenor) {
       return NextResponse.json(
-        { error: `quotes close within ${MIN_DAYS_TO_EXPIRY} days of expiry` },
+        { error: `quotes close within ${minTenor} days of expiry` },
         { status: 409 },
       )
     }

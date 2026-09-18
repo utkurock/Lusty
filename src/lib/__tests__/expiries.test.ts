@@ -5,16 +5,16 @@ import {
   expiryUtilization,
   expiryLabel,
   dynamicAprFactor,
-  MIN_DAYS_TO_EXPIRY,
-  ACTIVE_EXPIRY_COUNT,
+  minDaysToExpiry,
+  openExpiryCount,
   REAL_DISTRIBUTION,
 } from '../expiries'
 
 describe('upcomingExpiryDates', () => {
-  it('returns ACTIVE_EXPIRY_COUNT consecutive Fridays at 08:00 UTC', () => {
+  it('returns the book s own count of consecutive Fridays at 08:00 UTC', () => {
     const from = new Date('2026-06-08T12:00:00Z') // Monday
     const dates = upcomingExpiryDates(from)
-    expect(dates).toHaveLength(ACTIVE_EXPIRY_COUNT)
+    expect(dates).toHaveLength(openExpiryCount())
     for (const d of dates) {
       expect(d.getUTCDay()).toBe(5)
       expect(d.getUTCHours()).toBe(8)
@@ -25,13 +25,13 @@ describe('upcomingExpiryDates', () => {
     }
   })
 
-  it('respects the MIN_DAYS_TO_EXPIRY cutoff (no same-week rush)', () => {
+  it('respects the book s minimum tenor (no same-week rush)', () => {
     // Thursday afternoon: this week's Friday is < 2 days away → skip to next.
     const from = new Date('2026-06-11T12:00:00Z') // Thursday
     const [first] = upcomingExpiryDates(from)
     expect(first.toISOString()).toBe('2026-06-19T08:00:00.000Z')
     const daysAway = (first.getTime() - from.getTime()) / 86400_000
-    expect(daysAway).toBeGreaterThanOrEqual(MIN_DAYS_TO_EXPIRY)
+    expect(daysAway).toBeGreaterThanOrEqual(minDaysToExpiry())
   })
 
   it('keeps this week\'s Friday while it is still far enough out', () => {
@@ -48,7 +48,7 @@ describe('maxOpenExpiryDays', () => {
     const dates = upcomingExpiryDates(from)
     const last = dates[dates.length - 1]
     expect(days).toBe(Math.ceil((last.getTime() - from.getTime()) / 86400_000))
-    expect(days).toBeGreaterThanOrEqual(MIN_DAYS_TO_EXPIRY)
+    expect(days).toBeGreaterThanOrEqual(minDaysToExpiry())
   })
 })
 

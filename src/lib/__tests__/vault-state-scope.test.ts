@@ -93,8 +93,8 @@ describe('filling one book leaves the other s haircut alone', () => {
   })
 
   it('caps each expiry off the asset s own monthly budget', () => {
-    expect(state.callEpochCap(BTC)).toBe(BTC.callMonthlyCap / state.EPOCHS_PER_MONTH)
-    expect(state.putEpochCap(XLM)).toBe(XLM.putMonthlyCapUsd / state.EPOCHS_PER_MONTH)
+    expect(state.callEpochCap(BTC)).toBe(BTC.callMonthlyCap / BTC.expiry.openExpiries)
+    expect(state.putEpochCap(XLM)).toBe(XLM.putMonthlyCapUsd / XLM.expiry.openExpiries)
     expect(state.callEpochCap(BTC)).not.toBe(state.callEpochCap(XLM))
   })
 })

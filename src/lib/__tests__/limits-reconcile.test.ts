@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
 import { StrKey } from '@stellar/stellar-sdk'
-import { EPOCHS_PER_MONTH } from '../vault-state'
+import { epochsPerMonth } from '../vault-state'
 
 const XLM_VAULT = StrKey.encodeContract(Buffer.alloc(32, 0x11))
 
@@ -94,14 +94,15 @@ describe('compareLimits — the registry against the instance', () => {
 
   it('compares the monthly capacity per expiry, not per month', () => {
     // The trap this check exists for. The envelope declares a month of
-    // capacity and opens EPOCHS_PER_MONTH expiries against it, so the figure
+    // capacity and opens its own expiries against it, so the figure
     // that meets `max_expiry_call` is the quotient. Comparing the monthly
     // number instead would call this book three times looser than it is.
     const perExpiry = DEPLOYED.maxExpiryCall
-    const book = { ...reg.XLM, callMonthlyCap: perExpiry * EPOCHS_PER_MONTH }
+    const epochs = epochsPerMonth(reg.XLM)
+    const book = { ...reg.XLM, callMonthlyCap: perExpiry * epochs }
     expect(lim.compareLimits(book, DEPLOYED)).toEqual([])
 
-    const overflowing = { ...reg.XLM, callMonthlyCap: perExpiry * EPOCHS_PER_MONTH + 3 }
+    const overflowing = { ...reg.XLM, callMonthlyCap: perExpiry * epochs + 3 }
     const drift = lim.compareLimits(overflowing, DEPLOYED)
     expect(drift).toHaveLength(1)
     expect(drift[0].field).toBe('callMonthlyCap/epochs')

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { pricingDaysFor } from '../quote-inputs'
-import { upcomingExpiryDates, MIN_DAYS_TO_EXPIRY } from '../expiries'
+import { upcomingExpiryDates, minDaysToExpiry } from '../expiries'
 
 // The tenor a premium is priced against has to be a function of the expiry and
 // nothing else. When the browser derived it from its own clock and the
@@ -18,7 +18,7 @@ describe('pricingDaysFor', () => {
   it('never prices below the minimum tenor the schedule writes', () => {
     const now = new Date('2026-06-08T12:00:00Z').getTime()
     const expiry = now + 6 * 3600_000 // six hours out
-    expect(pricingDaysFor(expiry, now)).toBe(MIN_DAYS_TO_EXPIRY)
+    expect(pricingDaysFor(expiry, now)).toBe(minDaysToExpiry())
   })
 
   it('is a function of the expiry alone — same expiry, same days', () => {

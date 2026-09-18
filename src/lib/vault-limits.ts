@@ -24,7 +24,7 @@
 
 import { UnderlyingAsset, allUnderlyings } from './assets'
 import { getVaultLimits, VaultLimits } from './vault-contract'
-import { callEpochCap, putEpochCap, EPOCHS_PER_MONTH } from './vault-state'
+import { callEpochCap, putEpochCap, epochsPerMonth } from './vault-state'
 
 /**
  * `declared` means the registry's record of the instance is wrong: the
@@ -99,7 +99,7 @@ export function compareLimits(
   //
   // The per-expiry figures are where this is easiest to get wrong, because the
   // envelope does not declare one. It declares a monthly capacity and splits it
-  // across the EPOCHS_PER_MONTH expiries open at a time, so the number to
+  // across the expiries the book keeps open at a time, so the number to
   // compare against `max_expiry_*` is that quotient, not the monthly figure.
   const envelope: Array<[string, number, keyof VaultLimits, string]> = [
     ['maxSize', asset.maxSize, 'maxPositionCall', 'a call position'],
@@ -108,13 +108,13 @@ export function compareLimits(
       'callMonthlyCap/epochs',
       callEpochCap(asset),
       'maxExpiryCall',
-      `call collateral on one expiry (${asset.callMonthlyCap} a month over ${EPOCHS_PER_MONTH} expiries)`,
+      `call collateral on one expiry (${asset.callMonthlyCap} a month over ${epochsPerMonth(asset)} expiries)`,
     ],
     [
       'putMonthlyCapUsd/epochs',
       putEpochCap(asset),
       'maxExpiryPut',
-      `put collateral on one expiry (${asset.putMonthlyCapUsd} a month over ${EPOCHS_PER_MONTH} expiries)`,
+      `put collateral on one expiry (${asset.putMonthlyCapUsd} a month over ${epochsPerMonth(asset)} expiries)`,
     ],
   ]
   for (const [field, value, against, what] of envelope) {

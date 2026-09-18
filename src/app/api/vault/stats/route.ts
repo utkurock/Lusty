@@ -5,7 +5,7 @@ import {
   computeOpenBuckets,
   callEpochCap,
   putEpochCap,
-  EPOCHS_PER_MONTH,
+  epochsPerMonth,
 } from '@/lib/vault-state'
 import { XLM, settleableUnderlying } from '@/lib/assets'
 import { LUSD_CODE, LUSD_ISSUER, LUSD_DISTRIBUTOR } from '@/lib/lusd'
@@ -120,7 +120,7 @@ export async function GET(req: Request) {
           utilizationPct: putUtilizationPct,
         },
         buckets,
-        epochsPerMonth: EPOCHS_PER_MONTH,
+        epochsPerMonth: epochsPerMonth(asset),
         // Back-compat aliases (call side).
         utilizedXlm: callUtilizedXlm,
         capXlm: callCapXlm,

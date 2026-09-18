@@ -2,6 +2,19 @@
 // Lusty splits each "epoch month" into multiple Friday expiries so users can
 // pick the duration that matches their view. APR is derived from the selected
 // expiry's days-to-expiry and its own pool utilization.
+//
+// M2-04: the schedule is the asset's, not the module's. How many expiries a
+// book keeps open, how close to settlement it still writes and how far apart
+// its expiries sit are declared per asset (`ExpiryParams`, since M2-01) and
+// read here. They are not cosmetic: `openExpiries` is the divisor that turns a
+// monthly capacity into the per-expiry bucket reconciled against the contract
+// (M2-05), so a book quoting off another book's count would quote against a
+// cap its own instance does not enforce.
+//
+// Every function below takes the parameters and defaults to XLM's, which is
+// the same absent-means-XLM rule the rest of the app has followed since M1-06.
+
+import { XLM, type ExpiryParams } from './assets'
 
 export interface ExpiryOption {
   id: string
@@ -16,13 +29,19 @@ export interface ExpiryOption {
 
 const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
-// No deposits accepted with fewer days than this until the Friday expiry.
-// Prevents last-day rush where users grab a high-decay premium hours before
-// settlement and the vault carries assignment risk it can't price properly.
-export const MIN_DAYS_TO_EXPIRY = 2
+// No deposits accepted with fewer days than an asset's `minDaysToExpiry` until
+// its expiry. Prevents the last-day rush where users grab a high-decay premium
+// hours before settlement and the vault carries assignment risk it cannot
+// price properly. How many days that is belongs to the book: a slower
+// underlying can be written closer to settlement than a fast one.
+export function minDaysToExpiry(params: ExpiryParams = XLM.expiry): number {
+  return params.minDaysToExpiry
+}
 
-// Rolling expiries open at once — mirrors VAULT_EPOCHS_PER_MONTH on the server.
-export const ACTIVE_EXPIRY_COUNT = 3
+/** Rolling expiries a book keeps open at once, and its capacity divisor. */
+export function openExpiryCount(params: ExpiryParams = XLM.expiry): number {
+  return params.openExpiries
+}
 
 // How aggregate vault utilization is spread across the rolling expiries: the
 // front expiry carries 100% of it, mid 60%, back 30%. Reflects real-world flow
@@ -44,32 +63,50 @@ export function expiryLabel(date: Date): string {
   return `${MONTH_ABBR[date.getUTCMonth()]}_${String(date.getUTCDate()).padStart(2, '0')}`
 }
 
-// Next `count` Friday 08:00 UTC expiries (UTC so client and server agree on the
+// The book's expiries at 08:00 UTC (UTC so client and server agree on the
 // canonical timestamp, which is what lets capacity buckets match deposits).
-function nextFridays(from: Date, count: number): Date[] {
-  const cutoff = new Date(from.getTime() + MIN_DAYS_TO_EXPIRY * 24 * 60 * 60 * 1000)
+//
+// The first one is the next Friday at or after the book's minimum tenor, and
+// each one after it sits `tenorDays` later. A tenor that is a multiple of
+// seven keeps the whole schedule on Fridays, which is what both books declare;
+// one that is not steps off the weekday grid deliberately rather than snapping
+// back to it, because a schedule that silently rounds is a schedule nobody can
+// reconcile against a settlement.
+function scheduleFrom(from: Date, params: ExpiryParams): Date[] {
+  const cutoff = new Date(from.getTime() + params.minDaysToExpiry * 24 * 60 * 60 * 1000)
   const dow = cutoff.getUTCDay()
   const daysUntilFriday = (5 - dow + 7) % 7
   const first = new Date(cutoff)
   first.setUTCDate(first.getUTCDate() + daysUntilFriday)
   first.setUTCHours(8, 0, 0, 0)
 
+  // Pinning the hour can walk the anchor back behind the cutoff: a cutoff that
+  // lands on a Friday afternoon snaps to 08:00 that same morning, which is
+  // inside the minimum tenor the book just declared. With one open expiry and
+  // a two-day minimum that is every Wednesday afternoon UTC — the screen offers
+  // a front expiry and `/api/vault/authorize` then refuses it with a 409,
+  // because that route reads the same minimum and reads it correctly. Step a
+  // whole tenor forward rather than shaving hours off the bound.
+  if (first.getTime() < cutoff.getTime()) {
+    first.setUTCDate(first.getUTCDate() + params.tenorDays)
+  }
+
   const out: Date[] = []
-  for (let i = 0; i < count; i++) {
+  for (let i = 0; i < params.openExpiries; i++) {
     const d = new Date(first)
-    d.setUTCDate(d.getUTCDate() + i * 7)
+    d.setUTCDate(d.getUTCDate() + i * params.tenorDays)
     out.push(d)
   }
   return out
 }
 
-// Open expiry dates (canonical UTC Fridays). Shared by the UI and the server's
-// capacity buckets so both agree on which expiries exist.
+// Open expiry dates for one book. Shared by the UI and the server's capacity
+// buckets so both agree on which expiries exist.
 export function upcomingExpiryDates(
   from: Date = new Date(),
-  count: number = ACTIVE_EXPIRY_COUNT,
+  params: ExpiryParams = XLM.expiry,
 ): Date[] {
-  return nextFridays(from, count)
+  return scheduleFrom(from, params)
 }
 
 function daysBetween(a: Date, b: Date): number {
@@ -83,10 +120,13 @@ function daysBetween(a: Date, b: Date): number {
  * schedule (the reference moves with the expiries instead of being a fixed
  * constant that the longest expiry may never reach).
  */
-export function maxOpenExpiryDays(from: Date = new Date()): number {
-  const dates = upcomingExpiryDates(from, ACTIVE_EXPIRY_COUNT)
+export function maxOpenExpiryDays(
+  from: Date = new Date(),
+  params: ExpiryParams = XLM.expiry,
+): number {
+  const dates = upcomingExpiryDates(from, params)
   const last = dates[dates.length - 1]
-  return Math.max(MIN_DAYS_TO_EXPIRY, daysBetween(from, last))
+  return Math.max(params.minDaysToExpiry, daysBetween(from, last))
 }
 
 interface RealVaultStats {
@@ -108,9 +148,10 @@ interface RealVaultStats {
 export function getExpiryOptions(
   type: 'call' | 'put' = 'call',
   realStats?: RealVaultStats,
+  params: ExpiryParams = XLM.expiry,
 ): ExpiryOption[] {
   const now = new Date()
-  const fridays = upcomingExpiryDates(now, ACTIVE_EXPIRY_COUNT)
+  const fridays = upcomingExpiryDates(now, params)
 
   // Deterministic-ish utilization per day so UI doesn't jitter every second
   // when we don't have real data yet.
@@ -128,8 +169,8 @@ export function getExpiryOptions(
     : null
 
   return fridays.map((date, i) => {
-    const daysToExpiry = Math.max(MIN_DAYS_TO_EXPIRY, daysBetween(now, date))
-    const totalEpochDays = 7 + i * 7
+    const daysToExpiry = Math.max(params.minDaysToExpiry, daysBetween(now, date))
+    const totalEpochDays = params.tenorDays * (i + 1)
 
     // Cap & utilization: prefer real on-chain data when available.
     const vaultCap = realStats?.vaultCap ?? 5_000_000
