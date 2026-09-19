@@ -40,7 +40,7 @@ function Outcome({
   const Arrow = up ? ArrowUpRight : ArrowDownRight
 
   return (
-    <div className="p-4 rounded-sm bg-surface-2 flex items-start gap-3">
+    <div className="p-4 rounded-sm bg-raised border border-line-light flex items-start gap-3">
       <span
         className={cn(
           'mt-0.5 shrink-0 w-7 h-7 rounded-inner flex items-center justify-center',
