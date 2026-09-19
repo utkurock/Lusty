@@ -111,10 +111,10 @@ export function verifyFunding(input: {
 
   // Both directions name the asset exactly. "Not native" is not the same claim
   // as "is LUSD": any issued asset the distributor can hold satisfies it, and
-  // would be paid out in XLM at the LUSD rate. Nothing but LUSD can reach the
-  // account today, because a payment needs a trustline and it holds one — but
-  // that is a property of the account this morning, not a check, and the day it
-  // opens a second trustline the hole opens with it.
+  // would be paid out in XLM at the LUSD rate. That day has arrived — the
+  // distributor now also holds the anchor's asset, for the bridge in
+  // app/api/anchor/bridge — so the exact code and issuer below are what keeps a
+  // payment in the wrong dollar from being swapped for XLM.
   const paidNative = payment.asset_type === 'native'
   const paidLusd =
     !paidNative &&

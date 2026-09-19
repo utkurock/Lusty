@@ -6,6 +6,7 @@ import { Menu, X } from 'lucide-react'
 import { WalletButton } from '@/components/shared/WalletButton'
 import { FaucetButton } from '@/components/shared/FaucetButton'
 import { ThemeToggle } from '@/components/shared/ThemeToggle'
+import { AnchorNavLink } from '@/components/anchor/AnchorNavLink'
 import { cn } from '@/lib/utils'
 
 const LINKS = [
@@ -57,12 +58,14 @@ export function Navbar() {
         </nav>
 
         <div className="hidden md:flex items-center gap-2">
+          <AnchorNavLink />
           <ThemeToggle />
           <FaucetButton />
           <WalletButton />
         </div>
 
         <div className="md:hidden flex items-center gap-1">
+          <AnchorNavLink />
           <ThemeToggle />
           <button
             aria-label="Toggle menu"
