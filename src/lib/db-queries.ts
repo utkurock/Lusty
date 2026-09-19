@@ -115,6 +115,11 @@ export interface DbPosition {
   payoutHash: string | null
   /** Contract-assigned id, for rows indexed from vault state. */
   positionId: number | null
+  /**
+   * The stablecoin the writer spent, when it was converted into the cash the
+   * position escrows. Null for everything else, which is almost every row.
+   */
+  fundedWith: string | null
 }
 
 /**
@@ -192,6 +197,10 @@ export async function getPositionsForAddress(
       positionId: Number.isInteger(meta.positionId)
         ? (meta.positionId as number)
         : null,
+      fundedWith:
+        typeof meta.fundedWith === 'string' && meta.fundedWith
+          ? meta.fundedWith
+          : null,
     }
   })
 }

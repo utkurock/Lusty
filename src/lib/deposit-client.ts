@@ -25,6 +25,12 @@ export interface DepositRecord {
   strikePrice: number
   daysToExpiry: number
   expiryIso: string
+  /**
+   * The stablecoin the writer actually spent, when it was converted into the
+   * cash the position escrows. Left off for everything else. The server
+   * narrows it to a recognised stable before it is stored.
+   */
+  fundedWith?: string
 }
 
 /** Record an opened position. Throws; callers decide what a lost row costs. */

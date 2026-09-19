@@ -7,6 +7,7 @@ import { getPosition } from '@/lib/vault-contract'
 import { getSpot } from '@/lib/spot'
 import { realizedApr } from '@/lib/apr'
 import { requestedUnderlying } from '@/lib/assets'
+import { USDC_CODE } from '@/lib/usdc'
 import { limitsRefusal } from '@/lib/vault-limits'
 
 export const dynamic = 'force-dynamic'
@@ -45,6 +46,18 @@ interface DepositBody {
   strikePrice: number
   daysToExpiry: number
   expiryIso?: string
+  /**
+   * The stablecoin the writer actually spent, when it was not the cash the
+   * position escrows. A put's collateral is always the vault's cash; a writer
+   * who picked USDC paid USDC and it was converted one for one on the way in,
+   * and this is the only place that fact survives.
+   *
+   * A note, not a claim about the collateral: the conversion is its own
+   * transaction, so contract state cannot corroborate it and nothing is
+   * derived from it. Narrowed to a known stable below so an arbitrary string
+   * cannot be written onto a position and rendered back.
+   */
+  fundedWith?: string
 }
 
 // Tolerance when comparing client-reported figures to contract state. Both
@@ -182,6 +195,14 @@ export async function POST(req: Request) {
     }
 
     try {
+      // Recognised stables only, and only when it differs from what was
+      // escrowed — "funded with LUSD" on an LUSD position is noise.
+      const collateralCode = position.side === 'call' ? asset.symbol : 'LUSD'
+      const fundedWith =
+        body.fundedWith === USDC_CODE && body.fundedWith !== collateralCode
+          ? USDC_CODE
+          : null
+
       await logTransaction({
         address: position.owner,
         type: 'deposit',
@@ -215,6 +236,8 @@ export async function POST(req: Request) {
           premium: position.premium,
           settled: position.settled,
           outcome: position.outcome,
+          // Only when it says something the collateral does not.
+          fundedWith: fundedWith ?? undefined,
           source: 'contract',
         },
       })

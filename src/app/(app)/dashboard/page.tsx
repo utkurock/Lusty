@@ -68,6 +68,12 @@ interface Position {
    * second survives in the database mirror, and its book is closed.
    */
   positionId: number | null
+  /**
+   * The stablecoin the writer spent, when it was converted into the cash this
+   * position escrows. The collateral is still cash — this only keeps "I paid
+   * in USDC" from disappearing the moment it was converted.
+   */
+  fundedWith?: string | null
 }
 
 // Mirrors the /api/vault/portfolio response.
@@ -423,10 +429,21 @@ function PositionRow({ p }: { p: Position }) {
   const expired = isExpired(p.expiryIso)
   const stranded = isStranded(p)
   const isCall = p.type === 'call'
-  // A call escrows the underlying, a put escrows cash, so the row shows
-  // whichever one this position actually locked up. The put leg's ticker is a
-  // stable rather than a book, which is what the fallback answers for.
-  const iconSrc = logoOf(p.asset, '/lusd.png')
+  /**
+   * What the row is named after.
+   *
+   * A call escrows the underlying, a put escrows cash. A put funded through
+   * the ramp is named after the stablecoin the writer actually handed over —
+   * that is the transaction they remember making, and a row headed LUSD for
+   * money they sent as USDC reads as somebody else's position. What comes back
+   * is still cash, so the line underneath says so rather than letting the
+   * heading imply a return in the asset that went in.
+   */
+  const shownAsset = p.fundedWith && p.fundedWith !== p.asset ? p.fundedWith : p.asset
+  // The put leg's ticker is a stable rather than a book, which is what these
+  // fallbacks answer for — neither stable is an underlying, so neither has a
+  // registry entry to read a logo off.
+  const iconSrc = logoOf(shownAsset, shownAsset === 'USDC' ? '/usdc.png' : '/lusd.png')
   return (
     <div className="light-card card-interactive p-5">
       <div className="grid grid-cols-1 md:grid-cols-[1.3fr_1fr_1fr_1fr_auto] gap-5 items-center">
@@ -434,16 +451,25 @@ function PositionRow({ p }: { p: Position }) {
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={iconSrc}
-            alt={p.asset}
+            alt={shownAsset}
             className="w-10 h-10 rounded-full shrink-0"
           />
           <div>
             <div className="font-mono font-semibold text-ink">
-              {p.asset} {isCall ? 'Covered Call' : 'Cash-Secured Put'}
+              {shownAsset} {isCall ? 'Covered Call' : 'Cash-Secured Put'}
             </div>
             <div className="font-mono text-tiny text-ink-2">
               strike ${formatStrike(p.strikePrice ?? 0)} · {p.expiryLabel}
             </div>
+            {/* Never left implicit: the heading is the asset that went in, and
+                settlement pays the asset the contract actually holds. Saying
+                which is the difference between a converted position and a
+                surprise at expiry. */}
+            {shownAsset !== p.asset && (
+              <div className="font-mono text-tiny text-ink-faint">
+                funded via ramp · returns as {p.asset}
+              </div>
+            )}
           </div>
         </div>
 

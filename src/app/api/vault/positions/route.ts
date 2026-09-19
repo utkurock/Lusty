@@ -261,6 +261,9 @@ function merge(
     settled: position.settled,
     outcome: position.outcome,
     payoutHash: mirror?.payoutHash ?? null,
+    // Contract state cannot know this — the conversion is a separate
+    // transaction — so it comes from the mirror or not at all.
+    fundedWith: mirror?.fundedWith ?? null,
     payout: settlementPayout(position, asset),
     settlePrice: settlement?.priceUsd ?? null,
     settledAt: settlement?.at ?? null,

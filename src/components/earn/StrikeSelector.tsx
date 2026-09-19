@@ -11,12 +11,15 @@ import { useVaultStats } from '@/hooks/useVaultStats'
 import { getExpiryOptions, ExpiryOption } from '@/lib/expiries'
 import { StablePicker, Stable } from '@/components/shared/StablePicker'
 import { savePosition } from '@/lib/positions'
-import { buildTrustlineTx, hasTrustline, trustlinesRequired } from '@/lib/swap'
+import { buildTrustlineTx, hasTrustline, trustlinesRequired, LUSD_CODE, LUSD_ISSUER } from '@/lib/swap'
+import { useBalance } from '@/hooks/useBalance'
+import { USDC_CODE, USDC_ISSUER } from '@/lib/usdc'
+import { convertToCash } from '@/lib/cash-convert'
 import { openPosition, coveredUnits } from '@/lib/vault-contract'
 import { activeQuoter, cosignWithQuoter } from '@/lib/quoter'
 import { fetchLadder, fetchStrikeQuote, type QuotedRung } from '@/lib/quote-client'
 import { recordDeposit } from '@/lib/deposit-client'
-import { resolveUnderlying } from '@/lib/assets'
+import { resolveUnderlying, type StellarAsset } from '@/lib/assets'
 import { TransactionBuilder, Networks } from '@stellar/stellar-sdk'
 import { ChevronDown, TrendingUp, TrendingDown } from 'lucide-react'
 
@@ -300,6 +303,31 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
   const usdValue =
     type === 'call' ? amount * (spot || 0) : amount
 
+  /**
+   * The asset the balance above the field is read against: the underlying on a
+   * call, and whichever cash the picker is showing on a put.
+   *
+   * Both stables are named by code AND issuer. Reading a line by code alone is
+   * how a screen ends up reporting a stranger's token as the user's cash —
+   * anyone can issue something called USDC.
+   */
+  const depositAsset = useMemo<StellarAsset | null>(() => {
+    if (!asset) return null
+    if (type === 'call') return asset.stellarAsset
+    return stable === 'USDC'
+      ? { kind: 'issued', code: USDC_CODE, issuer: USDC_ISSUER }
+      : { kind: 'issued', code: LUSD_CODE, issuer: LUSD_ISSUER }
+  }, [asset, type, stable])
+
+  const depositCode = type === 'call' ? assetSymbol : stable
+  const {
+    balance: walletBalance,
+    spendable: walletSpendable,
+    missing: balanceMissing,
+    read: balanceRead,
+    refresh: refreshBalance,
+  } = useBalance(address, depositAsset)
+
   // Allowances are written in whole units on the XLM book, where they are in
   // the thousands. On the BTC book the whole allowance is 0.05, and rounding it
   // to zero decimals reports it as nothing at all.
@@ -346,6 +374,31 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
       setError(`Maximum deposit is ${maxAmount.toLocaleString(undefined, { maximumFractionDigits: type === 'call' ? decimals : 2 })} ${type === 'call' ? assetSymbol : stable}`)
       return
     }
+    // The wallet's own balance, checked before anything is signed.
+    //
+    // Only once a read has actually landed: every number here starts at zero,
+    // and refusing on that would block a deposit because Horizon was slow
+    // rather than because the account is short.
+    if (balanceRead && amount > walletSpendable) {
+      const short = walletSpendable.toLocaleString(undefined, {
+        maximumFractionDigits: type === 'call' ? decimals : 2,
+      })
+      setError(
+        balanceMissing
+          ? `This wallet holds no ${depositCode}. ${
+              type === 'put'
+                ? 'Pick the stablecoin you actually hold, or convert some on /anchor.'
+                : `Fund it with ${depositCode} first.`
+            }`
+          : `Your wallet has ${short} ${depositCode} available to deposit${
+              type === 'call'
+                ? ' (the rest is the account reserve the network will not release)'
+                : ''
+            }. Lower the amount.`,
+      )
+      return
+    }
+
     // Per-wallet per-expiry allowance — checked BEFORE sending collateral so we
     // never let the user lock funds in a deposit the server will 409.
     if (allowanceExceeded) {
@@ -440,6 +493,44 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
         return
       }
 
+      // 2b. Spend the stablecoin the writer actually picked.
+      //
+      //     The contract escrows one cash token and it is fixed at init, so a
+      //     put opened with USDC selected would otherwise quietly pull the
+      //     LUSD this account happens to hold — a different balance from the
+      //     one on screen, which is the whole complaint. Instead the USDC is
+      //     spent here and comes back as cash one for one, and the position is
+      //     escrowed with that.
+      //
+      //     LAST, deliberately. This is the first irreversible step of the
+      //     deposit, and everything above it can refuse for ordinary reasons —
+      //     the quote engine being unable to price, the quote having moved
+      //     while the user decided. Converting before those ran spent the
+      //     writer's USDC on a deposit that then stopped, leaving them holding
+      //     cash they did not ask for and no position. It runs after the
+      //     trustline step too, because the payout lands in a cash trustline
+      //     that has to already exist.
+      let fundedWith: string | undefined
+      if (type === 'put' && stable === 'USDC') {
+        try {
+          await convertToCash({
+            address,
+            amount,
+            signTransaction,
+            onProgress: (message) => setSuccess(message),
+          })
+        } catch (e) {
+          // The conversion says what it needs to say, including the receipt
+          // for a payment that has already left. Repeating it under a generic
+          // heading would bury the one detail that makes it recoverable.
+          setSuccess(null)
+          setError((e as Error)?.message ?? 'the USDC conversion failed')
+          return
+        }
+        fundedWith = USDC_CODE
+        refreshBalance()
+      }
+
       // 3. Open the position on the vault contract. Escrow, premium and the
       //    position record all land in the one transaction the user signs —
       //    no server-held account touches the collateral at any point. The
@@ -483,6 +574,9 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
         strikePrice: selectedStrike.strike,
         daysToExpiry: fresh.daysToExpiry,
         expiryIso,
+        // Survives only here: the collateral is cash either way, so without
+        // this the position loses every trace of what the writer spent.
+        fundedWith,
       }).catch((recordErr) => {
         console.warn('vault deposit recorded on chain but not indexed', recordErr)
       })
@@ -497,7 +591,12 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
         id: depositHash,
         address,
         type,
-        asset: type === 'call' ? assetSymbol : stable,
+        // What the position is ESCROWED in, which on a put is the vault's
+        // cash whatever funded it. A USDC deposit is converted before the open
+        // (step 1b), so recording USDC here would label a position that
+        // settles back in LUSD — and the dashboard reads this field for both
+        // the collateral's name and its icon.
+        asset: type === 'call' ? assetSymbol : LUSD_CODE,
         collateralAmount: amount,
         strikePrice: selectedStrike.strike,
         strikeIndex: selectedIdx,
@@ -535,6 +634,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
       // utilization bar) reflect the new on-chain balance without waiting
       // for the 30s poll cycle.
       refreshVaultStats()
+      refreshBalance()
 
       // Refresh this wallet's deposits so the per-expiry allowance gate
       // reflects the collateral just committed.
@@ -664,6 +764,10 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
         max={maxAmount}
         decimals={type === 'call' ? decimals : 2}
         usdValue={usdValue}
+        balance={connected ? walletBalance : undefined}
+        spendable={connected ? walletSpendable : undefined}
+        balanceSymbol={depositCode}
+        balanceMissing={connected && balanceMissing}
         symbolSlot={
           type === 'put' ? <StablePicker value={stable} onChange={setStable} /> : undefined
         }
