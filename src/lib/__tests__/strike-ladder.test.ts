@@ -32,6 +32,7 @@ function book(symbol: string, strike: StrikeParams) {
     feedSymbol: symbol,
     binanceSymbol: `${symbol}USDT`,
     coingeckoId: symbol.toLowerCase(),
+    bitstampPair: `${symbol.toLowerCase()}usd`,
     collateral: { kind: 'native' },
     unitDecimals: 7,
     displayDecimals: 4,

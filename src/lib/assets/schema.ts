@@ -161,6 +161,17 @@ export interface UnderlyingAsset {
   binanceSymbol: string
   /** CoinGecko coin id — the second source for the realized-vol series. */
   coingeckoId: string
+  /**
+   * Bitstamp market for the daily candles, e.g. `xlmusd`.
+   *
+   * The third source, and the reason there is one: σ is on the money path and
+   * fails closed, so the number of places it can come from is the number of
+   * outages the venue survives. Binance is unreachable from whole countries
+   * and geo-blocks datacenter IPs, and CoinGecko's free tier answers 429 under
+   * ordinary load — on a network where the first is blocked, the second is a
+   * single point of failure for every quote the venue makes.
+   */
+  bitstampPair: string
   /** The collateral a covered call escrows (the underlying itself). */
   stellarAsset: StellarAsset
   /** Decimals the amount is booked in. Stellar carries 7 for every asset. */
@@ -237,6 +248,7 @@ export interface AssetDeclaration {
   feedSymbol: DeclaredText
   binanceSymbol: string
   coingeckoId: string
+  bitstampPair: string
   collateral: DeclaredCollateral
   unitDecimals: number
   displayDecimals: number
@@ -380,6 +392,7 @@ export function declare(
     feedSymbol: text(d.feedSymbol),
     binanceSymbol: d.binanceSymbol,
     coingeckoId: d.coingeckoId,
+    bitstampPair: d.bitstampPair,
     stellarAsset,
     unitDecimals: d.unitDecimals,
     displayDecimals: d.displayDecimals,

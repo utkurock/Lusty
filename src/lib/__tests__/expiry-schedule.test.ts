@@ -36,6 +36,7 @@ function book(symbol: string, expiry: ExpiryParams) {
     feedSymbol: symbol,
     binanceSymbol: `${symbol}USDT`,
     coingeckoId: symbol.toLowerCase(),
+    bitstampPair: `${symbol.toLowerCase()}usd`,
     collateral: { kind: 'native' },
     unitDecimals: 7,
     displayDecimals: 4,

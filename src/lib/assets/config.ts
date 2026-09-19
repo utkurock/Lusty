@@ -87,6 +87,7 @@ export const DECLARATIONS: AssetDeclaration[] = [
     feedSymbol: { env: 'REFLECTOR_FEED_SYMBOL', fallback: 'XLM' },
     binanceSymbol: 'XLMUSDT',
     coingeckoId: 'stellar',
+    bitstampPair: 'xlmusd',
     collateral: { kind: 'native' },
     unitDecimals: 7,
     displayDecimals: 2,
@@ -128,6 +129,7 @@ export const DECLARATIONS: AssetDeclaration[] = [
     feedSymbol: { env: 'REFLECTOR_FEED_SYMBOL_BTC', fallback: 'BTC' },
     binanceSymbol: 'BTCUSDT',
     coingeckoId: 'bitcoin',
+    bitstampPair: 'btcusd',
     // The anchor that issues the wrapped BTC the vault accepts as collateral.
     // On testnet that is LBTC, issued by this repo (scripts/mint-lbtc.mjs) for
     // the same reason LUSD is: nobody anchors wrapped BTC to a network whose

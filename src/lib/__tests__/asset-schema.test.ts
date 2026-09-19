@@ -40,6 +40,7 @@ function declaration(
     feedSymbol: 'ZZZ',
     binanceSymbol: 'ZZZUSDT',
     coingeckoId: 'test-underlying',
+    bitstampPair: 'xlmusd',
     collateral: { kind: 'native' },
     unitDecimals: 7,
     displayDecimals: 4,

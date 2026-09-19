@@ -36,35 +36,88 @@ export const revalidate = 0
  * somewhere else. Both sources are tried and neither is required: an unknown
  * change is reported as null and the UI simply omits it.
  */
-async function change24h(asset: UnderlyingAsset): Promise<number | null> {
-  const t = 6_000
+const CHANGE_TIMEOUT_MS = 2_500
+
+async function binanceChange(asset: UnderlyingAsset): Promise<number | null> {
   try {
     const r = await fetch(
       `https://api.binance.com/api/v3/ticker/24hr?symbol=${asset.binanceSymbol}`,
-      { cache: 'no-store', signal: AbortSignal.timeout(t) }
+      { cache: 'no-store', signal: AbortSignal.timeout(CHANGE_TIMEOUT_MS) }
     )
-    if (r.ok) {
-      const j = await r.json()
-      const p = parseFloat(j?.priceChangePercent)
-      if (isFinite(p)) return p
-    }
+    if (!r.ok) return null
+    const j = await r.json()
+    const p = parseFloat(j?.priceChangePercent)
+    return isFinite(p) ? p : null
   } catch {
-    /* try the next one */
+    return null
   }
+}
+
+async function coingeckoChange(asset: UnderlyingAsset): Promise<number | null> {
   try {
     const r = await fetch(
       `https://api.coingecko.com/api/v3/simple/price?ids=${asset.coingeckoId}&vs_currencies=usd&include_24hr_change=true`,
-      { cache: 'no-store', signal: AbortSignal.timeout(t) }
+      { cache: 'no-store', signal: AbortSignal.timeout(CHANGE_TIMEOUT_MS) }
     )
-    if (r.ok) {
-      const j = await r.json()
-      const p = Number(j?.[asset.coingeckoId]?.usd_24h_change)
-      if (isFinite(p)) return p
-    }
+    if (!r.ok) return null
+    const j = await r.json()
+    const p = Number(j?.[asset.coingeckoId]?.usd_24h_change)
+    return isFinite(p) ? p : null
   } catch {
-    /* unknown, then */
+    return null
   }
-  return null
+}
+
+/**
+ * First source to produce a number wins; null once every one has given up.
+ *
+ * Deliberately a race rather than a fallback chain. Tried in order, an
+ * unreachable first source makes the visitor wait out its whole timeout before
+ * the second is even dialled, so one blocked host sets the floor on how fast
+ * anybody's header can render. Nothing here is on the money path — the price
+ * itself comes from lib/spot.ts — so there is no source to prefer, only a
+ * fastest one.
+ */
+function firstAnswer(sources: Promise<number | null>[]): Promise<number | null> {
+  return new Promise((resolve) => {
+    let pending = sources.length
+    let done = false
+    if (pending === 0) return resolve(null)
+    for (const source of sources) {
+      source.then((value) => {
+        if (done) return
+        if (value !== null) {
+          done = true
+          resolve(value)
+        } else if (--pending === 0) {
+          done = true
+          resolve(null)
+        }
+      })
+    }
+  })
+}
+
+// The change is a header decoration, identical for every visitor, and both
+// sources meter their free tier by request. Un-cached, a busy minute spent the
+// allowance on repeats of one number and CoinGecko started answering 429 —
+// which reads downstream as "change unknown" and blanks the figure on screen
+// for no reason. Successes are held for a minute; failures are held briefly
+// too, so a rate-limited window costs one wait rather than one per request.
+const CHANGE_CACHE_TTL_MS = 60_000
+const CHANGE_FAILURE_TTL_MS = 20_000
+
+const changeCache = new Map<string, { value: number | null; expires: number }>()
+
+async function change24h(asset: UnderlyingAsset): Promise<number | null> {
+  const now = Date.now()
+  const hit = changeCache.get(asset.symbol)
+  if (hit && hit.expires > now) return hit.value
+
+  const value = await firstAnswer([binanceChange(asset), coingeckoChange(asset)])
+  const ttl = value === null ? CHANGE_FAILURE_TTL_MS : CHANGE_CACHE_TTL_MS
+  changeCache.set(asset.symbol, { value, expires: now + ttl })
+  return value
 }
 
 export async function GET(

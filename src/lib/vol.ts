@@ -28,8 +28,23 @@ const KLINES_URL = (symbol: string, limit: number) =>
 const COINGECKO_URL = (coin: string, days: number) =>
   `https://api.coingecko.com/api/v3/coins/${coin}/market_chart?vs_currency=usd&days=${days}&interval=daily`
 
-/** How long any one source may take before the next is tried. */
-const SOURCE_TIMEOUT_MS = 8_000
+// A third, because two was not enough. On a network where Binance is blocked,
+// CoinGecko's free tier is the only source left — and it answers 429 under
+// ordinary load, which fails σ closed and takes every quote down with it. That
+// is not a hypothetical: it happened, and a writer's deposit stopped on it.
+// Bitstamp is a venue rather than an aggregator, needs no key, and is not
+// behind the same block.
+const BITSTAMP_URL = (pair: string, limit: number) =>
+  `https://www.bitstamp.net/api/v2/ohlc/${pair}/?step=86400&limit=${limit}`
+
+/**
+ * How long any one source may take before the next is tried. Both sources
+ * answer a healthy request in well under a second, so this is a deadline for a
+ * host that has stopped answering, not a budget for a slow one — and since
+ * neither source is trusted over the other, waiting out a long one buys
+ * nothing the next source would not have given sooner.
+ */
+const SOURCE_TIMEOUT_MS = 3_000
 
 /** Daily closes, oldest → newest, or null if this source could not answer. */
 async function closesFromBinance(
@@ -46,6 +61,28 @@ async function closesFromBinance(
     if (!Array.isArray(rows)) return null
     // Kline row: [openTime, open, high, low, close, volume, …]. Close is idx 4.
     const closes = rows.map((row) => parseFloat(row[4])).filter((c) => isFinite(c) && c > 0)
+    return closes.length >= 3 ? closes : null
+  } catch {
+    return null
+  }
+}
+
+async function closesFromBitstamp(
+  asset: UnderlyingAsset,
+  limit: number,
+): Promise<number[] | null> {
+  try {
+    const r = await fetch(BITSTAMP_URL(asset.bitstampPair, limit), {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(SOURCE_TIMEOUT_MS),
+    })
+    if (!r.ok) return null
+    const j = (await r.json()) as { data?: { ohlc?: { close: string }[] } }
+    const rows = j?.data?.ohlc
+    if (!Array.isArray(rows)) return null
+    const closes = rows
+      .map((row) => parseFloat(row.close))
+      .filter((c) => isFinite(c) && c > 0)
     return closes.length >= 3 ? closes : null
   } catch {
     return null
@@ -87,6 +124,13 @@ const WINDOW_DAYS = 60
 // candles barely moves intraday, so a few minutes is plenty.
 const CACHE_TTL_MS = 5 * 60_000
 
+// After Binance fails, stop dialling it for a while and start from CoinGecko
+// instead. The 8s deadline above bounds one attempt, but with the σ cache
+// expiring every 5 minutes an unreachable Binance still taxed one quote in
+// every window with the full timeout — a visitor at the wrong moment waited 8
+// seconds for a number the second source had all along.
+const SOURCE_COOLDOWN_MS = 10 * 60_000
+
 export interface RealizedVol {
   /** Annualized realized volatility (decimal, e.g. 0.85 = 85%). */
   sigma: number
@@ -112,9 +156,13 @@ interface CacheEntry {
 // built on, so that mix-up mispays rather than merely misreports.
 const cache = new Map<string, CacheEntry>()
 
+// Per-asset "Binance is not answering, skip it until" stamp.
+const binanceCooldown = new Map<string, number>()
+
 /** Drops the memoized estimates. Tests only. */
 export function resetVolCache(): void {
   cache.clear()
+  binanceCooldown.clear()
 }
 
 /**
@@ -166,8 +214,18 @@ export async function getRealizedVol(
   const hit = cache.get(asset.symbol)
   if (hit && hit.expires > now) return hit.value
 
-  let closes = await closesFromBinance(asset, WINDOW_DAYS)
+  const cooling = binanceCooldown.get(asset.symbol)
+  const skipBinance = cooling !== undefined && cooling > now
+
+  let closes = skipBinance ? null : await closesFromBinance(asset, WINDOW_DAYS)
   let source = `binance ${asset.binanceSymbol} 1d klines`
+  if (closes) {
+    binanceCooldown.delete(asset.symbol)
+  } else {
+    if (!skipBinance) binanceCooldown.set(asset.symbol, now + SOURCE_COOLDOWN_MS)
+    closes = await closesFromBitstamp(asset, WINDOW_DAYS)
+    source = `bitstamp ${asset.bitstampPair} daily candles`
+  }
   if (!closes) {
     closes = await closesFromCoinGecko(asset, WINDOW_DAYS)
     source = `coingecko ${asset.coingeckoId} daily closes`
@@ -177,7 +235,7 @@ export async function getRealizedVol(
     // window is 60 days, so an hour-old σ is the same σ.
     if (hit) return hit.value
     throw new Error(
-      `realized-vol: no price history for ${asset.symbol} — binance and coingecko both failed`,
+      `realized-vol: no price history for ${asset.symbol} — binance, bitstamp and coingecko all failed`,
     )
   }
 
