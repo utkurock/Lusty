@@ -52,6 +52,11 @@
   --accent-yellow: #eab308;
   --brand: #eab308;
   --brand-fg: #1a1a1a;
+  /* The brand as TEXT. The fill and the hairline can stay the bright yellow on
+     either theme, but yellow type on cream is about 1.6:1 and unreadable; this
+     is the same hue taken down to where it carries on the light canvas. On the
+     dark theme the two are the same colour, so nothing moves there. */
+  --brand-ink: #9a6a04;
   --focus-ring: rgba(234, 179, 8, .3);
 
   /* Jeko sets the whole interface — display, body and the terminal voice alike.
@@ -94,6 +99,7 @@ html.dark {
   --line-2: 52 48 42;
   --line-interactive: 54 51 45; /* ~15% */
 
+  --brand-ink: #eab308;
   --focus-ring: rgba(234, 179, 8, .28);
 
   --shadow-drop: 0 6px 32px 0 rgba(0, 0, 0, .45);
@@ -470,7 +476,7 @@ html, body, .terminal-card, .light-card, .raised-card {
   .notice-warn {
     border-color: rgba(234, 179, 8, .35);
     background: rgba(234, 179, 8, .10);
-    color: var(--brand);
+    color: var(--brand-ink);
   }
   .notice-error {
     border-color: rgba(239, 68, 68, .35);
@@ -587,4 +593,24 @@ html, body, .terminal-card, .light-card, .raised-card {
   }
   .press:active:not(:disabled),
   .card-interactive:active { scale: 1; }
+}
+
+/* Brand type, per surface. ---------------------------------------------------
+   `text-brand` is used for the ~/path lines, step numbers, selected labels and
+   inline links: type, in other words, and on the cream canvas the fill-grade
+   yellow was illegible. It resolves to the ink-grade brand instead. The dark
+   panels are dark in both themes, so inside one the bright yellow is still the
+   right answer and is put back.
+
+   Declared here rather than swept through seventy-seven call sites so the two
+   surfaces cannot drift apart, and so nothing changes on the dark theme, where
+   both variables hold the same colour. */
+@layer utilities {
+  .text-brand {
+    color: var(--brand-ink);
+  }
+  .terminal-card .text-brand,
+  .bg-inverse .text-brand {
+    color: var(--brand);
+  }
 }

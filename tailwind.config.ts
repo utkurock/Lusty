@@ -36,6 +36,7 @@ const config: Config = {
       colors: {
         ...tokenColors,
         brand: 'var(--brand)',
+        'brand-ink': 'var(--brand-ink)',
         'accent-green': '#22c55e',
         'accent-red': '#ef4444',
         'accent-yellow': '#eab308',
