@@ -136,3 +136,21 @@ export function daysToLedgers(days: number): number {
 export function cn(...classes: (string | false | null | undefined)[]): string {
   return classes.filter(Boolean).join(' ')
 }
+
+/**
+ * The amount a fill shortcut ("50%", "max") writes into an amount field.
+ *
+ * Rounded DOWN to the decimals the asset is shown in. Half of a spendable XLM
+ * balance is a seven-decimal number, and a field that answers a button press
+ * with 4746.1615853 reads as a glitch rather than a shortcut; rounding down
+ * also keeps the result inside every bound that produced it, which rounding to
+ * nearest does not.
+ */
+export function fillAmount(
+  ceiling: number,
+  fraction: number,
+  decimals: number,
+): number {
+  const step = 10 ** decimals
+  return Math.floor(ceiling * fraction * step) / step
+}
