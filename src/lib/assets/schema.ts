@@ -200,6 +200,16 @@ export interface UnderlyingAsset {
   /** Cash-secured-put capacity per month, in USD. */
   putMonthlyCapUsd: number
   /**
+   * The most of this book's cash that may sit in an unsettled route at once,
+   * in USD.
+   *
+   * Routing is the one thing a writer does here that is neither escrowed nor
+   * instant — a swap is in flight until the ledger closes it. This bounds how
+   * much of the book can be in that state, which is a limit like any other and
+   * belongs beside the limits it is one of.
+   */
+  routedCapUsd: number
+  /**
    * What the deployed instance's `Limits` are supposed to be. Reconciled
    * against the instance itself before the asset is quoted, see
    * lib/vault-limits.
@@ -263,6 +273,7 @@ export interface AssetDeclaration {
     userEpochPutUsd: DeclaredNumber
     callMonthlyCap: DeclaredNumber
     putMonthlyCapUsd: DeclaredNumber
+    routedCapUsd: DeclaredNumber
   }
   onchainLimits: OnchainLimits
 }
@@ -405,6 +416,7 @@ export function declare(
     userEpochPutUsd: num(d.envelope.userEpochPutUsd),
     callMonthlyCap: num(d.envelope.callMonthlyCap),
     putMonthlyCapUsd: num(d.envelope.putMonthlyCapUsd),
+    routedCapUsd: num(d.envelope.routedCapUsd),
     onchainLimits: d.onchainLimits,
   }
 

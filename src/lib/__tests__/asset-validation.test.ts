@@ -35,6 +35,7 @@ function declaration(
       userEpochPutUsd: 500,
       callMonthlyCap: 900,
       putMonthlyCapUsd: 9_000,
+      routedCapUsd: 9_000,
     },
     onchainLimits: {
       maxPositionCall: 50,
@@ -145,6 +146,15 @@ describe('a bound that contradicts another is caught before it is offered', () =
     expect(
       fieldsFor({ envelope: { ...declaration().envelope, putMonthlyCapUsd: 10 } })
     ).toContain('putMonthlyCapUsd')
+  })
+
+  it('refuses a routing bound one position s cash could not fit inside', () => {
+    // A bound below a single position is one no route could ever satisfy —
+    // every swap the book needs would be refused, which is a book that is
+    // quietly closed to anyone converting their stablecoin.
+    expect(
+      fieldsFor({ envelope: { ...declaration().envelope, routedCapUsd: 10 } })
+    ).toContain('routedCapUsd')
   })
 
   it('refuses a cap that is zero, negative or not a number', () => {

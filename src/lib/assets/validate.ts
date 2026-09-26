@@ -206,6 +206,7 @@ export function validateAsset(a: ResolvedAsset): AssetIssue[] {
     ['userEpochPutUsd', a.userEpochPutUsd],
     ['callMonthlyCap', a.callMonthlyCap],
     ['putMonthlyCapUsd', a.putMonthlyCapUsd],
+    ['routedCapUsd', a.routedCapUsd],
   ]
   for (const [field, value] of sizes) issues.positive(field, value)
 
@@ -233,6 +234,12 @@ export function validateAsset(a: ResolvedAsset): AssetIssue[] {
     a.putMonthlyCapUsd,
     a.maxSizeCash,
     'the put book has less capacity for a month than for one position'
+  )
+  issues.atLeast(
+    'routedCapUsd',
+    a.routedCapUsd,
+    a.maxSizeCash,
+    'one position\'s cash could not be routed without exceeding the routing bound'
   )
 
   // The record of the instance's own limits. Whether it matches the instance

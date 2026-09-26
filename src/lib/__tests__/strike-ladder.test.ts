@@ -46,6 +46,7 @@ function book(symbol: string, strike: StrikeParams) {
       userEpochPutUsd: 500,
       callMonthlyCap: 900,
       putMonthlyCapUsd: 9_000,
+      routedCapUsd: 9_000,
     },
     onchainLimits: {
       maxPositionCall: 50,

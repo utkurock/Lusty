@@ -105,6 +105,7 @@ export const DECLARATIONS: AssetDeclaration[] = [
       userEpochPutUsd: { env: 'MAX_USER_EPOCH_PUT_USD', fallback: 10_000 },
       callMonthlyCap: { env: 'VAULT_CALL_MONTHLY_CAP_XLM', fallback: 1_500_000 },
       putMonthlyCapUsd: { env: 'VAULT_PUT_MONTHLY_CAP_USD', fallback: 150_000 },
+      routedCapUsd: { env: 'ROUTING_CAP_USD_XLM', fallback: 50_000 },
     },
     // Read off CBJZGTCF…UCJZ on 2026-09-15. The expiry caps are ten times the
     // envelope's own per-expiry put bucket, which is deliberate: the contract
@@ -161,6 +162,7 @@ export const DECLARATIONS: AssetDeclaration[] = [
       // filling one leaves the other untouched.
       callMonthlyCap: { env: 'VAULT_CALL_MONTHLY_CAP_BTC', fallback: 5 },
       putMonthlyCapUsd: { env: 'VAULT_PUT_MONTHLY_CAP_USD_BTC', fallback: 150_000 },
+      routedCapUsd: { env: 'ROUTING_CAP_USD_BTC', fallback: 15_000 },
     },
     // Read off CBQEACXA…MVEU on 2026-09-15, the values scripts/deploy-vault.mjs
     // constructed it with.
@@ -220,6 +222,7 @@ export const DECLARATIONS: AssetDeclaration[] = [
       userEpochPutUsd: { env: 'MAX_USER_EPOCH_PUT_USD_ETH', fallback: 1_500 },
       callMonthlyCap: { env: 'VAULT_CALL_MONTHLY_CAP_ETH', fallback: 100 },
       putMonthlyCapUsd: { env: 'VAULT_PUT_MONTHLY_CAP_USD_ETH', fallback: 150_000 },
+      routedCapUsd: { env: 'ROUTING_CAP_USD_ETH', fallback: 15_000 },
     },
     // What an instance would be deployed with, not what one was read back as —
     // there is no ETH instance. M2-05 reconciles this against the contract
