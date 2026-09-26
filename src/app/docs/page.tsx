@@ -1549,13 +1549,25 @@ export default function DocsPage() {
             </div>
           ))}
 
-          <a
-            href="/architecture"
-            className="mt-2 flex items-center justify-between border border-line bg-card hover:bg-raised rounded-md px-3 py-2.5 text-ink-2 hover:text-ink transition"
-          >
-            <span className="font-mono text-caption">architecture</span>
-            <ChevronRight size={14} />
-          </a>
+          {/* The reference documents, rendered from the files in docs/ rather
+              than restated here — two copies agree on the day they are written
+              and the one a reader trusts is the wrong one six weeks later. */}
+          {[
+            ['/docs/multi-asset', 'adding an underlying'],
+            ['/docs/liquidity-routing', 'routing guardrails'],
+            ['/docs/deployments', 'deployed addresses'],
+            ['/docs/adversarial', 'security & scope'],
+            ['/architecture', 'architecture'],
+          ].map(([href, label]) => (
+            <a
+              key={href}
+              href={href}
+              className="mt-2 flex items-center justify-between border border-line bg-card hover:bg-raised rounded-md px-3 py-2.5 text-ink-2 hover:text-ink transition"
+            >
+              <span className="font-mono text-caption">{label}</span>
+              <ChevronRight size={14} />
+            </a>
+          ))}
         </aside>
 
         {/* Article */}

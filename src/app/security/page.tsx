@@ -231,9 +231,16 @@ export default function SecurityPage() {
           </table>
         </div>
         <P>
-          The oracle, the SACs, the admin, the treasury and the quoter set are in the
-          deployment manifest, along with the limits each instance enforces and how to read
-          them back off the chain yourself.
+          The oracle, the SACs, the admin, the treasury and the quoter set are in the{' '}
+          <Link href="/docs/deployments" className="text-brand hover:underline">
+            deployment manifest
+          </Link>
+          , along with the limits each instance enforces and how to read them back off the
+          chain yourself. Every protocol flow has a{' '}
+          <Link href="/docs/reproduce" className="text-brand hover:underline">
+            runnable reproduction
+          </Link>
+          , so attacking this takes reading rather than guessing.
         </P>
         <Warn>
           <strong className="text-ink">The collateral is not real.</strong> LBTC and LUSD
@@ -413,7 +420,12 @@ export default function SecurityPage() {
 subject: LUSTY SECURITY: <one line>`}</Pre>
         <P>
           <strong className="text-ink">Medium, Low, or anything already public</strong> —
-          open an issue on the repository using the <em>Security finding</em> template.
+          open an issue on the repository using the <em>Security finding</em> template. The
+          full intake, and what happens after, is in{' '}
+          <Link href="/docs/reporting" className="text-brand hover:underline">
+            reporting a finding
+          </Link>
+          .
         </P>
         <P>A report needs five things:</P>
         <List>
