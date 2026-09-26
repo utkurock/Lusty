@@ -229,6 +229,14 @@ match. Oracle, treasury, admin and the quoter set are copied from the reference
 instance for the same reason: what differs between two books is then exactly
 what the registry says differs — the feed, the collateral, and the limits.
 
+Those three come off the environment by the same key convention
+`lib/assets/config.ts` declares — `REFLECTOR_FEED_SYMBOL_<SYM>`,
+`NEXT_PUBLIC_<SYM>_CONTRACT`, and the four `VAULT_ONCHAIN_MAX_*_<SYM>` caps — so
+the script takes any symbol and there is no per-book table in it to fall behind
+the registry. It refuses rather than defaulting when a cap is unset: the caps
+are enforced on every write for the life of the instance, and one nobody stated
+is not a looser cap. See [`docs/MULTI-ASSET.md`](../docs/MULTI-ASSET.md).
+
 The deployer is `lusty-runner`, not the admin: the admin account is behind a
 2-of-3 multisig and cannot source a single-signature transaction at all. It is
 a constructor argument here, not a signer.

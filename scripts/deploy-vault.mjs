@@ -60,44 +60,75 @@ const secretOf = (alias) =>
 const UNIT = 10_000_000n
 const stroops = (n) => BigInt(Math.round(Number(n) * 1e7))
 
-// What each underlying's instance is constructed with.
+// What an underlying's instance is constructed with, read off the environment
+// by the same key convention `lib/assets/config.ts` declares.
 //
-// The caps are the contract's own: trustless, enforced on every write, and
-// deliberately the outer bound rather than the operating envelope. The tighter
-// figures the desk actually quotes live in the app (VAULT_*_CAP_*).
+// This used to be a table with one entry in it, which meant listing a third
+// book was a code change to a deploy script — while the app it deploys for had
+// just been rebuilt so that listing one is a config entry and nothing else.
+// A table naming one asset in a tool that takes the asset as an argument is the
+// same defect M2-06 took out of `lib/`, one directory over.
 //
-// Whatever is set here has to be copied into the book's `onchainLimits` in
-// src/lib/assets.ts, which is what src/lib/vault-limits.ts reconciles the
-// instance against before anything is quoted. Deploying one and forgetting the
-// other takes the book offline, on purpose: two records of one rule that
-// nobody compares is how a limit stops being in force without anyone noticing.
-const BOOKS = {
-  BTC: {
-    feed: process.env.REFLECTOR_FEED_SYMBOL_BTC ?? 'BTC',
-    token: process.env.NEXT_PUBLIC_BTC_CONTRACT,
+// The caps here are the contract's own: trustless, enforced on every write, and
+// deliberately the OUTER bound rather than the operating envelope. The tighter
+// figures the desk quotes inside live in the app (`VAULT_*_<SYM>`). They are
+// separate keys on purpose — the two instances already in flight do not agree
+// on a single rule relating them (XLM's per-expiry cap is its monthly capacity
+// divided by three, BTC's is the whole month), so deriving one from the other
+// would encode a rule neither of them follows.
+//
+// Whatever is deployed has to end up in the book's `onchainLimits` in
+// lib/assets/config.ts, which is what lib/vault-limits.ts reconciles the
+// instance against before anything is quoted. Read it back with `--check`
+// rather than copying it from here: two records of one rule that nobody
+// compares is how a limit stops being in force without anyone noticing.
+const LIMIT_KEYS = {
+  max_position_call: 'VAULT_ONCHAIN_MAX_POSITION_CALL',
+  max_expiry_call: 'VAULT_ONCHAIN_MAX_EXPIRY_CALL',
+  max_position_put: 'VAULT_ONCHAIN_MAX_POSITION_PUT',
+  max_expiry_put: 'VAULT_ONCHAIN_MAX_EXPIRY_PUT',
+}
+
+/** The one cap that is not asset-specific: it bounds the quoter, not the market. */
+const DEFAULT_PREMIUM_BPS = 2000
+
+function amountFromEnv(key) {
+  const raw = process.env[key]
+  if (raw === undefined || raw.trim() === '') return null
+  const n = Number(raw)
+  // No fallback. A cap the deployment did not state is not a looser cap, it is
+  // a number nobody chose, and this one is enforced on every write for the life
+  // of the instance.
+  if (!isFinite(n) || n <= 0) throw new Error(`${key} is not a positive amount: ${raw}`)
+  return stroops(n)
+}
+
+function bookFromEnv(symbol) {
+  const limits = {}
+  const missing = []
+  for (const [field, prefix] of Object.entries(LIMIT_KEYS)) {
+    const key = `${prefix}_${symbol}`
+    const value = amountFromEnv(key)
+    if (value === null) missing.push(key)
+    else limits[field] = value
+  }
+  const bps = process.env[`VAULT_ONCHAIN_MAX_PREMIUM_BPS_${symbol}`]
+  limits.max_premium_bps = bps ? Number(bps) : DEFAULT_PREMIUM_BPS
+  if (!Number.isInteger(limits.max_premium_bps) || limits.max_premium_bps <= 0 || limits.max_premium_bps > 10_000) {
+    throw new Error(`VAULT_ONCHAIN_MAX_PREMIUM_BPS_${symbol} must be 1..10000, got ${bps}`)
+  }
+
+  return {
+    feed: process.env[`REFLECTOR_FEED_SYMBOL_${symbol}`] ?? symbol,
+    token: process.env[`NEXT_PUBLIC_${symbol}_CONTRACT`] ?? null,
     // Null means "whatever the reference instance settles in". Every book on
     // this desk pays premiums in the same cash today, and reading it off the
     // live instance is stronger than reading it off a local file that may
     // disagree with what XLM is actually escrowing against.
     cash: process.env.NEXT_PUBLIC_LUSD_CONTRACT ?? null,
-    limits: {
-      // 0.05 BTC a position, 5 BTC across one expiry. The app spreads its own
-      // monthly capacity of 5 BTC across the three expiries it keeps open, so
-      // it quotes at most 1.667 against a date the contract would take 5 on.
-      // The contract is the looser of the two by design, and it is the one
-      // that binds. Sized in BTC, not ported from XLM: XLM's 10,000 would read
-      // as 10,000 BTC.
-      max_position_call: stroops(0.05),
-      max_expiry_call: stroops(5),
-      // Puts escrow cash, so their caps are in LUSD: $1,500 a position and
-      // $150,000 across an expiry.
-      max_position_put: stroops(1_500),
-      max_expiry_put: stroops(150_000),
-      // Same premium ceiling as the XLM book. It bounds the quoter, not the
-      // market, so there is nothing asset-specific in it.
-      max_premium_bps: 2000,
-    },
-  },
+    limits,
+    missing,
+  }
 }
 
 function limitsScVal(l) {
@@ -212,11 +243,12 @@ async function main() {
   // configured for this asset. The answers change as pools are funded and
   // trustlines opened, so it is worth being able to ask again.
   const checkOnly = process.argv.includes('--check')
-  const book = BOOKS[symbol]
-  if (!book) {
-    console.error(`usage: node scripts/deploy-vault.mjs <${Object.keys(BOOKS).join('|')}> [--dry-run]`)
+  if (!/^[A-Z0-9]{1,12}$/.test(symbol)) {
+    console.error('usage: node scripts/deploy-vault.mjs <SYMBOL> [--dry-run] [--check]')
+    console.error('  SYMBOL is the book as declared in src/lib/assets/config.ts, e.g. BTC')
     process.exit(1)
   }
+  const book = bookFromEnv(symbol)
 
   if (checkOnly) {
     const live = process.env[`NEXT_PUBLIC_VAULT_CONTRACT_${symbol}`]
@@ -229,7 +261,15 @@ async function main() {
 
   const reference = process.env.NEXT_PUBLIC_VAULT_CONTRACT
   if (!reference) throw new Error('NEXT_PUBLIC_VAULT_CONTRACT must name the instance to copy the desk from')
-  if (!book.token) throw new Error(`${symbol} has no collateral contract configured`)
+  if (!book.token) {
+    throw new Error(`${symbol} has no collateral contract: set NEXT_PUBLIC_${symbol}_CONTRACT`)
+  }
+  if (book.missing.length > 0) {
+    throw new Error(
+      `${symbol} has no deploy limits: set ${book.missing.join(', ')}\n` +
+        '  These are the contract\'s own caps, enforced for the life of the instance.',
+    )
+  }
 
   // The deployer only pays the fee and owns the contract-id preimage. The
   // admin is a constructor argument, not a signer here — which is just as well,
