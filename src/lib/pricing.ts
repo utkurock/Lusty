@@ -72,7 +72,8 @@ export function blackScholesPut(
 //
 // Unlike Black-Scholes it prices off the forward F (carry baked in via the perp
 // funding rate — see forward.ts) instead of spot + an assumed risk-free rate.
-// The discount factor e^(-rT) is negligible for short-dated XLM weeklies, so we
+// The discount factor e^(-rT) is negligible for the short-dated weeklies every
+// book here writes, so we
 // default the discount rate to 0: the carry lives in F, not in a rate we don't
 // actually have. This removes the arbitrary r=0.05 the old BS path assumed.
 //
@@ -203,7 +204,7 @@ export function black76Vega(
 // is the protocol's edge — paid to FEE_WALLET on every successful deposit.
 //
 // Why 25% (not 15%)?
-//   * BS assumes constant vol; XLM realized vol can spike, so we need
+//   * BS assumes constant vol; realized vol can spike on any book, so we need
 //     headroom to absorb tail-risk losses on the long-call inventory.
 //   * The vault has no external hedging — every undercharged option is
 //     a real loss if it expires deep ITM.

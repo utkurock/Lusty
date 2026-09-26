@@ -4,7 +4,7 @@ import { declare, type AssetDeclaration } from '../assets/schema'
 import { XLM, BTC, type StrikeParams } from '../assets'
 import { resetVolCache } from '../vol'
 import { resetForwardCache } from '../forward'
-import { quoteLadder, quoteOption } from '../pricing-server'
+import { optionGreeks, quoteLadder, quoteOption } from '../pricing-server'
 import { niceStrikeStep, roundStrike, strikeRungs } from '../pricing'
 
 // M2-03. The ladder is the asset's, not the module's.
@@ -174,6 +174,7 @@ describe('a quote is normalized against its own book s nearest rung', () => {
     spot: 1_000,
     daysToExpiry: 21,
     sigmaRealized: 1.6,
+    expiries: XLM.expiry,
   }
 
   it('the nearest rung is the maximum its own book pays', () => {
@@ -228,15 +229,7 @@ describe('a quote is normalized against its own book s nearest rung', () => {
     expect(offLadder.apr).toBeLessThanOrEqual(onLadder.apr + 1e-9)
   })
 
-  it('an omitted ladder is XLM s, the default the rest of the engine takes', () => {
-    const strike = roundStrike(base.spot * 1.06, base.spot, XLM.strike.tickFraction)
-    const implicit = quoteOption({ ...base, strike })
-    const explicit = quoteOption({ ...base, strike, strikes: XLM.strike })
-    expect(implicit.apr).toBe(explicit.apr)
-    expect(implicit.userPremium).toBe(explicit.userPremium)
-  })
-
-  it('leaves the Greeks alone, which is why portfolio can omit it', () => {
+  it('leaves the Greeks alone, which is why they have their own entry point', () => {
     const strike = roundStrike(base.spot * 1.1, base.spot, 0.01)
     const a = quoteOption({
       ...base,
@@ -251,5 +244,47 @@ describe('a quote is normalized against its own book s nearest rung', () => {
     expect(a.delta).toBeCloseTo(b.delta, 12)
     expect(a.vega).toBeCloseTo(b.vega, 12)
     expect(a.sigmaStrike).toBeCloseTo(b.sigmaStrike, 12)
+  })
+})
+
+describe('optionGreeks is the engine s own answer, without a book', () => {
+  // The ladder used to be optional so `lib/portfolio` could ask for Greeks
+  // without naming a book — which meant any caller that forgot one was quoted a
+  // premium against XLM's rungs and never told. The ladder is required now, and
+  // this is the door the Greeks-only caller goes through instead. It has to
+  // return exactly what a quote reports, or the portfolio and the screen
+  // describe two different positions.
+  const base = {
+    side: 'call' as const,
+    spot: 1_000,
+    daysToExpiry: 21,
+    sigmaRealized: 1.6,
+    expiries: XLM.expiry,
+  }
+
+  it('agrees with a quote to the last bit, under any ladder', () => {
+    const strike = roundStrike(base.spot * 1.1, base.spot, 0.01)
+    const greeks = optionGreeks({ ...base, strike })
+
+    for (const strikes of [
+      XLM.strike,
+      { callOtm: [1.02], putOtm: [0.98], tickFraction: 0.01 },
+      { callOtm: [1.3], putOtm: [0.7], tickFraction: 0.01 },
+    ] as StrikeParams[]) {
+      const q = quoteOption({ ...base, strike, strikes })
+      expect(greeks.delta).toBe(q.delta)
+      expect(greeks.vega).toBe(q.vega)
+      expect(greeks.sigmaStrike).toBe(q.sigmaStrike)
+    }
+  })
+
+  it('refuses the same inputs a quote refuses', () => {
+    expect(() => optionGreeks({ ...base, strike: 0 })).toThrow(/invalid strike/)
+    expect(() => optionGreeks({ ...base, strike: 1, daysToExpiry: 0 })).toThrow(
+      /invalid daysToExpiry/,
+    )
+    expect(() => optionGreeks({ ...base, strike: 1, sigmaRealized: 0 })).toThrow(
+      /invalid sigmaRealized/,
+    )
   })
 })

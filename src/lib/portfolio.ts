@@ -1,6 +1,6 @@
 import { expiryLabel } from './expiries'
 import { coveredUnits, type OptionSide } from './vault-contract'
-import { quoteOption } from './pricing-server'
+import { optionGreeks } from './pricing-server'
 
 // Portfolio aggregation — pure, so it can be tested without a chain or a feed.
 // ============================================================================
@@ -105,11 +105,12 @@ export function daysUntil(expiry: Date, now: number = Date.now()): number {
 /**
  * The writer's Greeks for one position, in underlying units and USD-per-σ.
  *
- * The numbers come out of `quoteOption` rather than being recomputed from
+ * The numbers come out of the pricing engine rather than being recomputed from
  * Black-76 here, and that is the point: the criterion is that portfolio risk
- * matches the pricing engine's own output, and the only way to guarantee it is
- * to ask the engine. Its APR fields depend on utilization and the time
- * reference; delta and vega do not, so those defaults go unused.
+ * matches the engine's own output, and the only way to guarantee it is to ask
+ * it. `optionGreeks` is the half of the engine that answers without a ladder,
+ * which is what lets this aggregate a book it was handed rather than quoting
+ * one — a premium needs the ladder, a sensitivity does not.
  *
  * The forward is carried out to this expiry from one funding observation
  * (F = S·exp(funding·T)) — the same arithmetic `getForward` does internally,
@@ -124,7 +125,7 @@ export function legGreeks(
   const timeYears = daysToExpiry / 365
   const forward = market.spot * Math.exp(market.fundingAnnual * timeYears)
 
-  const quote = quoteOption({
+  const greeks = optionGreeks({
     side: leg.side,
     spot: market.spot,
     forward,
@@ -136,7 +137,7 @@ export function legGreeks(
   const units = coveredUnits(leg.side, leg.collateral, leg.strike)
   // Negated here and nowhere else: the engine prices the option, the wallet
   // sold it.
-  return { delta: -quote.delta * units, vega: -quote.vega * units }
+  return { delta: -greeks.delta * units, vega: -greeks.vega * units }
 }
 
 export function aggregatePortfolio(

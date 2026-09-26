@@ -131,12 +131,12 @@ describe('a BTC quote is priced off BTC inputs', () => {
     expect(asBtc.quote.userPremium).toBeGreaterThan(asXlm.quote.userPremium)
   })
 
-  it('still prices XLM when no asset is named', async () => {
+  it('reads only the named book s feed, never the other s', async () => {
     const asked = stubFeeds({
       klines: { XLMUSDT: STEADY, BTCUSDT: JUMPY },
       funding: { XLMUSDT: 0.0001 },
     })
-    const ctx = await getMarketContext(0.25, 7)
+    const ctx = await getMarketContext(0.25, 7, XLM)
     expect(ctx.volMethod).toContain('XLMUSDT')
     expect(asked.every((u) => !u.includes('BTCUSDT'))).toBe(true)
   })

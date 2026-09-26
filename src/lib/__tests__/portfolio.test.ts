@@ -6,7 +6,7 @@ import {
   type Leg,
   type PortfolioMarket,
 } from '../portfolio'
-import { quoteOption } from '../pricing-server'
+import { optionGreeks } from '../pricing-server'
 import { coveredUnits } from '../vault-contract'
 
 // A fixed clock: expiries are stated relative to it so the tests do not drift.
@@ -42,7 +42,7 @@ describe('legGreeks', () => {
   it('flips the sign: the engine prices the option, the wallet sold it', () => {
     const call = leg()
     const g = legGreeks(call, MARKET, NOW)
-    const quote = quoteOption({
+    const engine = optionGreeks({
       side: 'call',
       spot: MARKET.spot,
       forward: MARKET.spot * Math.exp(MARKET.fundingAnnual * (7 / 365)),
@@ -52,9 +52,9 @@ describe('legGreeks', () => {
     })
     const units = coveredUnits('call', call.collateral, call.strike)
 
-    expect(quote.delta).toBeGreaterThan(0)
-    expect(g.delta).toBeCloseTo(-quote.delta * units, 10)
-    expect(g.vega).toBeCloseTo(-quote.vega * units, 10)
+    expect(engine.delta).toBeGreaterThan(0)
+    expect(g.delta).toBeCloseTo(-engine.delta * units, 10)
+    expect(g.vega).toBeCloseTo(-engine.vega * units, 10)
   })
 
   it('leaves a short call negative delta and a short put positive', () => {

@@ -36,6 +36,7 @@ function q(over: Partial<QuoteInput> = {}) {
     sigmaRealized: 0.9,
     utilization: 0,
     timeRefDays: TIME_REF,
+    strikes: XLM.strike,
     ...over,
   })
 }

@@ -37,7 +37,7 @@ import {
   callStrikeLabel,
   putStrikeLabel,
 } from './pricing'
-import { XLM, type ExpiryParams, type StrikeParams, type UnderlyingAsset } from './assets'
+import type { ExpiryParams, StrikeParams, UnderlyingAsset } from './assets'
 import { getRealizedVol } from './vol'
 import { getForward } from './forward'
 import { smileVol } from './smile'
@@ -56,7 +56,7 @@ const VOL_SPREAD_ABS = num(process.env.VOL_SPREAD_ABS, 0.03) // +3 vol points
 // The utilization response is added on top.
 const HAIRCUT_BASE = num(process.env.HAIRCUT_BASE, 0.20)
 
-// Pricing σ ceiling. XLM realized vol can spike past 150% in stressed regimes;
+// Pricing σ ceiling. Realized vol can spike past 150% in stressed regimes;
 // pricing off a transient spike produces unstable quotes. Cap the σ used for
 // pricing for quote stability.
 const MAX_PRICING_SIGMA = num(process.env.MAX_PRICING_SIGMA, 1.0) // 100%
@@ -87,8 +87,12 @@ const TIME_REF_FALLBACK = 21 // used only if dynamic lookup is unavailable
 // against another book's schedule would scale its whole ladder by the wrong
 // horizon: a shorter schedule reads every tenor as long and pays the ceiling
 // too early, a longer one strands its own farthest expiry below the cap.
-function resolveTimeRefDays(params: ExpiryParams = XLM.expiry): number {
+//
+// `params` is absent only when a caller pinned a non-positive `timeRefDays`,
+// which the type lets through and nothing sensible can read a horizon out of.
+function resolveTimeRefDays(params?: ExpiryParams): number {
   if (TIME_REF_DAYS_ENV > 0) return TIME_REF_DAYS_ENV
+  if (!params) return TIME_REF_FALLBACK
   try {
     const d = maxOpenExpiryDays(new Date(), params)
     return d > 0 ? d : TIME_REF_FALLBACK
@@ -129,7 +133,7 @@ export function offeredVol(sigmaRealized: number): number {
 // Core quote
 // ────────────────────────────────────────────────────────────────────────────
 
-export interface QuoteInput {
+interface QuoteBase {
   side: 'call' | 'put'
   spot: number
   /** Forward at expiry; defaults to spot if omitted. */
@@ -140,24 +144,30 @@ export interface QuoteInput {
   sigmaRealized: number
   /** Pool utilization 0..1 for this strike/expiry. Default 0 (empty → max APR). */
   utilization?: number
-  /** Time-scaling reference (days). Defaults to the farthest open expiry. */
-  timeRefDays?: number
   /**
    * The book's own ladder, which fixes the rung this quote is normalized
-   * against and the tick its reference rung is rounded to. Absent means XLM's,
-   * the same default the rest of this file takes for an unnamed asset.
+   * against and the tick its reference rung is rounded to. Required, and not
+   * defaulted to anyone's: a premium is money the vault pays, and the only
+   * ladder that can decide it is the one the position is written against.
    *
-   * It moves the premium and the APR, not the Greeks: delta and vega come off
-   * this strike's own smile-adjusted σ and never touch the reference rung. A
-   * caller that wants Greeks only (`lib/portfolio`) can leave it out.
+   * It moves the premium and the APR, not the Greeks. A caller that wants
+   * Greeks only takes `optionGreeks`, which needs no ladder at all.
    */
-  strikes?: StrikeParams
-  /**
-   * The book's own schedule, which fixes the time reference the ladder is
-   * scaled against when `timeRefDays` is not pinned. Absent means XLM's.
-   */
-  expiries?: ExpiryParams
+  strikes: StrikeParams
 }
+
+/**
+ * Where the time scaling comes from — pinned, or read off the book's schedule.
+ *
+ * One or the other, never neither. The reference is the farthest expiry a book
+ * keeps open, so a quote that supplies no schedule and pins no number is asking
+ * to be scaled against a horizon nobody named.
+ */
+type TimeReference =
+  | { timeRefDays: number; expiries?: ExpiryParams }
+  | { timeRefDays?: undefined; expiries: ExpiryParams }
+
+export type QuoteInput = QuoteBase & TimeReference
 
 export interface Quote {
   side: 'call' | 'put'
@@ -165,7 +175,7 @@ export interface Quote {
   forward: number
   strike: number
   daysToExpiry: number
-  /** Realized σ from XLM history (decimal). */
+  /** Realized σ from the book's own price history (decimal). */
   sigmaRealized: number
   /** At-the-money σ = realized + vol risk premium (decimal). */
   sigmaOffered: number
@@ -235,6 +245,59 @@ function rawStrike(
   return { fair, capital, apr, sigma }
 }
 
+/** Inputs both entry points share: an option, priced at a σ, at a tenor. */
+interface PriceableInput {
+  side: 'call' | 'put'
+  spot: number
+  forward?: number
+  strike: number
+  daysToExpiry: number
+  sigmaRealized: number
+}
+
+function assertPriceable(input: PriceableInput, fn: string): void {
+  const { side, spot, strike, daysToExpiry, sigmaRealized } = input
+  if (!isFinite(spot) || spot <= 0) throw new Error(`${fn}: invalid spot`)
+  if (!isFinite(strike) || strike <= 0) throw new Error(`${fn}: invalid strike`)
+  if (!isFinite(daysToExpiry) || daysToExpiry <= 0) throw new Error(`${fn}: invalid daysToExpiry`)
+  if (side !== 'call' && side !== 'put') throw new Error(`${fn}: invalid side`)
+  if (!isFinite(sigmaRealized) || sigmaRealized <= 0) throw new Error(`${fn}: invalid sigmaRealized`)
+}
+
+function resolveForward(input: PriceableInput): number {
+  return isFinite(input.forward as number) && (input.forward as number) > 0
+    ? (input.forward as number)
+    : input.spot
+}
+
+/**
+ * Delta and vega for one option, and the σ they were measured at.
+ *
+ * Split out from `quoteOption` because it is the half that needs no book. The
+ * Greeks come off this strike's own smile-adjusted σ and never touch the
+ * reference rung, so they are answerable for a position whose ladder is not in
+ * hand — which is all `lib/portfolio` ever wanted. Everything the ladder
+ * decides is deliberately absent: an APR quoted without naming a book is one
+ * book paying another's ladder, so `quoteOption` demands the ladder and this
+ * does not pretend to supply one.
+ *
+ * SIGN: the option HOLDER's, like everything else the engine returns.
+ */
+export function optionGreeks(
+  input: PriceableInput,
+): { delta: number; vega: number; sigmaStrike: number } {
+  assertPriceable(input, 'optionGreeks')
+  const { side, strike, daysToExpiry, sigmaRealized } = input
+  const forward = resolveForward(input)
+  const timeYears = daysToExpiry / 365
+  const sigma = smileVol(forward, strike, timeYears, offeredVol(sigmaRealized))
+  return {
+    delta: black76Delta(side, forward, strike, timeYears, sigma),
+    vega: black76Vega(forward, strike, timeYears, sigma),
+    sigmaStrike: sigma,
+  }
+}
+
 /**
  * Server-canonical option quote. Pure and deterministic given its inputs — the
  * async market data (σ, forward) is fetched by the callers below and passed in,
@@ -243,11 +306,7 @@ function rawStrike(
 export function quoteOption(input: QuoteInput): Quote {
   const { side, spot, strike, daysToExpiry, sigmaRealized } = input
 
-  if (!isFinite(spot) || spot <= 0) throw new Error('quoteOption: invalid spot')
-  if (!isFinite(strike) || strike <= 0) throw new Error('quoteOption: invalid strike')
-  if (!isFinite(daysToExpiry) || daysToExpiry <= 0) throw new Error('quoteOption: invalid daysToExpiry')
-  if (side !== 'call' && side !== 'put') throw new Error('quoteOption: invalid side')
-  if (!isFinite(sigmaRealized) || sigmaRealized <= 0) throw new Error('quoteOption: invalid sigmaRealized')
+  assertPriceable(input, 'quoteOption')
 
   const forward =
     isFinite(input.forward as number) && (input.forward as number) > 0
@@ -281,8 +340,10 @@ export function quoteOption(input: QuoteInput): Quote {
   //     move while the paid premium sits pinned at the ceiling. These are the
   //     option's mathematical sensitivities, and the position they describe is
   //     the one that settles, not the cash that changed hands at open.
-  const delta = black76Delta(side, forward, strike, timeYears, self.sigma)
-  const vega = black76Vega(forward, strike, timeYears, self.sigma)
+  //
+  // Taken from `optionGreeks` rather than computed here, so the numbers the
+  // portfolio reads and the numbers a quote reports are one implementation.
+  const { delta, vega } = optionGreeks(input)
 
   // Reference = the nearest strike (index 0 of the ladder), whose raw APR is the
   // ladder maximum. We pin it to the time-scaled MAX_APR target and scale every
@@ -290,7 +351,7 @@ export function quoteOption(input: QuoteInput): Quote {
   // fall away in a smooth, distinct gradient (no two strikes share a number).
   // This is computable from (spot, days, σ, util) alone, so the deposit route
   // reproduces the exact same scaling for any strike it reprices.
-  const ladder = input.strikes ?? XLM.strike
+  const ladder = input.strikes
   const nearMult = nearestRung(side, ladder)
   const nearStrike = roundStrike(spot * nearMult, spot, ladder.tickFraction)
   const ref = rawStrike(side, forward, spot, nearStrike, timeYears, daysToExpiry, sigmaOffered, baseHaircut)
@@ -375,7 +436,7 @@ export interface MarketContext {
 export async function getMarketContext(
   spot: number,
   daysToExpiry: number,
-  asset: UnderlyingAsset = XLM,
+  asset: UnderlyingAsset,
 ): Promise<MarketContext> {
   const timeYears = daysToExpiry / 365
   const [rv, fwd] = await Promise.all([
@@ -412,7 +473,7 @@ export async function quoteLadder(
   spot: number,
   daysToExpiry: number,
   utilization: number = 0,
-  asset: UnderlyingAsset = XLM,
+  asset: UnderlyingAsset,
 ): Promise<{ context: MarketContext; rungs: LadderRung[] }> {
   const context = await getMarketContext(spot, daysToExpiry, asset)
   const mults = strikeRungs(side, asset.strike)
@@ -442,10 +503,10 @@ export async function quoteOptionLive(input: {
   strike: number
   daysToExpiry: number
   utilization?: number
-  /** Which underlying's σ and forward to price against. Defaults to XLM. */
-  asset?: UnderlyingAsset
+  /** Which book's σ, forward and ladder this is priced against. */
+  asset: UnderlyingAsset
 }): Promise<{ context: MarketContext; quote: Quote }> {
-  const asset = input.asset ?? XLM
+  const { asset } = input
   const context = await getMarketContext(input.spot, input.daysToExpiry, asset)
   const quote = quoteOption({
     side: input.side,
