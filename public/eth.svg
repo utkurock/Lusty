@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Ethereum">
+  <circle cx="128" cy="128" r="128" fill="#627EEA"/>
+  <g fill="#fff">
+    <path d="M128 40v66.4l56 25z" fill-opacity=".6"/>
+    <path d="M128 40 72 131.4l56-25z"/>
+    <path d="M128 174.6V220l56-77.6z" fill-opacity=".6"/>
+    <path d="M128 220v-45.4l-56-32z"/>
+    <path d="M128 164.1l56-32.7-56-25z" fill-opacity=".2"/>
+    <path d="M72 131.4l56 32.7v-57.7z" fill-opacity=".6"/>
+  </g>
+</svg>

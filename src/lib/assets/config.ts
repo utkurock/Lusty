@@ -38,6 +38,10 @@ export const BROWSER_ENV: InlinedEnv = {
   NEXT_PUBLIC_BTC_CONTRACT: process.env.NEXT_PUBLIC_BTC_CONTRACT,
   NEXT_PUBLIC_BTC_ANCHOR_CODE: process.env.NEXT_PUBLIC_BTC_ANCHOR_CODE,
   NEXT_PUBLIC_BTC_ANCHOR_ISSUER: process.env.NEXT_PUBLIC_BTC_ANCHOR_ISSUER,
+  NEXT_PUBLIC_VAULT_CONTRACT_ETH: process.env.NEXT_PUBLIC_VAULT_CONTRACT_ETH,
+  NEXT_PUBLIC_ETH_CONTRACT: process.env.NEXT_PUBLIC_ETH_CONTRACT,
+  NEXT_PUBLIC_ETH_ANCHOR_CODE: process.env.NEXT_PUBLIC_ETH_ANCHOR_CODE,
+  NEXT_PUBLIC_ETH_ANCHOR_ISSUER: process.env.NEXT_PUBLIC_ETH_ANCHOR_ISSUER,
 }
 
 // Premiums are paid in one cash today, and both books escrow puts in it. Named
@@ -164,6 +168,67 @@ export const DECLARATIONS: AssetDeclaration[] = [
       maxPositionCall: 0.05,
       maxPositionPut: 1_500,
       maxExpiryCall: 5,
+      maxExpiryPut: 150_000,
+      maxPremiumBps: 2_000,
+    },
+  },
+  // The third book, and the only one added the way the framework is supposed
+  // to take one: this entry is the whole change. No type was widened, no branch
+  // extended, no rail taught a new symbol — M2-01 opened `UnderlyingSymbol`, and
+  // this is what that bought.
+  //
+  // It ships gated on purpose. The Reflector ETH/USD feed is live on testnet at
+  // the same scale and cadence as the other two, so the price half needs
+  // nothing; what is missing is an instance to settle in and an anchor to
+  // escrow. Both are env keys, and M2-02 reports exactly those two as the
+  // reasons — which is the proof worth having. Listing ETH is a deploy and two
+  // values, not a commit.
+  {
+    symbol: 'ETH',
+    name: 'Ethereum',
+    slug: 'eth',
+    icon: 'Ξ',
+    logo: '/eth.svg',
+    contracts: {
+      vault: { env: 'NEXT_PUBLIC_VAULT_CONTRACT_ETH', fallback: '' },
+      token: { env: 'NEXT_PUBLIC_ETH_CONTRACT', fallback: '' },
+      cash: LUSD_SAC,
+    },
+    feedSymbol: { env: 'REFLECTOR_FEED_SYMBOL_ETH', fallback: 'ETH' },
+    binanceSymbol: 'ETHUSDT',
+    coingeckoId: 'ethereum',
+    bitstampPair: 'ethusd',
+    collateral: {
+      kind: 'issued',
+      code: { env: 'NEXT_PUBLIC_ETH_ANCHOR_CODE', fallback: 'ETH' },
+      issuer: { env: 'NEXT_PUBLIC_ETH_ANCHOR_ISSUER', fallback: null },
+    },
+    unitDecimals: 7,
+    // Five places is about three cents at four thousand dollars — the same
+    // resolution BTC's six buys at seventy-seven thousand.
+    displayDecimals: 5,
+    strike: DEFAULT_STRIKES,
+    expiry: DEFAULT_EXPIRIES,
+    // Sized in ETH, at roughly the dollar scale BTC's book carries. Nothing is
+    // deployed against these yet, so they are the numbers an instance would be
+    // constructed with rather than a record of one that was.
+    envelope: {
+      minSize: { env: 'VAULT_MIN_SIZE_ETH', fallback: 0.01 },
+      maxSize: { env: 'VAULT_MAX_SIZE_ETH', fallback: 1 },
+      userEpochCall: { env: 'MAX_USER_EPOCH_CALL_ETH', fallback: 1 },
+      maxSizeCash: { env: 'VAULT_MAX_SIZE_CASH_ETH', fallback: 1_500 },
+      userEpochPutUsd: { env: 'MAX_USER_EPOCH_PUT_USD_ETH', fallback: 1_500 },
+      callMonthlyCap: { env: 'VAULT_CALL_MONTHLY_CAP_ETH', fallback: 100 },
+      putMonthlyCapUsd: { env: 'VAULT_PUT_MONTHLY_CAP_USD_ETH', fallback: 150_000 },
+    },
+    // What an instance would be deployed with, not what one was read back as —
+    // there is no ETH instance. M2-05 reconciles this against the contract
+    // before the book is quoted, and a gated book is never quoted, so nothing
+    // reads these until the deploy makes them true.
+    onchainLimits: {
+      maxPositionCall: 1,
+      maxPositionPut: 1_500,
+      maxExpiryCall: 34,
       maxExpiryPut: 150_000,
       maxPremiumBps: 2_000,
     },

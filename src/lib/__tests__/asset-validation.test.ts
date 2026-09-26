@@ -245,11 +245,13 @@ describe('the registry under a broken declaration', () => {
     return import('../assets')
   }
 
-  it('serves both books when both are configured', async () => {
+  it('serves both deployed books when both are configured', async () => {
     bothBooksConfigured()
     const reg = await load()
     expect(reg.enabledUnderlyings().map((a) => a.symbol)).toEqual(['XLM', 'BTC'])
-    expect(reg.gatedUnderlyings()).toEqual([])
+    // ETH is declared and has no instance, so it is gated here and stays
+    // gated — which is M2-07's point, not a failure of this one.
+    expect(reg.gatedUnderlyings().map((g) => g.symbol)).toEqual(['ETH'])
   })
 
   it('gates only the book whose capacity stops making sense', async () => {
@@ -265,7 +267,7 @@ describe('the registry under a broken declaration', () => {
     expect(reg.resolveUnderlying('btc')).toBeNull()
 
     const gated = reg.gatedUnderlyings()
-    expect(gated.map((g) => g.symbol)).toEqual(['BTC'])
+    expect(gated.map((g) => g.symbol)).toEqual(['BTC', 'ETH'])
     expect(gated[0].issues[0].kind).toBe('invalid')
     expect(gated[0].reasons.join(' ')).toMatch(/callMonthlyCap/)
   })

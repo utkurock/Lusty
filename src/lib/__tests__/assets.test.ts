@@ -20,8 +20,8 @@ beforeAll(async () => {
 // BTC_ANCHOR_ISSUER and VAULT_CONTRACT_BTC stay unset, so BTC is gated twice.
 
 describe('registry — what is declared vs what is tradeable', () => {
-  it('declares both underlyings', () => {
-    expect(reg.allUnderlyings().map((a) => a.symbol)).toEqual(['XLM', 'BTC'])
+  it('declares every book in config, live or not', () => {
+    expect(reg.allUnderlyings().map((a) => a.symbol)).toEqual(['XLM', 'BTC', 'ETH'])
   })
 
   it('keeps XLM live', () => {
@@ -140,7 +140,7 @@ describe('underlying() — direct lookup', () => {
   // already know which book they mean, and a silent undefined would reach the
   // money path as a missing cap rather than as a bug.
   it('throws for a symbol nobody declared', () => {
-    expect(() => reg.underlying('ETH')).toThrow(/not declared/)
+    expect(() => reg.underlying('DOGE')).toThrow(/not declared/)
   })
 })
 
