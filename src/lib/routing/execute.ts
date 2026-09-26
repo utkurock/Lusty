@@ -77,7 +77,7 @@ export function prepareSwap(
     throw new RouteRefused(
       `${quote.route.id}: the quote is ${Math.round((now - quote.quotedAt) / 1000)}s old, ` +
         `past the ${Math.round(quote.route.quoteMaxAgeMs / 1000)}s this route stands behind`,
-      'unreachable',
+      'stale_quote',
     )
   }
   if (quote.destAmount > quote.route.maxNotional) {

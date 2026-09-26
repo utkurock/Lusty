@@ -39,6 +39,8 @@ export type RouteRefusalCode =
   | 'above_notional'
   | 'no_liquidity'
   | 'path_not_allowed'
+  /** The reading is too old to stand behind. Re-quote; do not retry. */
+  | 'stale_quote'
   | 'unreachable'
 
 export class RouteRefused extends Error {
