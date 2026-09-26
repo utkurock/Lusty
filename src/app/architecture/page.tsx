@@ -458,12 +458,25 @@ APR ladder  : nearest strike pinned to a time-scaled ceiling,
 
         {/* 10 */}
         <H2 id="addresses">10. Deployed addresses (testnet)</H2>
-        <Pre>{`Soroban vault (LUSD cash)  CAWDKJUH5WSXJVOOAUGULE4HY2TTYSXUSI5QXTDKUZ6J5L4UTXWPK2Y4
-Soroban vault (USDC cash)  CASVHBJ7MOZ5YFSVAYXKZFWIYAR6Y3Q4JI2P6GGJMRFUJBZN6APTZEZD
+        <Pre>{`Soroban vault (XLM book)   CBJZGTCF2PJVHX2BNFTFZ2L2LX6DWD5JMTLHNCVYTSOD3BLVSXZRUCJZ
+Soroban vault (BTC book)   CBQEACXAOZMCU3YOUWDC3MWXDSQBWKNGKBA6XMRPY5D5JQRNP2HLMVEU
 Reflector oracle (CEX/DEX) CCYOZJCOPG34LLQQ7N24YXBM7LL62R7ONMZ3G6WZAAYPB5OYKOMJRN63
 XLM SAC (collateral)       CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC
+LBTC SAC (collateral)      CDLI2GIDMYZQHK2K3TIGV5O2HQQRT36C5MV3IQWO6LX22YFTF43X74LU
+LUSD SAC (cash)            CDTMNV7F7P3LUH6LLBTXY4EQYBUYGVGYRC7P73HMFV5PXLO5NE6A74QB
 LUSD issuer (2-of-3)       GBCMRD6NDL2RAJUOFQ25EHZVO3IRIGNESWE4QDRFB4AVFIP7IT5BRCJ6
 LUSD distributor           GBAIN6CHZJGBL365JNXSRQEKALXYTWKXANQZ3RBM7AGUEYYKLJJ6SNR6`}</Pre>
+        <P>
+          One underlying, one instance: the second book is a second deployment of
+          the same wasm, so what differs between them is the feed, the collateral
+          and the limits, and nothing else. The full manifest — treasury, admin,
+          quoter set, the limits each instance enforces, and how to read them back
+          off the chain yourself — is on the{' '}
+          <Link href="/security" className="text-brand hover:underline">
+            security page
+          </Link>
+          .
+        </P>
         <P>
           Source, contract, and tests live in the project repository. The
           contract README documents the deploy command, the unit-test suite, and

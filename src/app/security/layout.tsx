@@ -1,12 +1,12 @@
 import Link from 'next/link'
 
 export const metadata = {
-  title: 'Technical Architecture — Lusty',
+  title: 'Adversarial testnet program — Lusty',
   description:
-    'Stellar-specific technical architecture for Lusty: Soroban vault contracts, Reflector oracle settlement, SAC-based collateral, and the server rail.',
+    'Scope, rules of engagement, severity definitions and known limitations for the open adversarial window against the Lusty vault on Stellar testnet.',
 }
 
-export default function ArchitectureLayout({
+export default function SecurityLayout({
   children,
 }: {
   children: React.ReactNode
@@ -23,10 +23,10 @@ export default function ArchitectureLayout({
           </Link>
           <div className="flex items-center gap-3">
             <Link
-              href="/security"
+              href="/architecture"
               className="font-mono text-body text-ink-2 hover:text-ink transition"
             >
-              security
+              architecture
             </Link>
             <Link
               href="/docs"
