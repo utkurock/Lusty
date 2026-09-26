@@ -286,6 +286,36 @@ knowing, and we would rather raise it than have the class go untested.
 
 ---
 
+## 9. Our own attempts, and whether they still fail
+
+```sh
+node scripts/adversarial/refuse.mjs          # every book
+node scripts/adversarial/refuse.mjs BTC      # one
+```
+
+One scripted attempt per class the chain can answer, run against the live instances,
+asserting that the vault refuses **and that it refuses for the right reason**. Nothing is
+submitted; it needs no key, no funded account and no permission, and it exits non-zero if
+anything gets through.
+
+Two things it is careful about, because both are ways a harness like this lies:
+
+- **`require_auth` cannot be tested by expecting an error.** Simulation *records* the
+  signatures a call would need rather than rejecting for their absence, so `set_limits`
+  from a stranger simulates cleanly and fails at submission. The assertion is therefore
+  "it demanded the admin's signature", which is the same guarantee and is checkable for
+  free.
+- **An error code belongs to whichever contract raised it.** A call that reaches a token
+  contract fails with the *token's* enum, and reading that against the vault's names the
+  wrong rule with total confidence. Codes are only interpreted when the error names the
+  vault.
+
+The classes it cannot reach are printed at the end of every run rather than omitted. A
+harness that reports "all clear" over a class it never ran is worse than one that reports
+nothing.
+
+---
+
 ## What is not scripted yet
 
 The unprivileged open path in §2 is documented step by step but has no script of its own;
