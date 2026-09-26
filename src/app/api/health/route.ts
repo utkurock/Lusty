@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server'
 import { Horizon } from '@stellar/stellar-sdk'
 import { LUSD_DISTRIBUTOR } from '@/lib/lusd'
 import { getSpot, resetSpotCache } from '@/lib/spot'
-import { allUnderlyings, type AssetIssue } from '@/lib/assets'
+import { allUnderlyings, enabledUnderlyings, type AssetIssue } from '@/lib/assets'
+import { routingExposure } from '@/lib/routing/budget'
 import { reconcileAll } from '@/lib/vault-limits'
 
 export const dynamic = 'force-dynamic'
@@ -153,6 +154,23 @@ function checkAssets(): AssetStatus[] {
   }))
 }
 
+// Routing exposure per book: what is committed against the bound right now.
+//
+// Reported rather than scored. In-flight capacity is a state, not a fault — a
+// full one refuses conversions and leaves everything else about the book
+// working, so turning the probe red for it would say the venue is down when the
+// venue is busy. The monitor pages on it; this answers "why was my conversion
+// refused" without anyone needing the alert.
+function checkRouting() {
+  return routingExposure(enabledUnderlyings()).map((r) => ({
+    underlying: r.book,
+    inFlightUsd: Number(r.inFlight.toFixed(7)),
+    capUsd: r.cap,
+    pctFull: Number(r.pctFull.toFixed(2)),
+    full: r.pctFull >= 100,
+  }))
+}
+
 export async function GET() {
   const [horizon, db, priceFeeds, limits] = await Promise.all([
     checkHorizon(),
@@ -186,6 +204,7 @@ export async function GET() {
         assets,
         priceFeeds,
         limits,
+        routing: checkRouting(),
         // The XLM feed under its old name, so an existing status check keeps
         // reading the field it has always read.
         priceFeed: priceFeeds.find((f) => f.underlying === 'XLM'),

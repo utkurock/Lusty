@@ -9,6 +9,8 @@ import { scanForSettlement, positionKey } from '@/lib/settlement'
 import { computeOpenBuckets, callEpochCap } from '@/lib/vault-state'
 import { getVaultStats } from '@/lib/vault-contract'
 import { LUSD_DISTRIBUTOR } from '@/lib/lusd'
+import { inFlight } from '@/lib/routing/budget'
+import { summarise } from '@/lib/routing/journal'
 import type { Alert } from './notify'
 
 /**
@@ -28,6 +30,11 @@ const LATENCY_BUDGET_MS = Number(process.env.MONITOR_LATENCY_BUDGET_MS ?? 4000)
 // Short-window realized vol this many times the 24h baseline → warning.
 // Default 2× per the SCF risk-management follow-up.
 const VOL_SPIKE_MULT = Number(process.env.MONITOR_VOL_SPIKE_MULT ?? 2)
+// How far back the routing check looks, and what it will tolerate inside that
+// window. A single refusal is a market; a book that refuses most of what it is
+// asked is a route that has stopped working.
+const ROUTING_WINDOW_MS = Number(process.env.MONITOR_ROUTING_WINDOW_MS ?? 3_600_000)
+const ROUTING_REFUSAL_WARN_PCT = Number(process.env.MONITOR_ROUTING_REFUSAL_WARN_PCT ?? 50)
 
 async function checkHorizon(): Promise<Alert | null> {
   const t0 = Date.now()
@@ -343,9 +350,85 @@ async function checkSettlementBacklog(asset: UnderlyingAsset): Promise<Alert | n
 }
 
 /**
+ * Routing, per book: what is in flight against the bound, what the fills cost
+ * against what they were quoted, and what is being refused.
+ *
+ * Realised slippage is the one to watch. The allowance is a CEILING — a book
+ * filling at it repeatedly is a book with no depth, and the refusal that would
+ * tell you so never comes, because every one of those fills was inside the
+ * bound and therefore fine. The fills are the evidence; the refusals are not.
+ *
+ * Reads the in-process journal, so a deploy resets the window. That is a gap in
+ * visibility rather than in the bound: the cap and the allowance are enforced
+ * whether or not anything is watching.
+ */
+function checkRouting(asset: UnderlyingAsset, now: number = Date.now()): Alert | null {
+  const unit = asset.symbol
+  const used = inFlight(unit, now)
+  const s = summarise(unit, ROUTING_WINDOW_MS, now)
+  const pctFull = asset.routedCapUsd > 0 ? (used / asset.routedCapUsd) * 100 : 0
+  const attempts = s.filled + s.refused
+  const refusalPct = attempts > 0 ? (s.refused / attempts) * 100 : 0
+
+  const fields = [
+    { label: 'underlying', value: unit },
+    { label: 'in_flight_usd', value: used.toFixed(2) },
+    { label: 'routing_cap_usd', value: asset.routedCapUsd.toFixed(2) },
+    { label: 'in_flight_pct', value: pctFull.toFixed(2) },
+    { label: 'filled', value: String(s.filled) },
+    { label: 'refused', value: String(s.refused) },
+    { label: 'worst_slippage_bps', value: s.worstBps === null ? '—' : s.worstBps.toFixed(1) },
+    { label: 'mean_slippage_bps', value: s.meanBps === null ? '—' : s.meanBps.toFixed(1) },
+    ...s.refusals.map((r) => ({ label: `refused_${r.code}`, value: String(r.count) })),
+  ]
+
+  if (pctFull >= 100) {
+    return {
+      severity: 'critical',
+      title: `${unit}: routing capacity full`,
+      message: `${used.toFixed(2)} of ${unit}'s ${asset.routedCapUsd} in-flight routing bound is committed. Further conversions are refused until a swap resolves.`,
+      fields,
+    }
+  }
+  // A fill at the ceiling refuses nothing and alerts nothing on its own — the
+  // trade succeeded, inside the bound. Which is exactly why this is measured on
+  // the fills: the refusals would never mention it.
+  if (s.worstBps !== null && s.worstBps >= 0) {
+    const ceiling = Number(process.env.ROUTING_MAX_SLIPPAGE_BPS ?? 50)
+    if (s.worstBps >= ceiling * 0.9) {
+      return {
+        severity: 'warning',
+        title: `${unit}: routes filling at the slippage ceiling`,
+        message: `The worst ${unit} fill in the last ${Math.round(ROUTING_WINDOW_MS / 60000)} minutes cost ${s.worstBps.toFixed(1)} bps against its quote, against a ${ceiling} bps allowance. Filling at the ceiling is thin depth, not a market move.`,
+        fields,
+      }
+    }
+  }
+  if (attempts >= 4 && refusalPct >= ROUTING_REFUSAL_WARN_PCT) {
+    return {
+      severity: 'warning',
+      title: `${unit}: most routes are being refused`,
+      message: `${s.refused} of ${attempts} ${unit} routing attempts were refused in the last ${Math.round(ROUTING_WINDOW_MS / 60000)} minutes (${s.refusals.map((r) => `${r.code}×${r.count}`).join(', ')}).`,
+      fields,
+    }
+  }
+  if (pctFull >= CAP_WARN_PCT) {
+    return {
+      severity: 'warning',
+      title: `${unit}: routing capacity filling up`,
+      message: `${pctFull.toFixed(1)}% of ${unit}'s in-flight routing bound is committed (warn at ${CAP_WARN_PCT}%).`,
+      fields,
+    }
+  }
+  return null
+}
+
+/**
  * Run every check. Order-independent; failures inside a check are converted to
  * alerts by the check itself, so this never throws.
  */
+export { checkRouting }
+
 export async function runMonitorChecks(): Promise<Alert[]> {
   // Caps and vol are about writing, so they follow the books being written.
   // Settlement and solvency follow every book with a vault: an asset withdrawn
@@ -358,6 +441,7 @@ export async function runMonitorChecks(): Promise<Alert[]> {
     checkDb(),
     ...written.map((a) => checkCapBreach(a)),
     ...written.map((a) => checkVolSpike(a)),
+    ...written.map((a) => checkRouting(a)),
     ...held.map((a) => checkSolvency(a)),
     ...held.map((a) => checkSettlementBacklog(a)),
   ])
