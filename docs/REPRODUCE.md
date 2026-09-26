@@ -279,10 +279,38 @@ curl -s -X POST https://lusty.finance/api/faucet/lusd -d '{"address":"G…"}' -H
 curl -s -X POST https://lusty.finance/api/faucet/lbtc -d '{"address":"G…"}' -H 'content-type: application/json'
 ```
 
-LBTC is the tight one: its whole supply was minted once and the vault's pool comes out of
-it. If the daily bound is stopping you from reaching a limit you are trying to test, say so
-in a report rather than working around it — being unable to reach a bound is itself worth
-knowing, and we would rather raise it than have the class go untested.
+### What that reaches, and what it does not
+
+Worth stating as arithmetic rather than leaving you to discover it after a week of daily
+claims.
+
+| | faucet drip | lifetime, one address | global, one day |
+|---|---|---|---|
+| XLM | 10,000 (friendbot, once per account) | 10,000 | 1,000,000 |
+| LUSD | 1,000 | 10,000 | 500,000 |
+| LBTC | 0.01 | 0.05 | 1 |
+
+Against the caps the contracts enforce:
+
+| Cap | XLM book | reachable solo? | BTC book | reachable solo? |
+|---|---|---|---|---|
+| `max_position_call` | 10,000 | **yes**, exactly | 0.05 | **yes**, after 5 daily claims |
+| `max_position_put` | 10,000 | yes, 10 daily claims | 1,500 | yes, 2 daily claims |
+| `max_expiry_call` | 500,000 | **no** — 50 funded accounts | 5 | **no** — 100 addresses, 5 days |
+| `max_expiry_put` | 500,000 | no — 50 addresses, a day | 150,000 | no — 15 addresses, a day |
+
+So **every position cap is reachable by one tester and no expiry cap is**. Class 4 (limit
+evasion) is therefore only half testable from the faucet alone, and that is a gap in this
+program rather than a property worth defending.
+
+**If a bound is what you are trying to test, ask.** Email the address in
+[`REPORTING.md`](./REPORTING.md) saying which cap and how much you need, and we will fund
+the accounts directly. LBTC is the constrained one — its whole supply was minted once and
+the vault's own pool comes out of it — so the answer there may be "we will raise the
+instance's cap for a day instead", which tests the same class.
+
+Being unable to reach a bound is itself worth reporting. We would rather raise it than have
+the class go untested and call the window complete.
 
 ---
 
