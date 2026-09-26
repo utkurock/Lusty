@@ -19,7 +19,7 @@
 // two numbers, which is what makes "what's shown is what's paid" a property of
 // the code rather than a coincidence between two clocks.
 
-import { XLM, type UnderlyingAsset } from './assets'
+import type { UnderlyingAsset } from './assets'
 import { minDaysToExpiry } from './expiries'
 import { expiryUtilizationFor } from './vault-state'
 
@@ -41,7 +41,7 @@ export interface PricingInputs {
 export function pricingDaysFor(
   expiryMs: number,
   now: number = Date.now(),
-  asset: UnderlyingAsset = XLM,
+  asset: UnderlyingAsset,
 ): number {
   return Math.max(minDaysToExpiry(asset.expiry), Math.ceil((expiryMs - now) / 86_400_000))
 }
@@ -58,12 +58,12 @@ export async function pricingInputsFor(
   side: 'call' | 'put',
   expiryMs: number,
   now: number = Date.now(),
-  asset: UnderlyingAsset = XLM,
+  asset: UnderlyingAsset,
 ): Promise<PricingInputs> {
   const expiryIso = new Date(expiryMs).toISOString()
   return {
     expiryIso,
-    daysToExpiry: pricingDaysFor(expiryMs, now),
+    daysToExpiry: pricingDaysFor(expiryMs, now, asset),
     utilization: await expiryUtilizationFor(side, expiryIso, asset),
   }
 }

@@ -20,10 +20,10 @@ vi.mock('@/lib/db', () => ({
       if (text.includes('date_key')) {
         const keys = (params[0] as string[]) ?? []
         return {
-          rows: keys.map((k) => ({ date_key: k, call_xlm: book.call, put_usd: book.put })),
+          rows: keys.map((k) => ({ date_key: k, call_underlying: book.call, put_usd: book.put })),
         }
       }
-      return { rows: [{ call_xlm: book.call, put_lusd: book.put }] }
+      return { rows: [{ call_underlying: book.call, put_lusd: book.put }] }
     },
   }),
 }))
@@ -51,8 +51,11 @@ describe('every read is scoped to one underlying', () => {
     }
   })
 
-  it('defaults to XLM, which is what every Tranche 1 caller meant', async () => {
-    await state.computeOpenExposure()
+  it('has no default book to fall back to', async () => {
+    // M2-06 took the default away. A read that cannot name its book is a
+    // compile error now, not a silent XLM query — so the only thing left to
+    // assert is that naming one is what scopes the query.
+    await state.computeOpenExposure(XLM)
     expect(queries[0].params).toContain('XLM')
   })
 })

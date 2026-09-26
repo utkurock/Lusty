@@ -9,12 +9,18 @@ import {
   openExpiryCount,
   REAL_DISTRIBUTION,
 } from '../expiries'
+import { XLM } from '../assets'
+
+// XLM's schedule is named explicitly at every call: since M2-06 these take the
+// book's parameters rather than defaulting to one, so the test says which book
+// it is asserting about instead of inheriting it.
+const P = XLM.expiry
 
 describe('upcomingExpiryDates', () => {
   it('returns the book s own count of consecutive Fridays at 08:00 UTC', () => {
     const from = new Date('2026-06-08T12:00:00Z') // Monday
-    const dates = upcomingExpiryDates(from)
-    expect(dates).toHaveLength(openExpiryCount())
+    const dates = upcomingExpiryDates(from, P)
+    expect(dates).toHaveLength(openExpiryCount(P))
     for (const d of dates) {
       expect(d.getUTCDay()).toBe(5)
       expect(d.getUTCHours()).toBe(8)
@@ -28,15 +34,15 @@ describe('upcomingExpiryDates', () => {
   it('respects the book s minimum tenor (no same-week rush)', () => {
     // Thursday afternoon: this week's Friday is < 2 days away → skip to next.
     const from = new Date('2026-06-11T12:00:00Z') // Thursday
-    const [first] = upcomingExpiryDates(from)
+    const [first] = upcomingExpiryDates(from, P)
     expect(first.toISOString()).toBe('2026-06-19T08:00:00.000Z')
     const daysAway = (first.getTime() - from.getTime()) / 86400_000
-    expect(daysAway).toBeGreaterThanOrEqual(minDaysToExpiry())
+    expect(daysAway).toBeGreaterThanOrEqual(minDaysToExpiry(P))
   })
 
   it('keeps this week\'s Friday while it is still far enough out', () => {
     const from = new Date('2026-06-08T12:00:00Z') // Monday → Friday is 3.8d away
-    const [first] = upcomingExpiryDates(from)
+    const [first] = upcomingExpiryDates(from, P)
     expect(first.toISOString()).toBe('2026-06-12T08:00:00.000Z')
   })
 })
@@ -44,11 +50,11 @@ describe('upcomingExpiryDates', () => {
 describe('maxOpenExpiryDays', () => {
   it('is the farthest open expiry, at least MIN_DAYS', () => {
     const from = new Date('2026-06-08T12:00:00Z')
-    const days = maxOpenExpiryDays(from)
-    const dates = upcomingExpiryDates(from)
+    const days = maxOpenExpiryDays(from, P)
+    const dates = upcomingExpiryDates(from, P)
     const last = dates[dates.length - 1]
     expect(days).toBe(Math.ceil((last.getTime() - from.getTime()) / 86400_000))
-    expect(days).toBeGreaterThanOrEqual(minDaysToExpiry())
+    expect(days).toBeGreaterThanOrEqual(minDaysToExpiry(P))
   })
 })
 

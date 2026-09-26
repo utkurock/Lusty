@@ -50,9 +50,9 @@ export async function GET(req: Request) {
 
     const openBuckets = await computeOpenBuckets(new Date(), asset)
 
-    // Both the fill and the cap are this asset's own. The field names still
-    // say Xlm because Tranche 1's clients read them by that name; the number
-    // in them is the underlying's, whichever underlying was asked for.
+    // Both the fill and the cap are this asset's own, and since M2-06 the
+    // field names say so. The top-level `utilizedXlm`/`capXlm` below survive
+    // for Tranche 1's clients and are the one place a token is still named.
     const callEpoch = callEpochCap(asset)
     const putEpoch = putEpochCap(asset)
 
@@ -61,21 +61,21 @@ export async function GET(req: Request) {
       label: b.label,
       expiryIso: b.expiryIso,
       dateKey: b.dateKey,
-      callXlm: b.callXlm,
-      callCapXlm: callEpoch,
-      callFull: b.callXlm >= callEpoch,
+      callUnderlying: b.callUnderlying,
+      callCap: callEpoch,
+      callFull: b.callUnderlying >= callEpoch,
       putUsd: b.putUsd,
       putCapUsd: putEpoch,
       putFull: b.putUsd >= putEpoch,
     }))
 
-    const callUtilizedXlm = buckets.reduce((a, b) => a + b.callXlm, 0)
+    const callUtilizedUnderlying = buckets.reduce((a, b) => a + b.callUnderlying, 0)
     const putUtilizedUsd = buckets.reduce((a, b) => a + b.putUsd, 0)
-    const callCapXlm = callEpoch * buckets.length
+    const callCap = callEpoch * buckets.length
     const putCapUsd = putEpoch * buckets.length
     const callUtilizationPct = Math.min(
       100,
-      callCapXlm > 0 ? (callUtilizedXlm / callCapXlm) * 100 : 0
+      callCap > 0 ? (callUtilizedUnderlying / callCap) * 100 : 0
     )
     const putUtilizationPct = Math.min(
       100,
@@ -110,8 +110,8 @@ export async function GET(req: Request) {
         lusdBalance,
         baseline: XLM_BASELINE,
         call: {
-          utilizedXlm: callUtilizedXlm,
-          capXlm: callCapXlm,
+          utilized: callUtilizedUnderlying,
+          cap: callCap,
           utilizationPct: callUtilizationPct,
         },
         put: {
@@ -121,9 +121,10 @@ export async function GET(req: Request) {
         },
         buckets,
         epochsPerMonth: epochsPerMonth(asset),
-        // Back-compat aliases (call side).
-        utilizedXlm: callUtilizedXlm,
-        capXlm: callCapXlm,
+        // Back-compat aliases (call side), named for XLM because that is the
+        // only book a Tranche 1 client knew about.
+        utilizedXlm: callUtilizedUnderlying,
+        capXlm: callCap,
         utilizationPct: callUtilizationPct,
       },
       {

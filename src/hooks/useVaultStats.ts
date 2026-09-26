@@ -13,8 +13,8 @@ export interface VaultBucket {
   label: string
   expiryIso: string
   dateKey: string
-  callXlm: number
-  callCapXlm: number
+  callUnderlying: number
+  callCap: number
   callFull: boolean
   putUsd: number
   putCapUsd: number
@@ -43,7 +43,7 @@ export interface VaultStatsPayload {
 // book that is 0% full against a cap of 1.5 million, and quote against it.
 export function useVaultStats(
   intervalMs = 30_000,
-  asset: UnderlyingSymbol = 'XLM',
+  asset: UnderlyingSymbol,
 ) {
   const [stats, setStats] = useState<VaultStatsPayload | null>(null)
   const [loading, setLoading] = useState(true)
@@ -56,8 +56,8 @@ export function useVaultStats(
       if (d.ok) {
         setStats({
           call: {
-            utilized: d.call?.utilizedXlm ?? d.utilizedXlm ?? 0,
-            cap: d.call?.capXlm ?? d.capXlm ?? 0,
+            utilized: d.call?.utilized ?? d.utilizedXlm ?? 0,
+            cap: d.call?.cap ?? d.capXlm ?? 0,
             utilizationPct: d.call?.utilizationPct ?? d.utilizationPct ?? 0,
           },
           put: {

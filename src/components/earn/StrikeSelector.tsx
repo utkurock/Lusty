@@ -95,7 +95,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
   // are offered, how close to settlement the nearest one sits and how far apart
   // they are all come off the asset.
   const baseExpiries = useMemo(
-    () => getExpiryOptions(type, realStats, asset?.expiry),
+    () => (asset ? getExpiryOptions(asset.expiry, type, realStats) : []),
     [type, realStats, asset],
   )
   const [expiries, setExpiries] = useState<ExpiryOption[]>(baseExpiries)
@@ -286,9 +286,9 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
 
   const epochUtil = useMemo(() => {
     if (!selectedBucket) return 0
-    const u = type === 'call' ? selectedBucket.callXlm : selectedBucket.putUsd
+    const u = type === 'call' ? selectedBucket.callUnderlying : selectedBucket.putUsd
     const c =
-      type === 'call' ? selectedBucket.callCapXlm : selectedBucket.putCapUsd
+      type === 'call' ? selectedBucket.callCap : selectedBucket.putCapUsd
     return c > 0 ? Math.min(1, u / c) : 0
   }, [type, selectedBucket])
 
@@ -650,6 +650,19 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
     } finally {
       setTxLoading(false)
     }
+  }
+
+  // An unresolvable asset stops the screen here rather than at the deposit
+  // button. Every figure below is spot × an amount, and spot, the caps and the
+  // ladder all fall back to the first book when there is no asset to read them
+  // off — so the page would draw one book's numbers under another's heading and
+  // only object once the writer pressed deposit.
+  if (!asset) {
+    return (
+      <div className="light-card p-6 font-mono text-caption text-ink-2">
+        {assetSymbol} is not available to write against yet.
+      </div>
+    )
   }
 
   return (

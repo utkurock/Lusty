@@ -1,7 +1,6 @@
 import { Keypair } from '@stellar/stellar-sdk'
 import { ORACLE_HISTORY_SECS } from './oracle-window'
 import {
-  XLM,
   settleableUnderlying,
   type UnderlyingAsset,
   type UnderlyingSymbol,
@@ -105,13 +104,17 @@ export async function scanForSettlement(opts: {
   from?: number
   limit?: number
   now?: Date
-  /** Which book to walk. Each has its own id range and its own next id. */
-  asset?: UnderlyingAsset
-} = {}): Promise<ScanResult> {
+  /**
+   * Which book to walk. Required: each instance has its own id range and its
+   * own next id, so a scan that fell back to a default would report another
+   * book's ids as this one's and hand them to a settler.
+   */
+  asset: UnderlyingAsset
+}): Promise<ScanResult> {
   const cursor = Math.max(0, Math.floor(opts.from ?? 0))
   const limit = Math.max(1, Math.floor(opts.limit ?? DEFAULT_SCAN_LIMIT))
   const now = opts.now ?? new Date()
-  const asset = opts.asset ?? XLM
+  const { asset } = opts
 
   const { nextId } = await getVaultStats(asset)
   const end = Math.min(nextId, cursor + limit)

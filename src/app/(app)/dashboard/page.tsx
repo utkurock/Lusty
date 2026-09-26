@@ -44,7 +44,7 @@ interface Position {
   settled: boolean
   /**
    * How the contract resolved it. A covered call that is `assigned` gave up its
-   * XLM and was paid cash; one that is `kept` got its XLM back. The distinction
+   * underlying and was paid cash; one that is `kept` got it back. The distinction
    * is the whole answer to "where did my collateral go", so it is carried all
    * the way to the card rather than flattened into settled/not.
    */
@@ -86,7 +86,7 @@ interface Position {
 interface PortfolioGreeks {
   /** Whose book: the wallet is short every option it opened. */
   basis: 'writer'
-  /** Underlying units. Negative = short XLM. */
+  /** Underlying units. Negative = short the book's own asset. */
   netDelta: number
   /** USD per 1.00 of σ. Displayed per vol point, so divided by 100. */
   netVega: number
@@ -95,9 +95,9 @@ interface PortfolioGreeks {
 
 /** The vault's whole book at one expiry, from contract state. Not this wallet. */
 interface VaultExpiryLoad {
-  callXlm: number
+  callUnderlying: number
   putUsd: number
-  maxCallXlm: number
+  maxCallUnderlying: number
   maxPutUsd: number
 }
 
@@ -106,7 +106,7 @@ interface ExpiryBucket {
   expiryLabel: string
   daysToExpiry: number
   positions: number
-  callCollateralXlm: number
+  callCollateral: number
   putCollateralUsd: number
   premiumUsd: number
   netDelta: number | null
@@ -119,7 +119,7 @@ interface Portfolio {
   source: 'contract' | 'database'
   counts: { open: number; awaitingSettlement: number; settled: number }
   /** Two tokens, deliberately never summed into one figure. */
-  collateral: { callXlm: number; putUsd: number }
+  collateral: { callUnderlying: number; putUsd: number }
   premiumUsd: number
   greeks: PortfolioGreeks | null
   byExpiry: ExpiryBucket[]
@@ -224,8 +224,8 @@ function pctFull(used: number, cap: number): number | null {
 /**
  * Asset-level exposure: what is locked, in which token, coming due when.
  *
- * The two legs are never added together. A call escrows XLM and a put escrows
- * cash, so a single "total collateral" would be a currency error — and one that
+ * The two legs are never added together. A call escrows the underlying and a
+ * put escrows cash, so a "total collateral" would be a currency error — one that
  * reads as a perfectly sensible number right up until someone sizes a decision
  * on it. The API refuses to produce that figure and so does this panel.
  *
@@ -235,22 +235,28 @@ function pctFull(used: number, cap: number): number | null {
  * left on this date" with the figure that will actually refuse the next
  * deposit, rather than with a database mirror of it.
  */
-function ExposurePanel({ portfolio }: { portfolio: Portfolio }) {
+function ExposurePanel({
+  portfolio,
+  symbol,
+}: {
+  portfolio: Portfolio
+  symbol: UnderlyingSymbol
+}) {
   const buckets = portfolio.byExpiry
   if (buckets.length === 0) return null
 
   return (
     <Panel
       title="Asset exposure"
-      note="calls lock XLM, puts lock cash — separate tokens, so there is no combined total"
+      note={`calls lock ${symbol}, puts lock cash — separate tokens, so there is no combined total`}
     >
       <StatStrip
         className="mb-6"
         stats={[
           {
             label: 'Locked in calls',
-            value: amount(portfolio.collateral.callXlm),
-            unit: 'XLM',
+            value: amount(portfolio.collateral.callUnderlying, displayDecimalsOf(symbol)),
+            unit: symbol,
           },
           {
             label: 'Locked in puts',
@@ -263,14 +269,14 @@ function ExposurePanel({ portfolio }: { portfolio: Portfolio }) {
         <div className="min-w-[560px]">
           <div className="label grid grid-cols-[1.1fr_0.9fr_0.9fr_0.8fr_1.1fr] gap-3 pb-2">
             <div>Expiry</div>
-            <div className="text-right">Calls (XLM)</div>
+            <div className="text-right">Calls ({symbol})</div>
             <div className="text-right">Puts (USD)</div>
             <div className="text-right">Upfront</div>
             <div className="text-right">Vault load at this expiry</div>
           </div>
 
           {buckets.map((b) => {
-            const callPct = b.vault ? pctFull(b.vault.callXlm, b.vault.maxCallXlm) : null
+            const callPct = b.vault ? pctFull(b.vault.callUnderlying, b.vault.maxCallUnderlying) : null
             const putPct = b.vault ? pctFull(b.vault.putUsd, b.vault.maxPutUsd) : null
             const due = b.awaitingSettlement > 0 && b.awaitingSettlement === b.positions
             // Same distinction the position rows make: a bucket whose expiry
@@ -295,7 +301,9 @@ function ExposurePanel({ portfolio }: { portfolio: Portfolio }) {
                   </div>
                 </div>
                 <div className="num text-caption text-ink text-right">
-                  {b.callCollateralXlm > 0 ? amount(b.callCollateralXlm) : '—'}
+                  {b.callCollateral > 0
+                    ? amount(b.callCollateral, displayDecimalsOf(symbol))
+                    : '—'}
                 </div>
                 <div className="num text-caption text-ink text-right">
                   {b.putCollateralUsd > 0 ? amount(b.putCollateralUsd) : '—'}
@@ -345,8 +353,8 @@ function payoutAmount(payout: { amount: number; asset: string }): string {
  *
  * A settled covered call is the one place this product can hand back a
  * different token than it took, and the dashboard used to render that as
- * "settled: yes" — indistinguishable, to the writer looking for their XLM,
- * from the money having gone missing. It had not: the contract pays at
+ * "settled: yes" — indistinguishable, to the writer looking for their
+ * collateral, from the money having gone missing. It had not: the contract pays at
  * settlement, straight to the writer's wallet, in the same transaction that
  * closes the position. There is nothing to claim, so the honest fix is to say
  * what was paid and point at the transaction that paid it.
@@ -363,7 +371,10 @@ function Settlement({ position }: { position: Position }) {
 
   const assigned = position.outcome === 'assigned'
   const isCall = position.type === 'call'
-  const gaveUp = isCall ? 'XLM' : 'cash'
+  // A call gave up the book's own underlying, whatever it is; a put gave up
+  // cash. Reading it off the position rather than naming a token means an
+  // assigned BTC call is not reported as lumens the writer never held.
+  const gaveUp = isCall ? position.asset : 'cash'
   const at =
     position.settlePrice != null
       ? ` at $${position.settlePrice.toFixed(4)}`
@@ -594,10 +605,13 @@ export default function DashboardPage() {
   const [showArchive, setShowArchive] = useState(false)
   // Which book is being read. Positions, risk and every figure derived from
   // them belong to one instance — a position id is only unique within one, and
-  // a net delta measured in XLM cannot have BTC added to it. So the screen
+  // a net delta measured in lumens cannot have bitcoin added to it. So the screen
   // shows one book at a time rather than a total that means nothing.
   const books = enabledUnderlyings()
-  const [book, setBook] = useState<UnderlyingSymbol>('XLM')
+  // Opens on the first book the registry serves rather than on a spelling: the
+  // tab strip only lists enabled books, so a hardcoded default that got gated
+  // would leave the screen reading a book no tab can switch away from.
+  const [book, setBook] = useState<UnderlyingSymbol>(books[0]?.symbol ?? 'XLM')
 
   const refresh = async () => {
     if (!address) {
@@ -800,7 +814,7 @@ export default function DashboardPage() {
           )}
 
           {connected && portfolio && positions.length > 0 && (
-            <ExposurePanel portfolio={portfolio} />
+            <ExposurePanel portfolio={portfolio} symbol={book} />
           )}
 
           {/* This wallet's ledger history, streamed via Soroban RPC getEvents

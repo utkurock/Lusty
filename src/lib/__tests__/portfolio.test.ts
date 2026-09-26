@@ -82,7 +82,7 @@ describe('aggregatePortfolio', () => {
   it('returns a valid zero-filled summary for an empty book', () => {
     const s = aggregatePortfolio([], MARKET, NOW)
     expect(s.counts).toEqual({ open: 0, awaitingSettlement: 0, settled: 0 })
-    expect(s.collateral).toEqual({ callXlm: 0, putUsd: 0 })
+    expect(s.collateral).toEqual({ callUnderlying: 0, putUsd: 0 })
     expect(s.premiumUsd).toBe(0)
     expect(s.byExpiry).toEqual([])
     expect(s.greeks).toBeNull()
@@ -97,7 +97,7 @@ describe('aggregatePortfolio', () => {
       MARKET,
       NOW
     )
-    expect(s.collateral.callXlm).toBeCloseTo(1000, 10)
+    expect(s.collateral.callUnderlying).toBeCloseTo(1000, 10)
     expect(s.collateral.putUsd).toBeCloseTo(250, 10)
     expect(s).not.toHaveProperty('collateral.total')
   })
@@ -131,7 +131,7 @@ describe('aggregatePortfolio', () => {
     )
     expect(s.counts.settled).toBe(1)
     expect(s.premiumUsd).toBeCloseTo(4, 10)
-    expect(s.collateral.callXlm).toBe(0)
+    expect(s.collateral.callUnderlying).toBe(0)
     expect(s.greeks).toBeNull()
     expect(s.byExpiry).toEqual([])
   })
@@ -145,7 +145,7 @@ describe('aggregatePortfolio', () => {
       NOW
     )
     expect(s.counts).toEqual({ open: 0, awaitingSettlement: 1, settled: 0 })
-    expect(s.collateral.callXlm).toBeCloseTo(500, 10)
+    expect(s.collateral.callUnderlying).toBeCloseTo(500, 10)
     expect(s.greeks).toBeNull()
     expect(s.byExpiry[0].awaitingSettlement).toBe(1)
     expect(s.byExpiry[0].netDelta).toBeNull()
@@ -168,9 +168,9 @@ describe('aggregatePortfolio', () => {
     expect(s.byExpiry[0].expiryIso).toBe(near.toISOString())
     expect(s.byExpiry[1].expiryIso).toBe(far.toISOString())
     expect(s.byExpiry[0].positions).toBe(2)
-    expect(s.byExpiry[0].callCollateralXlm).toBeCloseTo(200, 10)
+    expect(s.byExpiry[0].callCollateral).toBeCloseTo(200, 10)
     expect(s.byExpiry[0].putCollateralUsd).toBeCloseTo(300, 10)
-    expect(s.byExpiry[1].callCollateralXlm).toBeCloseTo(100, 10)
+    expect(s.byExpiry[1].callCollateral).toBeCloseTo(100, 10)
   })
 
   it('bucket totals reconcile with the portfolio totals', () => {
@@ -189,7 +189,7 @@ describe('aggregatePortfolio', () => {
     const sum = (f: (b: (typeof s.byExpiry)[number]) => number) =>
       s.byExpiry.reduce((acc, b) => acc + f(b), 0)
 
-    expect(sum((b) => b.callCollateralXlm)).toBeCloseTo(s.collateral.callXlm, 10)
+    expect(sum((b) => b.callCollateral)).toBeCloseTo(s.collateral.callUnderlying, 10)
     expect(sum((b) => b.putCollateralUsd)).toBeCloseTo(s.collateral.putUsd, 10)
     expect(sum((b) => b.premiumUsd)).toBeCloseTo(s.premiumUsd, 10)
     expect(sum((b) => b.netDelta ?? 0)).toBeCloseTo(s.greeks!.netDelta, 10)
@@ -216,7 +216,7 @@ describe('aggregatePortfolio', () => {
   it('reports position facts with no market data, and no Greeks', () => {
     const s = aggregatePortfolio([leg({ collateral: 1000, premium: 4 })], null, NOW)
     expect(s.counts.open).toBe(1)
-    expect(s.collateral.callXlm).toBeCloseTo(1000, 10)
+    expect(s.collateral.callUnderlying).toBeCloseTo(1000, 10)
     expect(s.premiumUsd).toBeCloseTo(4, 10)
     expect(s.greeks).toBeNull()
     expect(s.byExpiry[0].netDelta).toBeNull()
@@ -231,7 +231,7 @@ describe('aggregatePortfolio', () => {
     const s = aggregatePortfolio([good, bad], MARKET, NOW)
 
     expect(s.counts.open).toBe(2)
-    expect(s.collateral.callXlm).toBeCloseTo(1500, 10)
+    expect(s.collateral.callUnderlying).toBeCloseTo(1500, 10)
     expect(s.greeks!.pricedPositions).toBe(1)
     expect(s.greeks!.netDelta).toBeCloseTo(legGreeks(good, MARKET, NOW).delta, 10)
   })

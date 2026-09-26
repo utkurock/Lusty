@@ -1,4 +1,4 @@
-import { XLM, type UnderlyingAsset } from './assets'
+import type { UnderlyingAsset } from './assets'
 import { getPool, ensureSchema } from './db'
 import { upcomingExpiryDates, expiryLabel, expiryUtilization } from './expiries'
 
@@ -6,10 +6,10 @@ import { upcomingExpiryDates, expiryLabel, expiryUtilization } from './expiries'
  * Vault exposure, computed from the protocol's own record of open positions.
  *
  * Why this exists (BUG-1): utilization used to be derived from the
- * distributor's raw Horizon XLM balance minus a fixed baseline
- * (`xlmBalance - VAULT_XLM_BASELINE`). That number conflates real open
- * exposure with everything else that lands in the distributor wallet —
- * faucet XLM users pull while testing, seed capital, and month-old test
+ * distributor's raw Horizon balance minus a fixed baseline. That number
+ * conflates real open exposure with everything else that lands in the
+ * distributor wallet — faucet payouts users pull while testing, seed capital,
+ * and month-old test
  * positions whose collateral was never claimed back. The result was a
  * utilization figure that ran to six-figure percentages and silently broke
  * the vault cap check (it would report "cap exceeded" off noise, not risk).
@@ -24,7 +24,7 @@ import { upcomingExpiryDates, expiryLabel, expiryUtilization } from './expiries'
  *   - it has not expired so long ago that it is effectively abandoned test
  *     data rather than live exposure (within the grace window).
  *
- * Collateral side: XLM for covered calls, LUSD for cash-secured puts.
+ * Collateral side: the book's underlying for covered calls, cash for puts.
  */
 
 // Positions whose expiry is more than this many days in the past are treated
@@ -42,27 +42,21 @@ const EXPOSURE_GRACE_DAYS = Number(process.env.VAULT_EXPOSURE_GRACE_DAYS ?? 7)
 // monthly capacity into the per-expiry figure M2-05 reconciles against the
 // instance's `max_expiry_*`, so a book dividing by another book's count would
 // be checked against a bound its own contract never enforces.
-export const epochsPerMonth = (asset: UnderlyingAsset = XLM): number =>
+export const epochsPerMonth = (asset: UnderlyingAsset): number =>
   asset.expiry.openExpiries
 
 /** Per-expiry cap = the asset's own monthly budget / its own open expiries. */
-export const callEpochCap = (asset: UnderlyingAsset = XLM): number =>
+export const callEpochCap = (asset: UnderlyingAsset): number =>
   asset.callMonthlyCap / epochsPerMonth(asset)
-export const putEpochCap = (asset: UnderlyingAsset = XLM): number =>
+export const putEpochCap = (asset: UnderlyingAsset): number =>
   asset.putMonthlyCapUsd / epochsPerMonth(asset)
-
-// XLM's numbers, kept for the surfaces that still name it directly.
-export const CALL_MONTHLY_CAP_XLM = XLM.callMonthlyCap
-export const PUT_MONTHLY_CAP_USD = XLM.putMonthlyCapUsd
-export const CALL_EPOCH_CAP_XLM = callEpochCap(XLM)
-export const PUT_EPOCH_CAP_USD = putEpochCap(XLM)
 
 export function expiryDateKey(d: Date | string): string {
   return new Date(d).toISOString().slice(0, 10)
 }
 
 export interface ExpirySold {
-  callXlm: number
+  callUnderlying: number
   putUsd: number
 }
 
@@ -71,16 +65,16 @@ export interface ExpirySold {
 // deposits). Throws if the DB is unreachable so callers fail closed.
 export async function computeExpirySold(
   dateKeys: string[],
-  asset: UnderlyingAsset = XLM
+  asset: UnderlyingAsset
 ): Promise<Map<string, ExpirySold>> {
   const map = new Map<string, ExpirySold>()
-  for (const k of dateKeys) map.set(k, { callXlm: 0, putUsd: 0 })
+  for (const k of dateKeys) map.set(k, { callUnderlying: 0, putUsd: 0 })
   if (dateKeys.length === 0) return map
   await ensureSchema()
   const res = await getPool().query(
     `select left(metadata->>'expiryIso', 10) as date_key,
             coalesce(sum(case when subtype = 'call'
-                              then (metadata->>'collateralAmount')::float8 end), 0)::float8 as call_xlm,
+                              then (metadata->>'collateralAmount')::float8 end), 0)::float8 as call_underlying,
             coalesce(sum(case when subtype = 'put'
                               then amount end), 0)::float8 as put_usd
        from transactions
@@ -96,7 +90,7 @@ export async function computeExpirySold(
   for (const row of res.rows) {
     if (!row.date_key) continue
     map.set(row.date_key, {
-      callXlm: Number(row.call_xlm ?? 0),
+      callUnderlying: Number(row.call_underlying ?? 0),
       putUsd: Number(row.put_usd ?? 0),
     })
   }
@@ -107,26 +101,26 @@ export interface ExpiryBucket {
   expiryIso: string
   dateKey: string
   label: string
-  callXlm: number
+  callUnderlying: number
   putUsd: number
 }
 
 // The open expiry buckets (the book's own schedule) with amounts sold.
 export async function computeOpenBuckets(
   now = new Date(),
-  asset: UnderlyingAsset = XLM
+  asset: UnderlyingAsset
 ): Promise<ExpiryBucket[]> {
   const dates = upcomingExpiryDates(now, asset.expiry)
   const keys = dates.map((d) => expiryDateKey(d))
   const sold = await computeExpirySold(keys, asset)
   return dates.map((d) => {
     const dateKey = expiryDateKey(d)
-    const s = sold.get(dateKey) ?? { callXlm: 0, putUsd: 0 }
+    const s = sold.get(dateKey) ?? { callUnderlying: 0, putUsd: 0 }
     return {
       expiryIso: d.toISOString(),
       dateKey,
       label: expiryLabel(d),
-      callXlm: s.callXlm,
+      callUnderlying: s.callUnderlying,
       putUsd: s.putUsd,
     }
   })
@@ -144,7 +138,7 @@ export async function computeOpenBuckets(
 export async function expiryUtilizationFor(
   side: 'call' | 'put',
   expiryIso: string,
-  asset: UnderlyingAsset = XLM
+  asset: UnderlyingAsset
 ): Promise<number> {
   try {
     // Both halves of the ratio belong to this asset: its own sold collateral
@@ -154,7 +148,7 @@ export async function expiryUtilizationFor(
     const n = buckets.length || 1
     const aggregate =
       side === 'call'
-        ? buckets.reduce((a, b) => a + b.callXlm, 0) / (callEpochCap(asset) * n)
+        ? buckets.reduce((a, b) => a + b.callUnderlying, 0) / (callEpochCap(asset) * n)
         : buckets.reduce((a, b) => a + b.putUsd, 0) / (putEpochCap(asset) * n)
     const slot = buckets.findIndex((b) => b.dateKey === expiryDateKey(expiryIso))
     return expiryUtilization(aggregate, slot >= 0 ? slot : 0)
@@ -165,8 +159,8 @@ export async function expiryUtilizationFor(
 }
 
 export interface OpenExposure {
-  /** Open covered-call collateral still owed back / assignable, in XLM. */
-  callXlm: number
+  /** Open call collateral still owed back, in the book's own units. */
+  callUnderlying: number
   /** Open cash-secured-put collateral still owed back / assignable, in LUSD. */
   putLusd: number
   /** Grace window (days past expiry) used for this computation. */
@@ -179,7 +173,7 @@ export interface OpenExposure {
  * that can't see real exposure must reject, not wave through).
  */
 export async function computeOpenExposure(
-  asset: UnderlyingAsset = XLM
+  asset: UnderlyingAsset
 ): Promise<OpenExposure> {
   await ensureSchema()
   const pool = getPool()
@@ -194,7 +188,7 @@ export async function computeOpenExposure(
   const res = await pool.query(
     `select
        coalesce(sum(case when d.subtype = 'call'
-                         then (d.metadata->>'collateralAmount')::float8 end), 0)::float8 as call_xlm,
+                         then (d.metadata->>'collateralAmount')::float8 end), 0)::float8 as call_underlying,
        coalesce(sum(case when d.subtype = 'put'
                          then (d.metadata->>'collateralAmount')::float8 end), 0)::float8 as put_lusd
      from transactions d
@@ -216,7 +210,7 @@ export async function computeOpenExposure(
   )
   const row = res.rows[0] ?? {}
   return {
-    callXlm: Number(row.call_xlm ?? 0),
+    callUnderlying: Number(row.call_underlying ?? 0),
     putLusd: Number(row.put_lusd ?? 0),
     graceDays: EXPOSURE_GRACE_DAYS,
   }

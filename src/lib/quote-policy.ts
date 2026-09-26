@@ -108,7 +108,7 @@ export async function assertQuoteAllowed(input: PolicyInput): Promise<void> {
   const dateKey = input.expiryIso.slice(0, 10)
   const epochRes = await pool.query(
     `select coalesce(sum(case when subtype = 'call'
-                              then (metadata->>'collateralAmount')::float8 end), 0)::float8 as call_xlm,
+                              then (metadata->>'collateralAmount')::float8 end), 0)::float8 as call_underlying,
             coalesce(sum(case when subtype = 'put'
                               then amount end), 0)::float8 as put_usd
        from transactions
@@ -122,7 +122,7 @@ export async function assertQuoteAllowed(input: PolicyInput): Promise<void> {
   )
   const used =
     input.type === 'call'
-      ? Number(epochRes.rows[0]?.call_xlm ?? 0)
+      ? Number(epochRes.rows[0]?.call_underlying ?? 0)
       : Number(epochRes.rows[0]?.put_usd ?? 0)
   const limit =
     input.type === 'call' ? input.maxUserEpochCallXlm : input.maxUserEpochPutUsd

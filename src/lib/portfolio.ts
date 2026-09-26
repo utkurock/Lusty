@@ -12,10 +12,14 @@ import { optionGreeks } from './pricing-server'
 // exactly once — in `legGreeks` — and that is the only place in the codebase
 // where the flip happens. A wallet that has sold calls carries negative delta.
 //
-// COLLATERAL DOES NOT ADD UP. Calls escrow XLM, puts escrow cash. Different
-// tokens, so they stay in separate fields and there is deliberately no total.
-// One number across both would be a currency error dressed as a summary.
-// Premiums are all cash, so those do sum.
+// COLLATERAL DOES NOT ADD UP. Calls escrow the book's underlying, puts escrow
+// cash. Different tokens, so they stay in separate fields and there is
+// deliberately no total. One number across both would be a currency error
+// dressed as a summary. Premiums are all cash, so those do sum.
+//
+// Everything here is one book's. The route scopes its legs to a single asset
+// before calling in, which is what makes the call figures addable at all — a
+// bitcoin and a lumen summed is the same currency error one level up.
 
 /** One position, normalised away from whichever source produced it. */
 export interface Leg {
@@ -47,10 +51,10 @@ export interface PortfolioMarket {
  * disagree, this one is the one that will be enforced at open.
  */
 export interface VaultExpiryLoad {
-  callXlm: number
+  callUnderlying: number
   putUsd: number
   /** `Limits::max_expiry_call` — the point at which `open` starts reverting. */
-  maxCallXlm: number
+  maxCallUnderlying: number
   maxPutUsd: number
 }
 
@@ -59,8 +63,8 @@ export interface ExpiryBucket {
   expiryLabel: string
   daysToExpiry: number
   positions: number
-  /** XLM locked behind calls at this expiry. */
-  callCollateralXlm: number
+  /** Underlying locked behind calls at this expiry, in the book's own units. */
+  callCollateral: number
   /** Cash locked behind puts at this expiry, in USD. */
   putCollateralUsd: number
   premiumUsd: number
@@ -81,7 +85,7 @@ export interface ExpiryBucket {
 export interface PortfolioSummary {
   counts: { open: number; awaitingSettlement: number; settled: number }
   /** Locked right now. Settled positions hold nothing and are not counted. */
-  collateral: { callXlm: number; putUsd: number }
+  collateral: { callUnderlying: number; putUsd: number }
   /**
    * Lifetime premium income, settled positions included — it was earned and
    * paid at open, and settling does not take it back. `byExpiry` buckets only
@@ -146,7 +150,7 @@ export function aggregatePortfolio(
   now: number = Date.now()
 ): PortfolioSummary {
   const buckets = new Map<string, ExpiryBucket>()
-  let callCollateralXlm = 0
+  let callCollateral = 0
   let putCollateralUsd = 0
   let premiumUsd = 0
   let netDelta = 0
@@ -177,7 +181,7 @@ export function aggregatePortfolio(
       expiryLabel: expiryLabel(leg.expiry),
       daysToExpiry: Math.max(0, daysToExpiry),
       positions: 0,
-      callCollateralXlm: 0,
+      callCollateral: 0,
       putCollateralUsd: 0,
       premiumUsd: 0,
       netDelta: null,
@@ -192,8 +196,8 @@ export function aggregatePortfolio(
     premiumUsd += leg.premium
 
     if (leg.side === 'call') {
-      bucket.callCollateralXlm += leg.collateral
-      callCollateralXlm += leg.collateral
+      bucket.callCollateral += leg.collateral
+      callCollateral += leg.collateral
     } else {
       bucket.putCollateralUsd += leg.collateral
       putCollateralUsd += leg.collateral
@@ -219,7 +223,7 @@ export function aggregatePortfolio(
 
   return {
     counts: { open, awaitingSettlement, settled },
-    collateral: { callXlm: callCollateralXlm, putUsd: putCollateralUsd },
+    collateral: { callUnderlying: callCollateral, putUsd: putCollateralUsd },
     premiumUsd,
     greeks:
       market && priced > 0

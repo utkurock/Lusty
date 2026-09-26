@@ -11,10 +11,11 @@
 // (M2-05), so a book quoting off another book's count would quote against a
 // cap its own instance does not enforce.
 //
-// Every function below takes the parameters and defaults to XLM's, which is
-// the same absent-means-XLM rule the rest of the app has followed since M1-06.
+// M2-06: and every function below REQUIRES them. They used to default to XLM's,
+// which meant a caller that forgot a book was handed a schedule silently rather
+// than told — the one failure mode a per-asset parameter exists to prevent.
 
-import { XLM, type ExpiryParams } from './assets'
+import type { ExpiryParams } from './assets'
 
 export interface ExpiryOption {
   id: string
@@ -34,12 +35,12 @@ const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep
 // hours before settlement and the vault carries assignment risk it cannot
 // price properly. How many days that is belongs to the book: a slower
 // underlying can be written closer to settlement than a fast one.
-export function minDaysToExpiry(params: ExpiryParams = XLM.expiry): number {
+export function minDaysToExpiry(params: ExpiryParams): number {
   return params.minDaysToExpiry
 }
 
 /** Rolling expiries a book keeps open at once, and its capacity divisor. */
-export function openExpiryCount(params: ExpiryParams = XLM.expiry): number {
+export function openExpiryCount(params: ExpiryParams): number {
   return params.openExpiries
 }
 
@@ -104,7 +105,7 @@ function scheduleFrom(from: Date, params: ExpiryParams): Date[] {
 // buckets so both agree on which expiries exist.
 export function upcomingExpiryDates(
   from: Date = new Date(),
-  params: ExpiryParams = XLM.expiry,
+  params: ExpiryParams,
 ): Date[] {
   return scheduleFrom(from, params)
 }
@@ -122,7 +123,7 @@ function daysBetween(a: Date, b: Date): number {
  */
 export function maxOpenExpiryDays(
   from: Date = new Date(),
-  params: ExpiryParams = XLM.expiry,
+  params: ExpiryParams,
 ): number {
   const dates = upcomingExpiryDates(from, params)
   const last = dates[dates.length - 1]
@@ -146,9 +147,9 @@ interface RealVaultStats {
  * for SSR / first paint before /api/vault/stats has resolved.
  */
 export function getExpiryOptions(
+  params: ExpiryParams,
   type: 'call' | 'put' = 'call',
   realStats?: RealVaultStats,
-  params: ExpiryParams = XLM.expiry,
 ): ExpiryOption[] {
   const now = new Date()
   const fridays = upcomingExpiryDates(now, params)

@@ -17,6 +17,7 @@ import {
   DEFAULT_SCAN_LIMIT,
   ORACLE_HISTORY_SECS,
 } from '../settlement'
+import { XLM } from '../assets'
 
 const NOW = new Date('2026-08-01T12:00:00Z')
 const day = 86_400_000
@@ -88,7 +89,7 @@ describe('scanForSettlement', () => {
       position({ id: 0, expiry: new Date(NOW.getTime() - day) }),
       position({ id: 1, expiry: new Date(NOW.getTime() - 5 * day) }),
     ])
-    const scan = await scanForSettlement({ now: NOW })
+    const scan = await scanForSettlement({ now: NOW, asset: XLM })
     expect(scan.candidates.map((c) => c.id)).toEqual([0, 1])
   })
 
@@ -98,7 +99,7 @@ describe('scanForSettlement', () => {
       position({ id: 1 }),
       position({ id: 2, settled: true, outcome: 'assigned' }),
     ])
-    const scan = await scanForSettlement({ now: NOW })
+    const scan = await scanForSettlement({ now: NOW, asset: XLM })
     expect(scan.candidates.map((c) => c.id)).toEqual([1])
   })
 
@@ -108,13 +109,13 @@ describe('scanForSettlement', () => {
       position({ id: 1, expiry: new Date(NOW.getTime() - day) }),
       position({ id: 2, expiry: new Date(NOW.getTime() + 30 * day) }),
     ])
-    const scan = await scanForSettlement({ now: NOW })
+    const scan = await scanForSettlement({ now: NOW, asset: XLM })
     expect(scan.candidates.map((c) => c.id)).toEqual([1])
   })
 
   it('treats an expiry exactly at now as due', async () => {
     book([position({ id: 0, expiry: NOW })])
-    const scan = await scanForSettlement({ now: NOW })
+    const scan = await scanForSettlement({ now: NOW, asset: XLM })
     expect(scan.candidates).toHaveLength(1)
   })
 
@@ -123,7 +124,7 @@ describe('scanForSettlement', () => {
       Array.from({ length: 10 }, (_, id) => position({ id })),
       10
     )
-    const scan = await scanForSettlement({ from: 0, limit: 4, now: NOW })
+    const scan = await scanForSettlement({ from: 0, limit: 4, now: NOW, asset: XLM })
 
     expect(scan.scanned).toBe(4)
     expect(scan.candidates.map((c) => c.id)).toEqual([0, 1, 2, 3])
@@ -137,7 +138,7 @@ describe('scanForSettlement', () => {
       Array.from({ length: 6 }, (_, id) => position({ id })),
       6
     )
-    const scan = await scanForSettlement({ from: 4, limit: 4, now: NOW })
+    const scan = await scanForSettlement({ from: 4, limit: 4, now: NOW, asset: XLM })
 
     expect(scan.cursor).toBe(4)
     expect(scan.scanned).toBe(2)
@@ -149,7 +150,7 @@ describe('scanForSettlement', () => {
 
   it('reports an empty book without reading anything', async () => {
     book([], 0)
-    const scan = await scanForSettlement({ now: NOW })
+    const scan = await scanForSettlement({ now: NOW, asset: XLM })
     expect(scan.candidates).toEqual([])
     expect(scan.nextCursor).toBeNull()
     expect(scan.unexamined).toBe(0)
@@ -166,7 +167,7 @@ describe('scanForSettlement', () => {
       position({ id: 0, expiry: new Date(NOW.getTime() - 5 * day) }),
       position({ id: 1, expiry: new Date(NOW.getTime() - 2 * 3_600_000) }),
     ])
-    const scan = await scanForSettlement({ now: NOW })
+    const scan = await scanForSettlement({ now: NOW, asset: XLM })
 
     expect(scan.candidates.map((c) => c.id)).toEqual([0, 1])
     expect(scan.pastDeadline).toEqual([0])
@@ -177,7 +178,7 @@ describe('scanForSettlement', () => {
   it('dates the deadline from expiry, not from the moment it looked', async () => {
     const expiry = new Date(NOW.getTime() - 3 * 3_600_000)
     book([position({ id: 0, expiry })])
-    const scan = await scanForSettlement({ now: NOW })
+    const scan = await scanForSettlement({ now: NOW, asset: XLM })
     expect(scan.candidates[0].settleBy.getTime()).toBe(
       expiry.getTime() + ORACLE_HISTORY_SECS * 1000
     )
@@ -190,7 +191,7 @@ describe('scanForSettlement', () => {
       position({ id: 0, expiry: new Date(NOW.getTime() - ORACLE_HISTORY_SECS * 1000) }),
       position({ id: 1, expiry: new Date(NOW.getTime() - ORACLE_HISTORY_SECS * 1000 - 1) }),
     ])
-    const scan = await scanForSettlement({ now: NOW })
+    const scan = await scanForSettlement({ now: NOW, asset: XLM })
     expect(scan.pastDeadline).toEqual([1])
   })
 
@@ -209,14 +210,14 @@ describe('scanForSettlement', () => {
       return position({ id })
     })
 
-    const scan = await scanForSettlement({ now: NOW })
+    const scan = await scanForSettlement({ now: NOW, asset: XLM })
     expect(scan.candidates.map((c) => c.id)).toEqual([0, 2])
     expect(scan.unreadable).toEqual([1])
   })
 
   it('defaults to the documented scan limit', async () => {
     book([], 0)
-    const scan = await scanForSettlement({ now: NOW })
+    const scan = await scanForSettlement({ now: NOW, asset: XLM })
     expect(DEFAULT_SCAN_LIMIT).toBeGreaterThan(0)
     expect(scan.cursor).toBe(0)
   })

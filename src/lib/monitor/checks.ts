@@ -1,7 +1,6 @@
 import { Horizon } from '@stellar/stellar-sdk'
 import { getPool, ensureSchema } from '@/lib/db'
 import {
-  XLM,
   enabledUnderlyings,
   settleableUnderlyings,
   type UnderlyingAsset,
@@ -91,10 +90,10 @@ async function checkCapBreach(asset: UnderlyingAsset): Promise<Alert | null> {
   try {
     const buckets = await computeOpenBuckets(new Date(), asset)
     const epochCap = callEpochCap(asset)
-    const combined = buckets.reduce((a, b) => a + b.callXlm, 0)
+    const combined = buckets.reduce((a, b) => a + b.callUnderlying, 0)
     const combinedCap = epochCap * Math.max(1, buckets.length)
     const pct = combinedCap > 0 ? (combined / combinedCap) * 100 : 0
-    const fullExpiries = buckets.filter((b) => b.callXlm >= epochCap).length
+    const fullExpiries = buckets.filter((b) => b.callUnderlying >= epochCap).length
     const fields = [
       { label: 'underlying', value: unit },
       { label: 'open_call', value: `${combined.toFixed(asset.displayDecimals)} ${unit}` },
@@ -209,7 +208,7 @@ function logReturns(closes: number[]): number[] {
 export async function fetchCloses(
   interval: string,
   limit: number,
-  asset: UnderlyingAsset = XLM,
+  asset: UnderlyingAsset,
 ): Promise<number[]> {
   const url = `https://api.binance.com/api/v3/klines?symbol=${asset.binanceSymbol}&interval=${interval}&limit=${limit}`
   const res = await fetch(url, { cache: 'no-store' })
@@ -227,7 +226,7 @@ export async function fetchCloses(
  * read the same number. Returns null if there isn't enough data.
  */
 export async function computeVolRatio(
-  asset: UnderlyingAsset = XLM,
+  asset: UnderlyingAsset,
 ): Promise<number | null> {
   // Short window: 60×1m ≈ last hour. Baseline: 24×1h ≈ last day.
   const [shortCloses, baseCloses] = await Promise.all([

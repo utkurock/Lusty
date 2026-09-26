@@ -143,7 +143,7 @@ describe('the time reference follows the book s own schedule', () => {
 describe('the expiry options a screen draws are the book s own', () => {
   it('offers its own count, and dates its windows by its own tenor', () => {
     const a = book('FTN', { openExpiries: 2, minDaysToExpiry: 3, tenorDays: 14 })
-    const options = getExpiryOptions('call', undefined, a.expiry)
+    const options = getExpiryOptions(a.expiry, 'call')
     expect(options).toHaveLength(2)
     expect(options.map((o) => o.totalEpochDays)).toEqual([14, 28])
     for (const o of options) {

@@ -158,19 +158,19 @@ async function attachVaultLoad(
       Promise.all(
         buckets.map(async (b) => {
           const expiry = new Date(b.expiryIso)
-          const [callXlm, putUsd] = await Promise.all([
+          const [callUnderlying, putUsd] = await Promise.all([
             getExposure('call', expiry, asset),
             getExposure('put', expiry, asset),
           ])
-          return { callXlm, putUsd }
+          return { callUnderlying, putUsd }
         })
       ),
     ])
     buckets.forEach((b, i) => {
       b.vault = {
-        callXlm: loads[i].callXlm,
+        callUnderlying: loads[i].callUnderlying,
         putUsd: loads[i].putUsd,
-        maxCallXlm: limits.maxExpiryCall,
+        maxCallUnderlying: limits.maxExpiryCall,
         maxPutUsd: limits.maxExpiryPut,
       }
     })

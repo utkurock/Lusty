@@ -32,7 +32,7 @@ vi.mock('@/lib/vault-state', async (importOriginal) => {
         expiryIso: '2026-10-02T16:00:00.000Z',
         dateKey: '2026-10-02',
         label: 'Oct_02',
-        callXlm: sold[asset.symbol] ?? 0,
+        callUnderlying: sold[asset.symbol] ?? 0,
         putUsd: 0,
       },
     ],
