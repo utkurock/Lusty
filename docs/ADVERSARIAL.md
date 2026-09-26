@@ -9,6 +9,19 @@ and neither is set. Attacking the testnet deployment outside the window is not f
 it is a public network and the contracts are permissionless — but only reports received
 during the window are triaged against the commitments below.
 
+**It will be announced publicly, not to a list** (decision 4, settled 2026-09-26). The
+grant asks for a public, open attack window and a list is not one; the point of the
+exercise is people we did not choose. Two consequences worth stating rather than
+discovering:
+
+- **Test capital has to be reachable without asking.** An announcement to strangers with a
+  faucet that cannot reach the caps is an invitation to bounce off §7. See
+  [`REPRODUCE.md` §8](./REPRODUCE.md), which says exactly which bounds the faucet reaches
+  and which it does not.
+- **Triage load is unbounded.** The commitment in §5 — same-day acknowledgement for
+  Critical and High — is a commitment to whoever turns up, and the volume is not something
+  we get to cap after announcing. That is the cost of the public form and it is accepted.
+
 > **A note on the in-scope list.** The sixteen classes in §3 are written from this
 > system's own surfaces. The grant names its own list, and the two should be reconciled —
 > line by line — before the window is announced. Where they differ, the grant's wording

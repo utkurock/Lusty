@@ -200,6 +200,10 @@ export default function SecurityPage() {
           window is not forbidden — it is a public network and the contracts are
           permissionless — but only reports received during the window are triaged against
           the commitments below.
+          <br />
+          <br />
+          It will be announced <strong className="text-ink">publicly</strong>, not to an
+          invited list. The point of the exercise is people we did not choose.
         </Warn>
         <P>
           Everything in scope is on <strong className="text-ink">Stellar testnet</strong>.
