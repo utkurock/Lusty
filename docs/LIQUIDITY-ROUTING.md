@@ -18,11 +18,28 @@ should be the stablecoin they picked. Crossing one into the other is what routin
 it moves one after a position has closed. It cannot change a strike, an expiry, a premium
 or a settlement price, and §5 is about why that is structural rather than a promise.
 
+**Where it runs.** A put funded in USDC takes the route first: the earn screen asks
+`/api/routing/swap` to `prepare` (quote, reserve the book's in-flight capacity, build the
+path payment), the writer's wallet signs and submits it, and `settle` reads the operation
+back from Horizon and journals the fill only if the ledger shows this account receiving
+exactly this LUSD for the allowlisted USDC (`lib/routing/session`). The route holds no
+float and signs nothing, so it has nothing to drain.
+
 There is a second, older way to cross: the distributor pays LUSD out of its own float
-against USDC it received (`lib/cash-convert`, the anchor bridge). That still exists. The
-difference is what fails: the bridge is two steps and not atomic, so a failure between
-them is money **owed**, recoverable by re-claiming the same hash. A routed swap has no
-such state.
+against USDC it received (`lib/cash-convert`, the bridge at `/api/anchor/bridge`). It is
+now the fallback, taken only when the route refuses **before** the wallet is prompted —
+an empty or off-par book. The difference is what fails: the bridge is two steps and not
+atomic, so a failure between them is money **owed**, recoverable by re-claiming the same
+hash from the earn screen. A routed swap has no such state; one that was signed and failed
+moved nothing, and is reported as that rather than retried through the bridge.
+
+**Testnet liquidity is ours.** Nothing else trades LUSD against USDC directly, so
+`scripts/seed-route-liquidity.mjs` keeps one distributor offer on the direct book: up to
+100,000 LUSD sold for USDC at exactly 1, first placed 2026-10-03. Re-running the script
+updates it in place; withdrawing and re-placing it gives it a new offer id, so read the id
+off the distributor's offers rather than from here. One direction only — an offer selling
+USDC for faucet LUSD would be a drain. The run that exercised this book end to end is in
+`docs/TESTNET-EVIDENCE.md`, "liquidity routing".
 
 ---
 
@@ -110,9 +127,21 @@ could name one that fills at any price, which is the same as having no bound. It
 quote times the allowance, rounded **up** to seven decimals — rounding a ceiling down would
 make it tighter than the route declares and fail trades the desk said it would take.
 
-Fifty basis points is a bound with meaning here because both ends are dollars that should
-trade at par. Fifty bps off par is not market movement, it is a thin book, and a route that
-wide should fail rather than fill.
+What fifty basis points does **not** bound is the price. It is measured from the quote, so
+a book whose only offer prices LUSD at three USDC quotes three and fills three with no
+slippage at all. That is §3.5a's job.
+
+### 3.5a The par bound
+
+`maxParDeviationBps`, default **100 bps**, set only on routes between two assets that
+should trade at par — today both of them.
+
+The quoted cost per unit received may sit at most this far from 1, in either direction. A
+stablecoin quoted well below par on a thin book is the same warning as one quoted above
+it. Checked 2026-10-03, before the direct offer was seeded: the only path from USDC to LUSD
+ran through XLM at 3.37 USDC per LUSD. The hop limit refused it; this would have too.
+
+*Fires:* `off_par`, saying how far from par the quote was.
 
 ### 3.6 The in-flight cap — `lib/routing/budget.ts`
 
@@ -185,9 +214,11 @@ the first was about to become false.
 | `above_notional` | More than one swap may carry | Split it, or raise `ROUTING_MAX_NOTIONAL` deliberately |
 | `no_liquidity` | Nothing on the ledger fills it | Do not trade. Not a retry. |
 | `path_not_allowed` | Every path offered went somewhere the route may not, or was too long | Check §3.1. If the market has genuinely moved to a new venue, the allowlist is what changes — as a commit, not a config toggle |
+| `off_par` | The quoted price is more than the par bound from one for one | Do not trade. The book is thin or wrong; check the direct offer (§1) |
 | `stale_quote` | The reading is older than the route stands behind | Re-quote |
 | `unreachable` | The path finder did not answer | An outage, not a market condition. Retry later. |
 | `routing_cap` | The book already has too much in flight | Wait for a swap to resolve; the error says how much is available |
+| `not_filled` | Prepared, then never signed, refused by the network, or not on the ledger as prepared | Nothing moved; quote again |
 
 None of these is recoverable by trying harder. An unreachable path finder is deliberately
 distinguished from an empty book, because a caller that conflated the two would read an
@@ -248,6 +279,7 @@ A single refusal raises nothing. A market is allowed to be empty for a minute.
 | `ROUTING_QUOTE_MAX_AGE_MS` | 30000 | How long a quote stays usable |
 | `ROUTING_MAX_NOTIONAL` | 10000 | One swap, in the receive asset |
 | `ROUTING_MAX_HOPS` | 0 | Intermediate assets a path may string together |
+| `ROUTING_MAX_PAR_DEVIATION_BPS` | 100 | How far a stablecoin route's price may sit from 1 |
 | `ROUTING_CAP_USD_<SYM>` | 50000 / 15000 | That book's in-flight ceiling |
 | `MONITOR_ROUTING_WINDOW_MS` | 3600000 | How far back the monitor looks |
 | `MONITOR_ROUTING_REFUSAL_WARN_PCT` | 50 | Refusal share that warns |

@@ -14,8 +14,13 @@
  * paid to the distributor and comes back as cash one for one, and the position
  * is escrowed with that. Their LUSD is not touched.
  *
- * The crossing itself is the USDC bridge (app/api/anchor/bridge), which is
- * proved against the ledger server-side. This module is the
+ * Two ways across, tried in order. First a ROUTE: the writer's own path
+ * payment through Stellar's liquidity (lib/routing, app/api/routing/swap),
+ * atomic, so it lands at the exact amount within the route's bounds or moves
+ * nothing. If the route refuses before anything is signed, which on testnet is
+ * an empty or off-par book, the USDC bridge (app/api/anchor/bridge) takes it
+ * at one for one out of the distributor's float, proved against the ledger
+ * server-side. This module is the
  * seam: the earn screen asks the venue to "convert to cash" and does not know
  * the mechanism, and only this file knows the mechanism is the bridge. Keeping
  * that one-directional is the whole reason it is not imported there directly.
@@ -29,8 +34,83 @@ const STELLAR_DECIMALS = 7
 export interface CashConversion {
   /** Hash of the writer's funding payment — the claim's only receipt. */
   fundingHash: string
-  /** Cash that came back, as the bridge recorded it. */
+  /** Cash that came back, as the route or the bridge recorded it. */
   amount: string
+  /** Which way it crossed. */
+  via: 'route' | 'bridge'
+}
+
+/** The route said no before anything was signed. Nothing moved. */
+export class RouteUnavailable extends Error {
+  constructor(
+    message: string,
+    readonly code: string,
+  ) {
+    super(message)
+    this.name = 'RouteUnavailable'
+  }
+}
+
+async function routingCall(body: Record<string, unknown>): Promise<any> {
+  const res = await fetch('/api/routing/swap', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  return { status: res.status, body: await res.json().catch(() => null) }
+}
+
+/**
+ * Receive exactly `amount` of cash for the writer's USDC over the allowlisted
+ * route, or throw.
+ *
+ * `RouteUnavailable` means the route refused before the wallet was prompted;
+ * the caller may cross another way. Any other error came after the prompt,
+ * and since a path payment is atomic it still means nothing moved.
+ */
+export async function routeToCash(params: {
+  address: string
+  asset: string
+  amount: number
+  signTransaction: (xdr: string) => Promise<string>
+  onProgress?: (message: string) => void
+}): Promise<CashConversion> {
+  const { address, asset, amount, signTransaction, onProgress } = params
+  const exact = Number(amount.toFixed(STELLAR_DECIMALS))
+
+  onProgress?.('Quoting USDC → LUSD on the network…')
+  const prepared = await routingCall({ action: 'prepare', address, asset, destAmount: exact })
+  if (!prepared.body?.ok) {
+    throw new RouteUnavailable(
+      prepared.body?.error ?? `the route did not answer (${prepared.status})`,
+      prepared.body?.code ?? 'unreachable',
+    )
+  }
+  const { id, xdr, sendMax } = prepared.body
+
+  let hash: string
+  try {
+    onProgress?.(`Swapping at most ${sendMax} USDC for ${exact} LUSD — confirm in wallet`)
+    hash = await submitSigned(await signTransaction(xdr))
+  } catch (e) {
+    const reason = (e as any)?.response?.data?.extras?.result_codes?.operations?.join(', ')
+      ?? (e as Error)?.message
+    await routingCall({ action: 'settle', id, reason }).catch(() => {})
+    throw new Error(
+      `The swap did not go through (${reason ?? 'not submitted'}). Nothing moved — a routed swap fills completely or not at all.`,
+    )
+  }
+
+  const settled = await routingCall({ action: 'settle', id, txHash: hash })
+  if (!settled.body?.filled) {
+    // Submitted successfully but the ledger read disagreed or lagged. The
+    // payment is the writer's own, so whatever it did is already in their
+    // wallet; the balance refresh after this will show it.
+    throw new Error(
+      `The swap was submitted (${hash}) but could not be confirmed: ${settled.body?.reason ?? 'no answer'}.`,
+    )
+  }
+  return { fundingHash: hash, amount: Number(settled.body.destAmount).toFixed(STELLAR_DECIMALS), via: 'route' }
 }
 
 /**
@@ -97,7 +177,7 @@ export async function convertToCash(params: {
       direction: 'anchor_to_cash',
       sourceAmount: Number(exact),
     })
-    return { fundingHash, amount: claimed.destAmount }
+    return { fundingHash, amount: claimed.destAmount, via: 'bridge' }
   } catch (e) {
     throw new CashConversionOwed(
       `Your USDC was sent but the conversion did not complete: ${
@@ -126,5 +206,5 @@ export async function reclaimCash(params: {
     direction: 'anchor_to_cash',
     sourceAmount: Number(params.amount.toFixed(STELLAR_DECIMALS)),
   })
-  return { fundingHash: params.fundingHash, amount: claimed.destAmount }
+  return { fundingHash: params.fundingHash, amount: claimed.destAmount, via: 'bridge' }
 }

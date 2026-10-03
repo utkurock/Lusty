@@ -14,7 +14,13 @@ import { savePosition } from '@/lib/positions'
 import { buildTrustlineTx, hasTrustline, trustlinesRequired, LUSD_CODE, LUSD_ISSUER } from '@/lib/swap'
 import { useBalance } from '@/hooks/useBalance'
 import { USDC_CODE, USDC_ISSUER } from '@/lib/usdc'
-import { CashConversionOwed, convertToCash, reclaimCash } from '@/lib/cash-convert'
+import {
+  CashConversionOwed,
+  convertToCash,
+  reclaimCash,
+  routeToCash,
+  RouteUnavailable,
+} from '@/lib/cash-convert'
 import { openPosition, coveredUnits } from '@/lib/vault-contract'
 import { activeQuoter, cosignWithQuoter } from '@/lib/quoter'
 import { fetchLadder, fetchStrikeQuote, type QuotedRung } from '@/lib/quote-client'
@@ -516,13 +522,18 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
       //     that has to already exist.
       let fundedWith: string | undefined
       if (type === 'put' && stable === 'USDC') {
+        const onProgress = (message: string) => setSuccess(message)
         try {
-          await convertToCash({
-            address,
-            amount,
-            signTransaction,
-            onProgress: (message) => setSuccess(message),
-          })
+          // A route first: atomic, through the network's own liquidity. Only a
+          // refusal BEFORE the wallet is prompted falls through to the bridge;
+          // a routed swap that was signed and failed moved nothing, and is
+          // reported as such rather than silently retried another way.
+          try {
+            await routeToCash({ address, asset: asset.symbol, amount, signTransaction, onProgress })
+          } catch (routeErr) {
+            if (!(routeErr instanceof RouteUnavailable)) throw routeErr
+            await convertToCash({ address, amount, signTransaction, onProgress })
+          }
         } catch (e) {
           // The conversion says what it needs to say, including the receipt
           // for a payment that has already left. Repeating it under a generic

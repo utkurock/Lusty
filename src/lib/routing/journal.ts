@@ -38,7 +38,8 @@ export type RouteOutcome =
       kind: 'refused'
       route: string
       book: string
-      code: RouteRefusalCode | 'routing_cap'
+      /** `not_filled`: prepared, then abandoned or failed on the ledger. */
+      code: RouteRefusalCode | 'routing_cap' | 'not_filled'
       reason: string
       at: number
     }

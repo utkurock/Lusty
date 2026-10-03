@@ -39,6 +39,8 @@ export type RouteRefusalCode =
   | 'above_notional'
   | 'no_liquidity'
   | 'path_not_allowed'
+  /** The price is too far from one for one on a route that should be at par. */
+  | 'off_par'
   /** The reading is too old to stand behind. Re-quote; do not retry. */
   | 'stale_quote'
   | 'unreachable'
@@ -145,11 +147,30 @@ export function choosePath(
 }
 
 /**
+ * Why this price is too far from par for the route to pay it. Null means it
+ * is close enough, or the route has no par.
+ *
+ * Measured both ways round: a stablecoin quoted well BELOW par on a thin book
+ * is the same warning as one quoted above it, and the next fill is not going
+ * to be at that price.
+ */
+export function parRefusal(route: Route, sendAmount: number, destAmount: number): string | null {
+  if (route.maxParDeviationBps === undefined) return null
+  const deviationBps = Math.abs(sendAmount / destAmount - 1) * 10_000
+  if (deviationBps <= route.maxParDeviationBps) return null
+  return (
+    `${route.id}: ${destAmount} costs ${sendAmount}, ${Math.round(deviationBps)} bps from par ` +
+    `against the ${route.maxParDeviationBps} this route accepts`
+  )
+}
+
+/**
  * What it costs to receive exactly `destAmount` over this route.
  *
  * Refuses rather than returning a worse answer, on every count: an amount above
  * the route's notional ceiling, a path through an asset nobody allowlisted, a
- * path longer than the route permits, or no path at all. "No liquidity" is a
+ * path longer than the route permits, a price too far from par on a route
+ * between two dollars, or no path at all. "No liquidity" is a
  * refusal and not an error — an empty book is a fact about the market, and the
  * caller's move is to not trade rather than to retry.
  *
@@ -192,5 +213,7 @@ export async function quoteRoute(
   }
 
   const { sendAmount, hops } = choosePath(route, records ?? [])
+  const offPar = parRefusal(route, sendAmount, destAmount)
+  if (offPar) throw new RouteRefused(offPar, 'off_par')
   return { route, destAmount, sendAmount, hops, quotedAt: now }
 }

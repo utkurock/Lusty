@@ -6,11 +6,11 @@
 // What the writer means by it is answerable: the balance that leaves their
 // wallet should be the stablecoin they picked. Crossing it is what routing is.
 //
-// Today that crossing goes through the distributor's own float at one for one
-// (lib/cash-convert). Routing is the other way to do it — through Stellar's own
-// liquidity, with a path payment — and the difference that matters is that a
-// path payment is atomic: it lands at or above the minimum output or it reverts
-// having moved nothing. No float, no two-step, no money owed in between.
+// Routing does it through Stellar's own liquidity, with a path payment
+// (lib/routing/session composes the pieces; app/api/routing/swap serves it).
+// The difference from the distributor's bridge, which is now the fallback, is
+// that a path payment is atomic: it lands at or above the minimum output or it
+// reverts having moved nothing. No float, no two-step, no money owed between.
 //
 // DECISION 2, settled: routing goes through **path payments over both
 // sources**. Horizon's strict-receive path finder already traverses resting
@@ -57,6 +57,17 @@ export interface Route {
   quoteMaxAgeMs: number
   /** Ceiling on one swap, in units of the receive asset. */
   maxNotional: number
+  /**
+   * How far the quoted price may sit from one for one, in basis points. Set
+   * only on a route between two assets that should trade at par; absent means
+   * the route has no par to hold it to.
+   *
+   * The slippage allowance cannot do this job. It is measured from the quote,
+   * so a book whose only offer prices LUSD at three USDC quotes three and fills
+   * three with zero slippage. What protects the writer from that is a bound on
+   * the price itself.
+   */
+  maxParDeviationBps?: number
 }
 
 const LUSD: RoutedAsset = { code: LUSD_CODE, issuer: LUSD_ISSUER }
@@ -74,6 +85,10 @@ function num(raw: string | undefined, fallback: number): number {
 const MAX_SLIPPAGE_BPS = num(process.env.ROUTING_MAX_SLIPPAGE_BPS, 50)
 const QUOTE_MAX_AGE_MS = num(process.env.ROUTING_QUOTE_MAX_AGE_MS, 30_000)
 const MAX_NOTIONAL = num(process.env.ROUTING_MAX_NOTIONAL, 10_000)
+// Both ends are dollars, so a quote more than 1% from par is not a price worth
+// paying. Checked 2026-10-03: the only testnet path from USDC to LUSD runs
+// through XLM and costs 3.37 USDC per LUSD.
+const MAX_PAR_DEVIATION_BPS = num(process.env.ROUTING_MAX_PAR_DEVIATION_BPS, 100)
 // Direct only, for now. Both ends are dollars; a path that needs an
 // intermediate to cross two dollars is telling you the direct book is empty,
 // and the right answer to that is to not trade rather than to go around.
@@ -88,6 +103,7 @@ const ROUTES: Route[] = [
     maxSlippageBps: MAX_SLIPPAGE_BPS,
     quoteMaxAgeMs: QUOTE_MAX_AGE_MS,
     maxNotional: MAX_NOTIONAL,
+    maxParDeviationBps: MAX_PAR_DEVIATION_BPS,
   },
   {
     id: 'lusd->usdc',
@@ -97,6 +113,7 @@ const ROUTES: Route[] = [
     maxSlippageBps: MAX_SLIPPAGE_BPS,
     quoteMaxAgeMs: QUOTE_MAX_AGE_MS,
     maxNotional: MAX_NOTIONAL,
+    maxParDeviationBps: MAX_PAR_DEVIATION_BPS,
   },
 ]
 

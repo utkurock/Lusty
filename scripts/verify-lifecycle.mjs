@@ -22,6 +22,7 @@
 //   node scripts/verify-lifecycle.mjs BTC open
 //   node scripts/verify-lifecycle.mjs BTC settle <id> [<id> ...]
 //   node scripts/verify-lifecycle.mjs BTC stats
+//   node scripts/verify-lifecycle.mjs XLM put <cash>   # one put, sized to routed cash
 //
 // `fund` exists because a freshly deployed book has two empty pools and the
 // contract refuses to write against them — correctly, since a premium it cannot
@@ -316,6 +317,30 @@ if (cmd === 'fund') {
   await printStats()
   console.log(`\n  settle after ${expiry}:`)
   console.log(`    node scripts/verify-lifecycle.mjs ${SYMBOL} settle ${ids.join(' ')}`)
+} else if (cmd === 'put') {
+  // One cash-secured put escrowing exactly `cash`, struck below spot so it is
+  // kept. Exists for scripts/verify-routing.mjs: the cash a routed swap
+  // delivered is what this position escrows, and the balances reconcile.
+  const cash = Number(rest[0])
+  if (!(cash > 0)) throw new Error('usage: put <cash>')
+  const spot = await oracleSpot()
+  if (!spot) throw new Error('no oracle price: cannot place a strike below spot')
+  const now = Math.floor(Date.now() / 1000)
+  const expiry = (Math.floor(now / 300) + 3) * 300
+  console.log(`vault ${VAULT} (${SYMBOL}) · writer ${writer.publicKey()}`)
+  console.log(`spot ${spot} · expiry ${expiry} (in ${expiry - now}s)\n`)
+  const premium = Math.max(0.01, Math.round(cash * 0.004 * 100) / 100)
+  const id = await open({
+    kind: 1,
+    amount: units(cash),
+    strike: usd(spot * 0.98),
+    expiry,
+    premium: units(premium),
+    label: `put  OTM ${cash} cash, ${premium} premium`,
+  })
+  await printStats()
+  console.log(`\n  settle after ${expiry}:`)
+  console.log(`    node scripts/verify-lifecycle.mjs ${SYMBOL} settle ${id}`)
 } else if (cmd === 'settle') {
   for (const id of rest) {
     const p = await read('position', [nativeToScVal(BigInt(id), { type: 'u64' })])

@@ -164,3 +164,81 @@ node scripts/verify-lifecycle.mjs BTC stats
 
 Strikes are placed around whatever the oracle is publishing at the time, so a rerun
 exercises the same four branches at a different price rather than repeating these numbers.
+
+---
+
+# Testnet evidence — liquidity routing
+
+Tranche 2, Milestone 2. A cash-secured put funded in USDC, with the cash delivered by a
+routed swap through Stellar's own liquidity rather than by the distributor's bridge, and
+the guardrails that refuse a route, each fired on testnet. Run 2026-10-03 against the XLM
+book (`CBJZGTCF2PJVHX2BNFTFZ2L2LX6DWD5JMTLHNCVYTSOD3BLVSXZRUCJZ`), writer
+`GDXUHMT3QELEW6YBKSYXJBBXINUWA2MFR26RIS6C332N25EYU3D6CJ4V`.
+
+The swap went through the application's own route, `POST /api/routing/swap` on a local
+`next start` of the same commit: allowlist, par bound, quote, in-flight reservation, send
+maximum, and a settle that reads the fill back from Horizon. The writer's key signed where
+a wallet would.
+
+## The book it routes through
+
+Nothing on testnet traded LUSD against USDC directly. The path finder's only answer ran
+through XLM, at 33.65 USDC for 10 LUSD — 3.37 per unit — and the direct-only route
+refused it. So the distributor sells LUSD for USDC at exactly 1 on the direct book
+(`scripts/seed-route-liquidity.mjs`), one direction only, because an offer selling USDC
+for faucet LUSD would be a drain.
+
+| Step | Transaction |
+| --- | --- |
+| Offer placed, 100,000 LUSD at 1 | `4b24950f3df2ca73b87c94736c8947a71bf0ea5fbc29ca79170aef349bcaab45` |
+
+## A put funded by a route
+
+| Step | What | Transaction |
+| --- | --- | --- |
+| Trustline | writer can hold USDC | `6a7b9c7cb2b616e6b2a36ed1137476c24dabd080f9bf1d93ed139538fb1adb37` |
+| Test capital | distributor → writer, 30 USDC | `62b90af9fafad62099a1343d78195d8220be99814f3d36dd0e0bd405249f9a99` |
+| **Routed swap** | quoted 20 USDC, sendMax 20.1, delivered exactly 20 LUSD for 20 USDC, direct, zero hops | `000049c4bc29768a62af035e3d0d05ebe13f1349bf6a2b36255862326838b611` |
+| Open | put #26, escrows the 20 LUSD, strike $0.210724, premium 0.08 | `4664dabe89e41d7449d178a607257f427d7399999d728fd1d816fb5af1ce18d6` |
+| Settle | Reflector `XLM` at expiry `1791036300`: $0.215564 → **kept**, 20 LUSD back | `4c837cb9e01c108f720c65fc37e457a1eae833dd59e77d9a823f942ae61630a7` |
+
+The settle call answered `{"filled":true,"destAmount":20,"spent":20,"quoted":20}`: the
+server found a successful strict-receive path payment from and to this writer, USDC in and
+LUSD out at the prepared amount, and journaled it with zero realised slippage.
+
+| Writer | USDC | LUSD |
+| --- | --- | --- |
+| Before | 30.0000000 | 4,167.1784384 |
+| After the swap | 10.0000000 | 4,187.1784384 |
+| After the open | 10.0000000 | 4,167.2584384 |
+| After settlement | 10.0000000 | 4,187.2584384 |
+
+Twenty USDC became twenty LUSD, the twenty LUSD became the put's escrow, and settlement
+returned it with the 0.08 premium on top. The vault's escrowed put cash went 50 → 70 → 50
+and its cash pool 19,753.1577 → 19,773.0777 → 19,753.0777: in by the escrow, out by the
+premium, the escrow paid back.
+
+## The guardrails, fired
+
+| Guardrail | Attempt | Outcome |
+| --- | --- | --- |
+| Min-output, enforced by the network | strict-receive 10 LUSD for at most 9.9 USDC | `op_over_source_max`, failed on the ledger, nothing moved but the 100-stroop fee: `e65df2a645d277268312843bd64fa157f5bcb27890f2fa790a8c2d73a5f2b3cf` |
+| Per-swap ceiling | prepare 20,000 LUSD | `409 above_notional`, refused before anything was built |
+| Approved routes only | prepare 10 LUSD with the direct offer withdrawn (`cffdf7d47f90fca1c6d2b0aea32cc00da58ac3691c1aba91fbb0154ea7c137ff`) | `409 path_not_allowed`: "usdc->lusd is direct only, and this path goes through 1 other asset(s)". Offer restored: `2ddc3ab22425c7257a91ad6cb4ae56a033723c18d60debfd7c4bcaadb33a2124` |
+
+The par bound (`off_par`) and the in-flight cap (`routing_cap`) are covered by
+`src/lib/__tests__/routing-session.test.ts` rather than fired here: the first needs a
+direct book priced off par, which would mean seeding a bad price on purpose, and the second
+needs 50,000 of concurrent swaps.
+
+## Reproducing it
+
+```sh
+npx next build && npx next start -p 3999 &     # the route's reservation lives in this process
+node scripts/seed-route-liquidity.mjs          # the direct book, if it is not there
+node scripts/verify-routing.mjs fund 30
+node scripts/verify-routing.mjs swap 20
+node scripts/verify-lifecycle.mjs XLM put 20   # prints the id and the expiry
+node scripts/verify-lifecycle.mjs XLM settle <id>   # after the expiry passes
+node scripts/verify-routing.mjs refuse         # withdraws and restores the direct offer
+```

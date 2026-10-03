@@ -57,8 +57,19 @@ async function main() {
   const lusd = new Asset('LUSD', ISSUER)
   const xlm = Asset.native()
 
-  // 1. Delete any offers the distributor already has so we free up capital.
-  const { records: existing } = await server.offers().forAccount(dist.publicKey()).call()
+  // 1. Delete the distributor's XLM <-> LUSD offers so we free up capital.
+  //    Only those: the LUSD/USDC offer the routing allowlist fills against is
+  //    seed-route-liquidity.mjs's, and deleting it here would silently refuse
+  //    every route until somebody noticed.
+  const { records: all } = await server.offers().forAccount(dist.publicKey()).call()
+  const isXlmLusd = (o) => {
+    const sides = [o.selling, o.buying]
+    return (
+      sides.some((a) => a.asset_type === 'native') &&
+      sides.some((a) => a.asset_code === 'LUSD' && a.asset_issuer === ISSUER)
+    )
+  }
+  const existing = all.filter(isXlmLusd)
   if (existing.length > 0) {
     console.log(`→ deleting ${existing.length} existing offer(s)`)
     const acc = await server.loadAccount(dist.publicKey())
