@@ -12,7 +12,6 @@ import {
   ChevronRight,
 } from 'lucide-react'
 import { OnChainActivity } from '@/components/shared/OnChainActivity'
-import { AnchorCrossings } from '@/components/anchor/AnchorCrossings'
 import { Panel } from '@/components/shared/Panel'
 import { StatStrip } from '@/components/shared/StatStrip'
 import { EmptyState } from '@/components/shared/EmptyState'
@@ -820,10 +819,6 @@ export default function DashboardPage() {
           {/* This wallet's ledger history, streamed via Soroban RPC getEvents
               and scoped to the positions it owns. */}
           <OnChainActivity address={address} />
-
-          {/* Where the collateral came from, when it came through the ramp.
-              Renders nothing for a wallet that never crossed. */}
-          <AnchorCrossings address={address} />
         </div>
 
         {/* The rail: what your book adds up to, and what it risks. */}

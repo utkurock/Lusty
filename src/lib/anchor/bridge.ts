@@ -94,38 +94,9 @@ export async function claimBridge(params: {
   return body as BridgeResult
 }
 
-/** Which assets an account can hold, and how much of each it has. */
-export async function readBridgeBalances(
-  address: string
-): Promise<Record<string, { trusted: boolean; balance: string }>> {
-  const out: Record<string, { trusted: boolean; balance: string }> = {}
-  const anchor = legsOf('anchor_to_cash')
-  for (const leg of [anchor.pays, anchor.receives]) {
-    out[leg.code] = { trusted: false, balance: '0' }
-  }
-  try {
-    const account = await horizon.loadAccount(address)
-    for (const leg of [anchor.pays, anchor.receives]) {
-      const held = account.balances.find(
-        (b: any) => b.asset_code === leg.code && b.asset_issuer === leg.issuer
-      ) as any
-      out[leg.code] = { trusted: Boolean(held), balance: held?.balance ?? '0' }
-    }
-  } catch {
-    /* an account that does not exist holds nothing, which is what out says */
-  }
-  return out
-}
-
-/** A changeTrust for whichever side the user cannot hold yet. */
-export async function buildBridgeTrustlineTx(
-  address: string,
-  leg: { code: string; issuer: string }
-): Promise<string> {
-  const account = await horizon.loadAccount(address)
-  return new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: NETWORK_PASSPHRASE })
-    .addOperation(Operation.changeTrust({ asset: new Asset(leg.code, leg.issuer) }))
-    .setTimeout(120)
-    .build()
-    .toXDR()
+/** Send a transaction the user's wallet has signed; returns its hash. */
+export async function submitSigned(signedXdr: string): Promise<string> {
+  const tx = TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASE)
+  const res = await horizon.submitTransaction(tx as any)
+  return (res as any).hash
 }

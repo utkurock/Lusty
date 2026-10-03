@@ -1,10 +1,3 @@
-// The anchor section talks to its home domain from the browser, so the domain
-// has to be in connect-src or the ramp cannot make a single call. It is read
-// from the same variable the section itself reads, which keeps the policy and
-// the code pointing at one anchor rather than two.
-const ANCHOR_HOME_DOMAIN =
-  process.env.NEXT_PUBLIC_ANCHOR_HOME_DOMAIN || 'tr-mock-anchor.fly.dev'
-
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
@@ -34,7 +27,7 @@ const nextConfig = {
               // to it. Price now comes from /api/price/xlm, which resolves through
               // Reflector first — so a network that blocks Binance no longer leaves
               // the page without a price.
-              `connect-src 'self' https://horizon-testnet.stellar.org https://soroban-testnet.stellar.org https://friendbot.stellar.org https://*.supabase.co https://*.supabase.com wss://*.stellar.org https://*.tradingview.com https://news.google.com https://${ANCHOR_HOME_DOMAIN}`,
+              `connect-src 'self' https://horizon-testnet.stellar.org https://soroban-testnet.stellar.org https://friendbot.stellar.org https://*.supabase.co https://*.supabase.com wss://*.stellar.org https://*.tradingview.com https://news.google.com`,
               "frame-src https://*.tradingview.com",
               "frame-ancestors 'none'",
             ].join('; '),

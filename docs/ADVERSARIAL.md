@@ -128,7 +128,7 @@ the attack would achieve, because a class nobody can state an outcome for is not
 
 ### Protocol funds and rails
 
-14. **Distributor drain.** Get the faucet, the swap desk or the anchor ramp to pay out
+14. **Distributor drain.** Get the faucet, the swap desk or the USDC bridge to pay out
     against proof that is forged, replayed, failed, or in an asset it never received.
     (A live instance of exactly this is recorded in §6.)
 15. **Accounting corruption.** Make the deposit ledger, the utilization figure, the

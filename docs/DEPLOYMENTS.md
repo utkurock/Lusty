@@ -120,9 +120,9 @@ feed, never the issuer, so mainnet replaces one configuration key per asset
 It does change what a finding about them means. "The issuer can mint more LBTC" is a fact
 about a test asset, not a vulnerability.
 
-The USDC the anchor ramp pays out is the testnet circle-style asset pinned at
-`GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5`, and it is a separate rail from
-the vault's cash.
+The USDC a put can be funded with is the testnet circle-style asset pinned at
+`GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5`. It is not the vault's cash: the
+bridge swaps it one for one into LUSD before the position opens.
 
 ---
 

@@ -23,12 +23,17 @@ import { rateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
 import { ensureSchema, getPool } from '@/lib/db'
 
+/** The one crossing this route pays out on; see below for why. */
+const SERVED_DIRECTION: BridgeDirection = 'anchor_to_cash'
+
 /**
  * The bridge between the anchor's asset and the vault's cash.
  *
- * The ramp pays the anchor's USDC; the vault escrows LUSD. Both are dollars on
- * a test network, so the bridge trades them one for one, in both directions —
- * no oracle, no spread, nothing to quote. What is left is the part that is not
+ * A put can be funded in USDC; the vault escrows LUSD. Both are dollars on a
+ * test network, so the bridge trades USDC for LUSD one for one — no oracle, no
+ * spread, nothing to quote. Only that direction is served: LUSD is free from
+ * the faucet, so paying USDC out for it would let anyone drain the float the
+ * USDC puts depend on, and since the TRY ramp was removed nothing asks for it. What is left is the part that is not
  * arithmetic: the distributor pays out against a payment the caller says they
  * made, and everything that decides whether that payment happened lives in
  * lib/anchor/bridge-proof, where a test can reach it.
@@ -78,7 +83,7 @@ export async function GET(req: Request) {
   const direction = url.searchParams.get('direction')
   const amount = Number(url.searchParams.get('amount') ?? '0')
 
-  if (!isBridgeDirection(direction)) {
+  if (!isBridgeDirection(direction) || direction !== SERVED_DIRECTION) {
     return NextResponse.json({ error: 'invalid direction' }, { status: 400 })
   }
   if (!isFinite(amount) || amount <= 0) {
@@ -137,7 +142,7 @@ export async function POST(req: Request) {
     if (!body.txHash || typeof body.txHash !== 'string') {
       return NextResponse.json({ error: 'missing txHash' }, { status: 400 })
     }
-    if (!isBridgeDirection(body.direction)) {
+    if (!isBridgeDirection(body.direction) || body.direction !== SERVED_DIRECTION) {
       return NextResponse.json({ error: 'invalid direction' }, { status: 400 })
     }
     if (typeof body.sourceAmount !== 'number' || body.sourceAmount < BRIDGE_MIN_AMOUNT) {

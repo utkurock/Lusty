@@ -31,7 +31,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             from Google without a layout shift that matters. */}
         <link
           rel="preload"
-          href="/fonts/jeko-bold.woff2"
+          href="/fonts/jeko-bold-unhinted.woff2"
           as="font"
           type="font/woff2"
           crossOrigin="anonymous"

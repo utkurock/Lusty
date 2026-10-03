@@ -127,7 +127,7 @@ const CLASSES: Array<[string, string, string]> = [
   [
     'Protocol funds and rails',
     'Distributor drain',
-    'Get the faucet, the swap desk or the anchor ramp to pay out against proof that is forged, replayed, failed, or in an asset it never received.',
+    'Get the faucet, the swap desk or the USDC bridge to pay out against proof that is forged, replayed, failed, or in an asset it never received.',
   ],
   [
     '',

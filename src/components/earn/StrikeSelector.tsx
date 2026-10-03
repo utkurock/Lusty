@@ -14,7 +14,7 @@ import { savePosition } from '@/lib/positions'
 import { buildTrustlineTx, hasTrustline, trustlinesRequired, LUSD_CODE, LUSD_ISSUER } from '@/lib/swap'
 import { useBalance } from '@/hooks/useBalance'
 import { USDC_CODE, USDC_ISSUER } from '@/lib/usdc'
-import { convertToCash } from '@/lib/cash-convert'
+import { CashConversionOwed, convertToCash, reclaimCash } from '@/lib/cash-convert'
 import { openPosition, coveredUnits } from '@/lib/vault-contract'
 import { activeQuoter, cosignWithQuoter } from '@/lib/quoter'
 import { fetchLadder, fetchStrikeQuote, type QuotedRung } from '@/lib/quote-client'
@@ -108,6 +108,10 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
   const [amountStr, setAmountStr] = useState('')
   const [success, setSuccess] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // A USDC payment that left the wallet but has not come back as cash yet.
+  // Held so the writer can claim it again from here; nothing else can.
+  const [owed, setOwed] = useState<{ fundingHash: string; amount: number } | null>(null)
+  const [reclaiming, setReclaiming] = useState(false)
   const [successHash, setSuccessHash] = useState<string | null>(null)
 
   const expiry = expiries[selectedExpiryIdx]
@@ -387,7 +391,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
         balanceMissing
           ? `This wallet holds no ${depositCode}. ${
               type === 'put'
-                ? 'Pick the stablecoin you actually hold, or convert some on /anchor.'
+                ? 'Pick the stablecoin you actually hold.'
                 : `Fund it with ${depositCode} first.`
             }`
           : `Your wallet has ${short} ${depositCode} available to deposit${
@@ -525,6 +529,9 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
           // heading would bury the one detail that makes it recoverable.
           setSuccess(null)
           setError((e as Error)?.message ?? 'the USDC conversion failed')
+          if (e instanceof CashConversionOwed) {
+            setOwed({ fundingHash: e.fundingHash, amount })
+          }
           return
         }
         fundedWith = USDC_CODE
@@ -815,6 +822,34 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
       {error && (
         <div className="notice notice-error">
           {error}
+        </div>
+      )}
+      {owed && address && (
+        <div className="notice notice-error flex items-center justify-between gap-3 flex-wrap">
+          <span className="truncate">
+            {owed.amount} USDC owed · payment {owed.fundingHash.slice(0, 8)}…
+          </span>
+          <button
+            type="button"
+            className="underline hover:text-ink disabled:opacity-50"
+            disabled={reclaiming}
+            onClick={async () => {
+              setReclaiming(true)
+              try {
+                const claimed = await reclaimCash({ address, ...owed })
+                setOwed(null)
+                setError(null)
+                setSuccess(`✓ ${claimed.amount} LUSD received for your USDC. Deposit again to open the position.`)
+                refreshBalance()
+              } catch (e) {
+                setError((e as Error)?.message ?? 'the claim was refused')
+              } finally {
+                setReclaiming(false)
+              }
+            }}
+          >
+            {reclaiming ? 'Claiming…' : 'Claim again'}
+          </button>
         </div>
       )}
       {success && (

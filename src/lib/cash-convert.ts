@@ -14,15 +14,14 @@
  * paid to the distributor and comes back as cash one for one, and the position
  * is escrowed with that. Their LUSD is not touched.
  *
- * The crossing itself is the anchor section's bridge, which already exists for
- * ramp money and is proved against the ledger server-side. This module is the
+ * The crossing itself is the USDC bridge (app/api/anchor/bridge), which is
+ * proved against the ledger server-side. This module is the
  * seam: the earn screen asks the venue to "convert to cash" and does not know
  * the mechanism, and only this file knows the mechanism is the bridge. Keeping
  * that one-directional is the whole reason it is not imported there directly.
  */
 
-import { submitSigned } from './anchor/chain'
-import { buildBridgePaymentTx, checkBridge, claimBridge } from './anchor/bridge'
+import { buildBridgePaymentTx, checkBridge, claimBridge, submitSigned } from './anchor/bridge'
 
 /** Stellar carries seven decimals; an amount with more is not representable. */
 const STELLAR_DECIMALS = 7
@@ -103,8 +102,29 @@ export async function convertToCash(params: {
     throw new CashConversionOwed(
       `Your USDC was sent but the conversion did not complete: ${
         (e as Error)?.message ?? 'the bridge refused the claim'
-      }. Nothing is lost — quote payment ${fundingHash} on /anchor/convert to claim it. No position was opened.`,
+      }. Nothing is lost — claim it again below, or quote payment ${fundingHash} to support. No position was opened.`,
       fundingHash,
     )
   }
+}
+
+/**
+ * Claim the cash for a funding payment that is already on the ledger.
+ *
+ * The recovery half of `convertToCash`: the server proves the hash against the
+ * ledger and its replay guard pays any hash at most once, so asking again is
+ * safe however many times it is pressed.
+ */
+export async function reclaimCash(params: {
+  address: string
+  fundingHash: string
+  amount: number
+}): Promise<CashConversion> {
+  const claimed = await claimBridge({
+    address: params.address,
+    txHash: params.fundingHash,
+    direction: 'anchor_to_cash',
+    sourceAmount: Number(params.amount.toFixed(STELLAR_DECIMALS)),
+  })
+  return { fundingHash: params.fundingHash, amount: claimed.destAmount }
 }
