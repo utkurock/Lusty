@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { insertFeedback, isDuplicateFeedback } from '@/lib/db-queries'
-import { rateLimit } from '@/lib/rate-limit'
+import { durableRateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
 import { getClientIp, spamReason } from '@/lib/anti-spam'
 
@@ -53,14 +53,14 @@ export async function POST(req: Request) {
     // plus a daily cap. IP is the primary defense; address is secondary
     // because a spammer can mint unlimited valid Stellar addresses.
     if (ip) {
-      const burst = rateLimit(`feedback:ip:${ip}`, 60_000, 3)
+      const burst = await durableRateLimit(`feedback:ip:${ip}`, 60_000, 3)
       if (!burst.ok) {
         return NextResponse.json(
           { error: `rate limited — retry after ${burst.retryAfter}s` },
           { status: 429 }
         )
       }
-      const daily = rateLimit(`feedback:ip:daily:${ip}`, 86_400_000, 20)
+      const daily = await durableRateLimit(`feedback:ip:daily:${ip}`, 86_400_000, 20)
       if (!daily.ok) {
         return NextResponse.json(
           { error: 'daily feedback limit reached' },
@@ -70,7 +70,7 @@ export async function POST(req: Request) {
     }
 
     // Layer 2 — per address (or shared anon bucket when no wallet connected).
-    const rl = rateLimit(`feedback:${address ?? 'anon'}`, 60_000, 5)
+    const rl = await durableRateLimit(`feedback:${address ?? 'anon'}`, 60_000, 5)
     if (!rl.ok) {
       return NextResponse.json(
         { error: `rate limited — retry after ${rl.retryAfter}s` },

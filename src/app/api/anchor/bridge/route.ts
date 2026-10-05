@@ -19,7 +19,7 @@ import {
 import type { ProofOperation, ProofTransaction } from '@/lib/swap-proof'
 import { confirmAction, releaseAction, reserveAction } from '@/lib/idempotency'
 import { logTransaction } from '@/lib/db-queries'
-import { rateLimit } from '@/lib/rate-limit'
+import { durableRateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
 import { ensureSchema, getPool } from '@/lib/db'
 
@@ -156,7 +156,7 @@ export async function POST(req: Request) {
     if (missing) return NextResponse.json({ error: missing }, { status: 500 })
 
     // Ten crossings an hour per address, the same allowance the swap route gives.
-    const rl = rateLimit(`anchor-bridge:${body.address}`, 3600_000, 10)
+    const rl = await durableRateLimit(`anchor-bridge:${body.address}`, 3600_000, 10)
     if (!rl.ok) {
       return NextResponse.json(
         { error: `rate limited — retry after ${rl.retryAfter}s` },

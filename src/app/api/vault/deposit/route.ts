@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { rateLimit } from '@/lib/rate-limit'
+import { durableRateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
 import { reserveAction, releaseAction, confirmAction } from '@/lib/idempotency'
 import { logTransaction } from '@/lib/db-queries'
@@ -111,7 +111,7 @@ export async function POST(req: Request) {
       )
     }
 
-    const rl = rateLimit(`deposit:${body.address}`, 3600_000, 30)
+    const rl = await durableRateLimit(`deposit:${body.address}`, 3600_000, 30)
     if (!rl.ok) {
       return NextResponse.json(
         { error: `rate limited — retry after ${rl.retryAfter}s` },

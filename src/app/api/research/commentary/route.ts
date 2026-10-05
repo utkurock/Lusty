@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { ensureSchema, getPool } from '@/lib/db'
-import { rateLimit } from '@/lib/rate-limit'
+import { durableRateLimit } from '@/lib/rate-limit'
 
 // Desk note for the research page. Every 3 hours we call Gemini with the
 // latest XLM ticker and persist the note to Supabase. Reads always come
@@ -354,7 +354,7 @@ function staticFallbackPayload() {
 
 export async function GET(req: Request) {
   try {
-    const rl = rateLimit('commentary:global', 60_000, 30)
+    const rl = await durableRateLimit('commentary:global', 60_000, 30)
     if (!rl.ok) {
       return NextResponse.json(
         { error: `rate limited — retry after ${rl.retryAfter}s` },

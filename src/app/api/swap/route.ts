@@ -9,7 +9,7 @@ import {
   BASE_FEE,
 } from '@stellar/stellar-sdk'
 import { logTransaction } from '@/lib/db-queries'
-import { rateLimit } from '@/lib/rate-limit'
+import { durableRateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
 import {
   reserveAction,
@@ -142,7 +142,7 @@ export async function POST(req: Request) {
     }
 
     // Rate limit: 10 swaps per address per hour
-    const rl = rateLimit(`swap:${body.address}`, 3600_000, 10)
+    const rl = await durableRateLimit(`swap:${body.address}`, 3600_000, 10)
     if (!rl.ok) {
       return NextResponse.json(
         { error: `rate limited — retry after ${rl.retryAfter}s` },

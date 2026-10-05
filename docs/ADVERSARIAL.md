@@ -208,11 +208,14 @@ Reporting one of these is welcome and will be acknowledged, but it is triaged as
   finding.
 - **Testnet XLM comes from a faucet**, so the cost of any attack is the transaction fee.
   That is deliberate: it is what makes the window worth running.
-- **The rate limiter is in-memory, per process.** Every bound in the app — deposit,
-  authorize, swap, faucet, admin auth — is a `Map` in one Node process. It resets on
-  deploy and does not exist across replicas, so it bounds an honest client and not an
-  attacker. The durable caps behind it (the faucet's, the quote policy's) are the ones that
-  hold. Making it durable is real work and is scheduled inside this milestone.
+- **The rate limiter is durable, and approximate at the edge.** Deposit, authorize, swap,
+  routing, bridge, faucet, admin auth, feedback, wallet connect and the paid commentary
+  endpoint count in Postgres (`rate_limits`), so a limit survives a deploy and holds across
+  replicas. Two things are known: replicas racing on one key in one instant can each admit
+  the last slot, and if the database is unreachable the limiter falls back to the old
+  per-process count rather than refusing. Read-only endpoints (price, quote, stats,
+  leaderboard, news) stay per-process on purpose. The durable caps behind the limiter (the
+  faucet's, the quote policy's) are still what decide a payout.
 - **Database TLS is encrypted but not verified.** The deployment runs with
   `DB_SSL_REJECT_UNAUTHORIZED=false` pending a CA certificate in `DB_SSL_CA`. A MITM on the
   database path would be invisible. `lib/db` already prefers the verified path.

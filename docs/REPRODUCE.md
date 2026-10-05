@@ -252,8 +252,8 @@ curl -s -X POST "$BASE/api/faucet/lbtc" -d '{"address":"G…"}' -H 'content-type
 ```
 
 One claim per address per asset per day, with a per-address lifetime cap and a global daily
-cap behind it. Those caps are durable; the rate limiter in front of them is not (see the
-known limitations).
+cap behind it. Those caps and the rate limiter in front of them are all durable, so
+neither resets on a deploy.
 
 The swap desk pays out against a payment you claim to have made. It now requires a
 **successful** transaction, from the address claiming it, to the distributor, in the asset

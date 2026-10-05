@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { Keypair, authorizeEntry, xdr } from '@stellar/stellar-sdk'
-import { rateLimit } from '@/lib/rate-limit'
+import { durableRateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
 import { credentialAddress, describeMismatch } from '@/lib/vault-auth'
 import { quoteOptionLive } from '@/lib/pricing-server'
@@ -192,7 +192,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'expiry too far out' }, { status: 400 })
     }
 
-    const rl = rateLimit(`authorize:${body.address}`, 3600_000, 30)
+    const rl = await durableRateLimit(`authorize:${body.address}`, 3600_000, 30)
     if (!rl.ok) {
       return NextResponse.json(
         { error: `rate limited — retry after ${rl.retryAfter}s` },

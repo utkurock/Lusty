@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { requestedUnderlying } from '@/lib/assets'
-import { rateLimit } from '@/lib/rate-limit'
+import { durableRateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
 import {
   prepareRoutedSwap,
@@ -47,7 +47,7 @@ export async function POST(req: Request) {
     }
     // Each prepare holds routing capacity for up to two minutes, so this is
     // what bounds one address's share of a book.
-    const rl = rateLimit(`routing-prepare:${body.address}`, 3600_000, 20)
+    const rl = await durableRateLimit(`routing-prepare:${body.address}`, 3600_000, 20)
     if (!rl.ok) {
       return NextResponse.json(
         { error: `rate limited — retry after ${rl.retryAfter}s` },

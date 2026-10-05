@@ -9,7 +9,7 @@ import {
   BASE_FEE,
 } from '@stellar/stellar-sdk'
 import { logTransaction } from '@/lib/db-queries'
-import { rateLimit } from '@/lib/rate-limit'
+import { durableRateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
 import { dripFor, assertDripAllowed, FaucetRejection, type Drip } from '@/lib/faucet'
 
@@ -103,9 +103,9 @@ export async function POST(
       return NextResponse.json({ error: 'invalid address' }, { status: 400 })
     }
 
-    // In front of the durable caps rather than instead of them: this one is
-    // free and per-instance, those are the ones that actually hold.
-    const rl = rateLimit(`faucet:${drip.symbol}:${address}`, 3600_000, 3)
+    // In front of the durable caps rather than instead of them: this one
+    // sheds repeat claims cheaply, those are the ones that decide a payout.
+    const rl = await durableRateLimit(`faucet:${drip.symbol}:${address}`, 3600_000, 3)
     if (!rl.ok) {
       return NextResponse.json(
         { error: `rate limited — retry after ${rl.retryAfter}s` },

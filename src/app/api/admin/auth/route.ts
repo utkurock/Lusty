@@ -9,7 +9,7 @@ import {
 } from '@stellar/stellar-sdk'
 import { isAdmin } from '@/lib/db-queries'
 import { isValidStellarAddress } from '@/lib/utils'
-import { rateLimit } from '@/lib/rate-limit'
+import { durableRateLimit } from '@/lib/rate-limit'
 import { getClientIp } from '@/lib/anti-spam'
 import { createChallenge, consumeChallenge, createSession } from '@/lib/admin-sessions'
 
@@ -32,7 +32,7 @@ export async function POST(req: Request) {
     // one parses caller-supplied XDR. Both are open to anyone who knows an
     // admin address, which is a public key.
     const ip = getClientIp(req)
-    const rl = rateLimit(`admin-auth:${ip}`, 600_000, 20)
+    const rl = await durableRateLimit(`admin-auth:${ip}`, 600_000, 20)
     if (!rl.ok) {
       return NextResponse.json(
         { error: `rate limited — retry after ${rl.retryAfter}s` },

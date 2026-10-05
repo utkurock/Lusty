@@ -34,7 +34,10 @@ vi.mock('@/lib/idempotency', () => ({
   releaseAction: async () => {},
   confirmAction: async () => {},
 }))
-vi.mock('@/lib/rate-limit', () => ({ rateLimit: () => ({ ok: true }) }))
+vi.mock('@/lib/rate-limit', () => ({
+  rateLimit: () => ({ ok: true }),
+  durableRateLimit: async () => ({ ok: true }),
+}))
 // Both gate on the database; neither question is about the underlying.
 vi.mock('@/lib/circuit-breaker', () => ({
   getBreakerState: async () => ({ tripped: false }),

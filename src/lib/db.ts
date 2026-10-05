@@ -335,6 +335,18 @@ async function createSchema(): Promise<void> {
     -- Supports the duplicate-suppression lookup in the anti-spam guard:
     -- "same ip + same message in the last N minutes".
     create index if not exists feedback_ip_created_at_idx on feedback(ip, created_at desc);
+
+    -- Durable rate limits: one counter per key per fixed window, read as a
+    -- sliding window by lib/rate-limit. Shared by every process, so a limit
+    -- survives a deploy and holds across replicas.
+    create table if not exists rate_limits (
+      key         text    not null,
+      bucket      bigint  not null,
+      hits        integer not null,
+      expires_at  timestamptz not null,
+      primary key (key, bucket)
+    );
+    create index if not exists rate_limits_expires_at_idx on rate_limits(expires_at);
   `)
 
   // (Re)create leaderboard view.

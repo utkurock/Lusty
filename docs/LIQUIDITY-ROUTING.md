@@ -253,8 +253,8 @@ A single refusal raises nothing. A market is allowed to be empty for a minute.
 
 ## 8. Known limitations
 
-- **The in-flight ledger and the journal are in memory, per process.** Same weakness as the
-  rate limiter, and published as a limitation rather than described as a guarantee: they
+- **The in-flight ledger and the journal are in memory, per process.** The weakness the
+  rate limiter had before it moved to Postgres, and published as a limitation rather than described as a guarantee: they
   reset on deploy and do not exist across replicas. They bound an honest client and a
   single-process deployment. What they are not is a defence against somebody deliberately
   opening many swaps from many connections — the durable bound behind that is the route's
