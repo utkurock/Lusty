@@ -170,7 +170,9 @@ Before a book is quoted, `lib/vault-limits` reads `limits()` off the instance an
 two things against it:
 
 - **`declared` drift** — the contract enforces something other than what `onchainLimits`
-  says. This is what an unplanned `set_limits` looks like.
+  says. This is what an unplanned `set_limits` looks like. A change that is reverted
+  before the next reading is caught instead by the monitor's `limits` event watch
+  (`lib/monitor/limits-watch`), which also forces the next reading to happen at once.
 - **`envelope` drift** — the desk would quote past what the contract will accept, so the
   position gets signed and then reverted.
 

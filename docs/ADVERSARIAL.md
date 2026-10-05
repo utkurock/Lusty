@@ -223,10 +223,14 @@ Reporting one of these is welcome and will be acknowledged, but it is triaged as
   of them. That is conservative on purpose, and it is also a shape worth attacking: moving
   one thin market to stop the whole desk. A report demonstrating that is in scope and is a
   finding, not a limitation — what is known is the design, not that it is fine.
-- **Limit reconciliation compares two readings**, so a `set_limits` raised and reverted
-  between them is invisible. The contract publishes a `limits` event on every change and
-  the indexer already streams both instances; watching the event is the stronger version
-  and is not built yet.
+- **A raised-and-reverted limit is seen after the fact, not prevented.** Reconciliation
+  compares two readings, so a `set_limits` raised and restored between them passes it. The
+  monitor now also reads every `limits` event forward from a durable cursor and alerts on
+  each one, critical when it departs from the declared values or when more than one lands
+  in an interval. That reports the write that used the wider cap; it does not stop it,
+  because the bound is the admin multisig. The event carries the two position caps and the
+  premium ceiling, not the per-expiry caps, so a change to those alone is reported with
+  unchanged values and left to the next reading.
 - **Retired vault instances are still streamed** by the event indexer so old positions keep
   their history. They are not in scope as live contracts.
 

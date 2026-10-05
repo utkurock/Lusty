@@ -347,6 +347,14 @@ async function createSchema(): Promise<void> {
       primary key (key, bucket)
     );
     create index if not exists rate_limits_expires_at_idx on rate_limits(expires_at);
+
+    -- Where each event watcher stopped reading the ledger, so a deploy resumes
+    -- the scan instead of re-reading (and re-alerting) its lookback window.
+    create table if not exists event_cursors (
+      name        text primary key,
+      cursor      text not null,
+      updated_at  timestamptz not null default now()
+    );
   `)
 
   // (Re)create leaderboard view.

@@ -347,3 +347,76 @@ export async function fetchSettlements(): Promise<Map<string, SettlementRecord>>
   await settlementScan
   return settlements
 }
+
+/** One `set_limits` call, as the instance announced it. */
+export interface LimitsChange {
+  contractId: string
+  ledger: number
+  at: string
+  txHash?: string
+  maxPositionCall: number
+  maxPositionPut: number
+  maxPremiumBps: number
+}
+
+/**
+ * Read a `limits` event. The contract publishes the two position caps and the
+ * premium ceiling; the per-expiry caps are not in the event, so a change to
+ * those alone still shows up here, with values that look unchanged.
+ */
+export function parseLimitsEvent(e: sorobanRpc.Api.EventResponse): LimitsChange | null {
+  try {
+    const topics = e.topic.map((t: xdr.ScVal) => scValToNative(t))
+    if (String(topics[0]) !== 'limits') return null
+    const [call, put, bps] = scValToNative(e.value) as [bigint, bigint, number | bigint]
+    return {
+      contractId: e.contractId?.contractId() ?? '',
+      ledger: e.ledger,
+      at: e.ledgerClosedAt,
+      txHash: e.txHash,
+      maxPositionCall: Number(call) / TOKEN_SCALE,
+      maxPositionPut: Number(put) / TOKEN_SCALE,
+      maxPremiumBps: Number(bps),
+    }
+  } catch {
+    return null
+  }
+}
+
+/** First scan with no cursor: two pages, about twenty hours. */
+const LIMITS_LOOKBACK_LEDGERS = 2 * LEDGERS_PER_PAGE
+
+/**
+ * Every `set_limits` since `cursor`, oldest first, and the cursor to resume
+ * from next time.
+ *
+ * Unlike the settlement index this throws on an RPC failure: the caller is a
+ * monitor, and a scan that silently found nothing is indistinguishable from a
+ * quiet admin.
+ */
+export async function scanLimitsChanges(
+  cursor?: string,
+): Promise<{ changes: LimitsChange[]; cursor?: string }> {
+  if (VAULT_IDS.length === 0) return { changes: [], cursor }
+  const server = new sorobanRpc.Server(RPC_URL)
+  const topic = nativeToScVal('limits', { type: 'symbol' }).toXDR('base64')
+
+  let start: { startLedger: number } | { cursor: string }
+  if (cursor) {
+    start = { cursor }
+  } else {
+    const { sequence } = await server.getLatestLedger()
+    start = { startLedger: Math.max(sequence - LIMITS_LOOKBACK_LEDGERS, 1) }
+  }
+
+  const page = await scanForward(
+    server,
+    start,
+    [[topic]],
+    cursor ? 3 : LIMITS_LOOKBACK_LEDGERS / LEDGERS_PER_PAGE,
+  )
+  const changes = page.events
+    .map(parseLimitsEvent)
+    .filter((c): c is LimitsChange => c !== null)
+  return { changes, cursor: page.cursor ?? cursor }
+}

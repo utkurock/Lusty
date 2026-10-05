@@ -48,6 +48,7 @@ vi.mock('@/lib/db', () => ({
   getPool: () => ({ query: async () => ({ rows: [{}] }) }),
 }))
 vi.mock('@/lib/lusd', () => ({ LUSD_DISTRIBUTOR: '' }))
+vi.mock('@/lib/monitor/limits-watch', () => ({ checkLimitsEvents: async () => null }))
 
 let checks: typeof import('../monitor/checks')
 let assets: typeof import('../assets')

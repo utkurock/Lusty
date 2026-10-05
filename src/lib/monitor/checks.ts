@@ -12,6 +12,7 @@ import { LUSD_DISTRIBUTOR } from '@/lib/lusd'
 import { inFlight } from '@/lib/routing/budget'
 import { summarise } from '@/lib/routing/journal'
 import type { Alert } from './notify'
+import { checkLimitsEvents } from './limits-watch'
 
 /**
  * Risk-monitoring checks (P1-7). Each check is independent and best-effort:
@@ -444,6 +445,7 @@ export async function runMonitorChecks(): Promise<Alert[]> {
     ...written.map((a) => checkRouting(a)),
     ...held.map((a) => checkSolvency(a)),
     ...held.map((a) => checkSettlementBacklog(a)),
+    checkLimitsEvents(),
   ])
   return settled.filter((a): a is Alert => a !== null)
 }
