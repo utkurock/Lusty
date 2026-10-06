@@ -13,11 +13,11 @@
 // this does not render is a document to simplify, not a parser to grow.
 //
 // Server component. No client JS, no sanitiser needed: the input is a file in
-// the repository, not anything a request can influence. The route that uses it
-// maps a slug to a filename through an explicit table so a URL can never name
-// one.
+// the repository, not anything a request can influence. The page that uses it
+// maps a slug to a filename through an explicit table (lib/published-docs) so a
+// URL can never name one.
 
-import Link from 'next/link'
+import { docLinkFor } from '@/lib/published-docs'
 
 type Inline = string | { code: string } | { bold: Inline[] } | { italic: Inline[] } | { href: string; text: string }
 
@@ -65,18 +65,22 @@ function Inlines({ parts }: { parts: Inline[] }) {
               <Inlines parts={p.italic} />
             </em>
           )
-        // Links between documents keep working: ./LIQUIDITY-ROUTING.md is the
-        // route that renders it, and anything else is left alone.
-        const internal = /^\.?\/?([A-Z0-9-]+)\.md(#.*)?$/.exec(p.href)
+        // Links between documents keep working: ./LIQUIDITY-ROUTING.md is its
+        // section of the documentation page, or the file on GitHub when the
+        // site does not publish it. A plain anchor, so a link within /docs is
+        // a hash change the page reacts to rather than a client navigation.
+        const internal = /^\.?\/?([A-Z0-9-]+\.md)(#.*)?$/.exec(p.href)
         if (internal) {
+          const href = docLinkFor(internal[1])
           return (
-            <Link
+            <a
               key={i}
-              href={`/docs/${internal[1].toLowerCase()}${internal[2] ?? ''}`}
+              href={href}
               className="text-brand hover:underline"
+              {...(href.startsWith('http') ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
             >
-              {p.text}
-            </Link>
+              <Inlines parts={inline(p.text)} />
+            </a>
           )
         }
         return (
@@ -88,7 +92,7 @@ function Inlines({ parts }: { parts: Inline[] }) {
               ? { target: '_blank', rel: 'noopener noreferrer' }
               : {})}
           >
-            {p.text}
+            <Inlines parts={inline(p.text)} />
           </a>
         )
       })}
