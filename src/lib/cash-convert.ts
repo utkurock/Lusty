@@ -51,6 +51,10 @@ export class RouteUnavailable extends Error {
   }
 }
 
+/** How often, and how far apart, settle is re-asked while Horizon is down. */
+const SETTLE_RETRIES = 4
+const SETTLE_RETRY_MS = 2_000
+
 async function routingCall(body: Record<string, unknown>): Promise<any> {
   const res = await fetch('/api/routing/swap', {
     method: 'POST',
@@ -101,7 +105,15 @@ export async function routeToCash(params: {
     )
   }
 
-  const settled = await routingCall({ action: 'settle', id, txHash: hash })
+  // The swap is on the ledger; only the reading of it can fail. Horizon being
+  // briefly unreachable answers `retry`, and the server keeps the swap open
+  // for exactly that, so a few spaced attempts ride out a blip.
+  let settled = await routingCall({ action: 'settle', id, txHash: hash })
+  for (let attempt = 0; attempt < SETTLE_RETRIES && settled.body?.retry; attempt++) {
+    onProgress?.('Confirming the swap on the ledger…')
+    await new Promise((r) => setTimeout(r, SETTLE_RETRY_MS))
+    settled = await routingCall({ action: 'settle', id, txHash: hash })
+  }
   if (!settled.body?.filled) {
     // Submitted successfully but the ledger read disagreed or lagged. The
     // payment is the writer's own, so whatever it did is already in their

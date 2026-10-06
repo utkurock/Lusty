@@ -19,6 +19,7 @@ import { recent, resetRoutingJournal } from '../routing/journal'
 import {
   cashRoute,
   fillRefusal,
+  LedgerUnreadable,
   prepareRoutedSwap,
   resetRoutedSwaps,
   RoutedSwapRefused,
@@ -167,6 +168,45 @@ describe('settle believes the ledger, not the caller', () => {
     })
     expect(settled.filled).toBe(false)
     expect(recent(60_000, NOW).filter((e) => e.kind === 'filled')).toHaveLength(0)
+  })
+})
+
+describe('settle with Horizon down', () => {
+  async function prepared() {
+    vi.mocked(quoteRoute).mockResolvedValue(quote())
+    return prepareRoutedSwap({ address: WRITER, book: XLM, destAmount: 100, now: NOW })
+  }
+
+  it('keeps the swap open when the ledger cannot be read, instead of journaling it unfilled', async () => {
+    // An outage says nothing about what the writer's path payment did. It used
+    // to be read as "no payment", which closed the swap, released its capacity
+    // and wrote a refusal for what may have been a fill.
+    const { id } = await prepared()
+    const down = await settleRoutedSwap({
+      id,
+      txHash: 'a'.repeat(64),
+      now: NOW,
+      read: async () => {
+        throw new LedgerUnreadable('Request failed with status code 503')
+      },
+    })
+
+    expect(down).toMatchObject({ filled: false, retry: true })
+    expect(inFlight(XLM.symbol, NOW)).toBe(100)
+    expect(recent(60_000, NOW)).toHaveLength(0)
+
+    // Horizon back: the same swap settles from the ledger as it would have.
+    const back = await settleRoutedSwap({ id, txHash: 'a'.repeat(64), now: NOW, read: async () => ledgerOp() })
+    expect(back).toEqual({ filled: true, destAmount: 100, spent: 100.3, quoted: 100.2 })
+    expect(inFlight(XLM.symbol, NOW)).toBe(0)
+  })
+
+  it('still closes the swap when Horizon answers that the transaction is not there', async () => {
+    const { id } = await prepared()
+    const settled = await settleRoutedSwap({ id, txHash: 'a'.repeat(64), now: NOW, read: async () => null })
+
+    expect(settled).toEqual({ filled: false, reason: 'no path payment in that transaction' })
+    expect(inFlight(XLM.symbol, NOW)).toBe(0)
   })
 })
 

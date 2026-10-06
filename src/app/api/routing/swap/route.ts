@@ -81,7 +81,12 @@ export async function POST(req: Request) {
       txHash: body.txHash,
       reason: typeof body.reason === 'string' ? body.reason : undefined,
     })
-    return NextResponse.json({ ok: true, ...settled }, { headers: { 'Cache-Control': 'no-store' } })
+    // A swap the ledger could not be asked about is still open: 503, so the
+    // caller retries settle rather than reading it as a swap that did not fill.
+    return NextResponse.json(
+      { ok: !('retry' in settled), ...settled },
+      { status: 'retry' in settled ? 503 : 200, headers: { 'Cache-Control': 'no-store' } },
+    )
   }
 
   return NextResponse.json({ error: 'unknown action' }, { status: 400 })

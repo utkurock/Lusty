@@ -168,14 +168,30 @@ export function fillRefusal(swap: RoutedSwap, address: string, op: LedgerPathPay
 
 export type SettledSwap =
   | { filled: true; destAmount: number; spent: number; quoted: number }
-  | { filled: false; reason: string }
+  | { filled: false; reason: string; retry?: true }
+
+/**
+ * The ledger could not be asked. Not the same answer as "no such payment": an
+ * outage says nothing about what the writer's transaction did, so a swap is
+ * not closed on one.
+ */
+export class LedgerUnreadable extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'LedgerUnreadable'
+  }
+}
 
 async function readPathPayment(txHash: string): Promise<LedgerPathPayment | null> {
-  const ops = await new Horizon.Server(HORIZON_URL)
-    .operations()
-    .forTransaction(txHash)
-    .call()
-    .catch(() => null)
+  let ops: any
+  try {
+    ops = await new Horizon.Server(HORIZON_URL).operations().forTransaction(txHash).call()
+  } catch (e: any) {
+    // A 404 is Horizon's answer that the transaction is not on the ledger.
+    // Anything else is Horizon not answering.
+    if (e?.response?.status === 404) return null
+    throw new LedgerUnreadable(e?.message ?? 'horizon unreachable')
+  }
   const op = ops?.records?.[0] as any
   if (!op) return null
   return { ...op, successful: op.transaction_successful }
@@ -212,7 +228,18 @@ export async function settleRoutedSwap(params: {
 
   if (!params.txHash) return notFilled(params.reason?.slice(0, 200) || 'abandoned before submission')
 
-  const op = await (params.read ?? readPathPayment)(params.txHash)
+  let op: LedgerPathPayment | null
+  try {
+    op = await (params.read ?? readPathPayment)(params.txHash)
+  } catch (e) {
+    // The swap stays pending and its reservation stays held: recording it as
+    // unfilled would put a fill the ledger may well hold into the journal as a
+    // refusal, and drop the only record that could be settled correctly later.
+    if (e instanceof LedgerUnreadable) {
+      return { filled: false, reason: `the ledger could not be read (${e.message}); try again`, retry: true }
+    }
+    throw e
+  }
   const refusal = fillRefusal(p.swap, p.address, op)
   if (refusal) return notFilled(refusal)
 
