@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs'
+import { X509Certificate } from 'node:crypto'
 import { Pool } from 'pg'
+import { SUPABASE_ROOT_CA_2021 } from './db-ca'
 
 // Single pooled connection shared across route invocations.
 // Node caches module state per process, so this is effectively a singleton.
@@ -59,36 +61,51 @@ export function normalizePem(raw: string): string {
     .join('\n') + '\n'
 }
 
-function sslConfig() {
+/** The certificates in a PEM bundle that actually parse. */
+function parseableCerts(pem: string): string[] {
+  const blocks = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) ?? []
+  return blocks.filter((b) => {
+    try {
+      new X509Certificate(b)
+      return true
+    } catch {
+      return false
+    }
+  })
+}
+
+/**
+ * Supabase's root ships with the app, so verification does not hang on a
+ * dashboard storing a multi-line value correctly. That is how production lost
+ * its database on 2026-10-06: DB_SSL_CA was set, held nothing that parsed, and
+ * a CA list with nothing in it fails exactly like having no CA. The bundled
+ * root is a public certificate; shipping it is shipping a trust anchor, the
+ * same thing a browser does, not a secret.
+ *
+ * DB_SSL_CA still adds to the list, for a rotated root or a non-Supabase host,
+ * and one that does not parse is named in the log and left out rather than
+ * allowed to replace the root that works.
+ */
+export function sslConfig() {
   const caFile = process.env.DB_SSL_CA_FILE
   const raw = process.env.DB_SSL_CA ?? (caFile ? readFileSync(caFile, 'utf8') : undefined)
-  const ca = raw ? normalizePem(raw) : undefined
-  if (ca) {
-    if (!ca.includes('-----BEGIN CERTIFICATE-----')) {
-      console.error('db: DB_SSL_CA is set but holds no PEM certificate; every query will fail TLS verification.')
-    }
-    return { ca, rejectUnauthorized: true }
+  const configured = raw ? parseableCerts(normalizePem(raw)) : []
+  if (raw && configured.length === 0) {
+    console.error('db: DB_SSL_CA is set but holds no certificate that parses; ignoring it.')
   }
 
-  const verify = process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false'
-  const supabasePooler = /pooler\.supabase\.com/.test(process.env.DATABASE_URL ?? '')
+  const supabase = /\.supabase\.(com|co)(:|\/|$)/.test(
+    (process.env.DATABASE_URL ?? '').replace(/^[^@]*@/, ''),
+  )
+  const ca = supabase ? [...configured, SUPABASE_ROOT_CA_2021.trim() + '\n'] : configured
+  if (ca.length > 0) return { ca, rejectUnauthorized: true }
 
-  if (verify && supabasePooler) {
-    // Not a warning about a risk — a warning that nothing will work. Said once,
-    // at the moment the pool is built, rather than once per failed request.
-    console.error(
-      'db: TLS verification is ON with no CA, and DATABASE_URL points at a Supabase pooler. ' +
-        'That pooler presents a self-signed chain, so every query will fail with ' +
-        '"self-signed certificate in certificate chain". Fix it one of two ways: set DB_SSL_CA ' +
-        '(or DB_SSL_CA_FILE) to the prod-ca certificate from Project Settings → Database → SSL ' +
-        'Configuration, which keeps verification on; or set DB_SSL_REJECT_UNAUTHORIZED=false, ' +
-        'which connects but stops authenticating the server.'
-    )
-  } else if (!verify && process.env.NODE_ENV === 'production') {
+  const verify = process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false'
+  if (!verify && process.env.NODE_ENV === 'production') {
     console.warn(
       'db: TLS certificate verification is OFF (DB_SSL_REJECT_UNAUTHORIZED=false). ' +
         'The connection is encrypted but the server is not authenticated. ' +
-        'Set DB_SSL_CA or DB_SSL_CA_FILE to Supabase\u2019s prod-ca certificate to turn it back on.'
+        'Set DB_SSL_CA or DB_SSL_CA_FILE to the server\u2019s CA certificate to turn it back on.'
     )
   }
   return { rejectUnauthorized: verify }
