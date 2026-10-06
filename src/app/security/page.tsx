@@ -195,8 +195,10 @@ export default function SecurityPage() {
 
         <H2 id="status">1. Status and scope</H2>
         <Warn>
-          <strong className="text-ink">The window is not open yet.</strong> It has a start
-          and an end date and neither is set. Attacking the testnet deployment outside the
+          <strong className="text-ink">
+            The window is open from 2026-10-06 00:00 UTC to 2026-10-20 23:59 UTC.
+          </strong>{' '}
+          Fifteen days. Attacking the testnet deployment outside the
           window is not forbidden — it is a public network and the contracts are
           permissionless — but only reports received during the window are triaged against
           the commitments below.
@@ -380,12 +382,9 @@ export default function SecurityPage() {
             fee. That is deliberate — it is what makes the window worth running.
           </li>
           <li>
-            The rate limiter is in-memory and per process. It resets on deploy and does not
-            exist across replicas, so it bounds an honest client and not an attacker. The
-            durable caps behind it are the ones that hold.
-          </li>
-          <li>
-            Database TLS is encrypted but not verified, pending a CA certificate.
+            The rate limiter is durable but approximate at the edge: replicas racing on one
+            key can each admit the last slot, and if the database is unreachable it falls
+            back to a per-process count. Read-only endpoints stay per-process on purpose.
           </li>
           <li>
             The circuit breaker is one switch for every book. That is the design; a report
@@ -393,8 +392,9 @@ export default function SecurityPage() {
             <em>finding</em>, not a limitation.
           </li>
           <li>
-            Limit reconciliation compares two readings, so a <Code>set_limits</Code> raised
-            and reverted between them is invisible.
+            A <Code>set_limits</Code> raised and reverted between two readings passes the
+            reconciliation. The monitor reads every <Code>limits</Code> event and alerts on
+            it, so the change is reported after the fact, not prevented.
           </li>
           <li>
             Retired vault instances are still streamed by the event indexer so old positions

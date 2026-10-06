@@ -4,10 +4,11 @@ An open window in which anyone is invited to attack the deployed Lusty vault on 
 testnet, with the scope, the rules and the severity bar written down before it opens
 rather than argued about afterwards.
 
-**Status: not open yet.** This document is the scope; the window has a start and end date
-and neither is set. Attacking the testnet deployment outside the window is not forbidden —
-it is a public network and the contracts are permissionless — but only reports received
-during the window are triaged against the commitments below.
+**Status: open from 2026-10-06 00:00 UTC to 2026-10-20 23:59 UTC** (fifteen days). This
+document is the scope. Attacking the testnet deployment outside the window is not
+forbidden — it is a public network and the contracts are permissionless — but only reports
+received during the window are triaged against the commitments below. Reports go through
+[`REPORTING.md`](./REPORTING.md).
 
 **It will be announced publicly, not to a list** (decision 4, settled 2026-09-26). The
 grant asks for a public, open attack window and a list is not one; the point of the
@@ -216,9 +217,6 @@ Reporting one of these is welcome and will be acknowledged, but it is triaged as
   per-process count rather than refusing. Read-only endpoints (price, quote, stats,
   leaderboard, news) stay per-process on purpose. The durable caps behind the limiter (the
   faucet's, the quote policy's) are still what decide a payout.
-- **Database TLS is encrypted but not verified.** The deployment runs with
-  `DB_SSL_REJECT_UNAUTHORIZED=false` pending a CA certificate in `DB_SSL_CA`. A MITM on the
-  database path would be invisible. `lib/db` already prefers the verified path.
 - **The circuit breaker is one switch for every book.** Volatility on any asset halts all
   of them. That is conservative on purpose, and it is also a shape worth attacking: moving
   one thin market to stop the whole desk. A report demonstrating that is in scope and is a
