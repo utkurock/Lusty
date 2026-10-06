@@ -325,6 +325,10 @@ const GAPS = [
   '§7  outcome inversion — needs a position straddling the strike at its own expiry',
   '§9  settlement denial — needs a position aged past the oracle window',
   '§12 §13 §15 §16 — HTTP surfaces, not contract calls; covered by the route tests',
+  '§17 malicious quoter — needs the quoter key; the ceiling it hits is checked above',
+  '§18 routing — Horizon path payments, not vault calls; covered by the routing tests',
+  '§19 unavailable dependency — needs an outage to stand in; unit tests cover feeds',
+  '    down, every spot source down and limits unreadable, not every dependency',
 ]
 
 async function main() {

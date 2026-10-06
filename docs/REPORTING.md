@@ -61,14 +61,14 @@ what the correct behaviour was supposed to be, and the reporter usually already 
 
 ### 4. The severity you are claiming
 
-**Critical / High / Medium / Low**, with one line on why — see
+**Critical / High / Medium / Low / Informational**, with one line on why — see
 [`ADVERSARIAL.md` §4](./ADVERSARIAL.md). Claim the level you think it is. We assign our own
 on receipt and tell you what it is; if they differ we will say why, and we will argue about
 it properly rather than quietly downgrading you.
 
 ### 5. Which class it is, if you know
 
-One of the sixteen in [`ADVERSARIAL.md` §3](./ADVERSARIAL.md), or "none of them" — which is
+One of the nineteen in [`ADVERSARIAL.md` §3](./ADVERSARIAL.md), or "none of them" — which is
 itself useful, because a real finding that fits no class means the scope is wrong.
 
 ---
@@ -82,7 +82,7 @@ Copy this.
 One sentence: what an attacker achieves.
 
 ## Severity claimed
-Critical | High | Medium | Low  —  because …
+Critical | High | Medium | Low / Informational  —  because …
 
 ## Class
 §3 class number, or "none of them".

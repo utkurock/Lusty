@@ -23,10 +23,11 @@ discovering:
   Critical and High — is a commitment to whoever turns up, and the volume is not something
   we get to cap after announcing. That is the cost of the public form and it is accepted.
 
-> **A note on the in-scope list.** The sixteen classes in §3 are written from this
-> system's own surfaces. The grant names its own list, and the two should be reconciled —
-> line by line — before the window is announced. Where they differ, the grant's wording
-> governs and this file is what changes.
+> **A note on the in-scope list.** The classes in §3 are written from this system's own
+> surfaces. The grant names its own list of sixteen; the two were reconciled line by line
+> on 2026-10-06, which added classes 17–19 and widened seven others. The table at the end of
+> §3 maps every item on the grant's list to the class that carries it. Where the two still
+> differ, the grant's wording governs and this file is what changes.
 
 ---
 
@@ -79,7 +80,7 @@ we hear about first is a finding we can fix before it is a headline.
 
 ---
 
-## 3. In scope — the sixteen classes
+## 3. In scope — the nineteen classes
 
 These are the ways this specific system can be made to do the wrong thing. Each names what
 the attack would achieve, because a class nobody can state an outcome for is not a class.
@@ -88,16 +89,19 @@ the attack would achieve, because a class nobody can state an outcome for is not
 
 1. **Premium above the quote.** Get the vault to pay a premium the pricing engine did not
    produce, or one it produced for different inputs — a different strike, tenor, ladder,
-   utilization or book.
-2. **Escrow mismatch.** Open a position that escrows less than the payout it can claim, or
-   that the contract records as escrowing something it does not hold.
+   utilization or book — or one past the instance's premium ceiling.
+2. **Escrow mismatch or unauthorized access.** Open a position that escrows less than the
+   payout it can claim, or that the contract records as escrowing something it does not
+   hold — or move escrowed collateral or a pool balance anywhere without the authorization
+   the contract requires for it.
 3. **Solvency break.** Drive any instance to a state where
    `balance(payout) − escrowed(opposite) < owed(kind)` — the vault owing more than it can
    pay, in either leg.
 4. **Limit evasion.** Exceed `max_position_*`, `max_expiry_*`, the per-wallet epoch
    allowance or the monthly capacity, by any route including splitting, racing, or
    reporting the same position twice.
-5. **Quoter signature abuse.** Get the quoter's co-signature applied to an invocation it
+5. **Invalid, replayed or abused quotes.** Get a signed quote accepted that is invalid,
+   expired or already used, or get the quoter's co-signature applied to an invocation it
    did not authorize — a different contract, function, argument, or anything nested under
    the call it was shown.
 
@@ -105,13 +109,15 @@ the attack would achieve, because a class nobody can state an outcome for is not
 
 6. **Settlement at the wrong price.** Make a position settle against a price other than
    the oracle's reading at its own expiry — a stale record, a future one, another book's
-   feed, or a fabricated one.
+   feed, a feed the book was never configured with, or a fabricated one.
 7. **Outcome inversion.** Make a position that should be assigned settle as kept, or the
    reverse, without moving the underlying price past the strike.
-8. **Double settlement or replay.** Settle a position twice, settle one that is already
-   settled, or make one payout land more than once.
+8. **Double settlement, double claim or replay.** Settle a position twice, settle one that
+   is already settled, claim the same position twice, or make one payout land more than
+   once.
 9. **Settlement denial.** Make a position that is expired and inside the oracle window
-   permanently unsettleable, stranding its collateral.
+   permanently unsettleable, stranding its collateral — including by interrupting,
+   starving or wedging the settlement runner until the window passes.
 10. **Cross-book confusion.** Make one book's instance act on another's position, price,
     feed, escrow or id. Position ids restart at zero in every instance, and this is the
     class that lives in that gap.
@@ -137,19 +143,59 @@ the attack would achieve, because a class nobody can state an outcome for is not
     duplicated positions, invented volume, or amounts summed across assets.
 16. **Configuration-shaped failure.** Make a check that is satisfied by the *deployment*
     rather than by the code stop holding: an asset gated when it should not be, a book
-    served when it should be gated, a limit that is reconciled against nothing, or a rail
-    whose safety depends on a trustline that does not exist yet. See §8.
+    served when it should be gated, a limit that is reconciled against nothing, a rail
+    whose safety depends on a trustline that does not exist yet, or a registry entry
+    corrupted so one book quotes, books or settles with another's parameters. See §8.
+
+### Around the vault
+
+17. **Malicious or compromised quoter.** Holding the quoter key, get the vault to pay a
+    premium past `max_premium_bps`, pay anyone but the writer, or do anything other than
+    co-sign a premium. The quoter is assumed hostile here: the ceiling and the admin
+    separation are what bound it, and getting past either is the finding.
+18. **Routing slippage and failure.** Make a routed swap fill below its enforced minimum,
+    take a path off the allowlist, push more than the in-flight bound through a route, or
+    turn a failed or partial route into lost cash or a position written on terms other
+    than the ones it was quoted at. See [`LIQUIDITY-ROUTING.md`](./LIQUIDITY-ROUTING.md).
+19. **Unavailable oracle or integration.** Use an outage — Reflector, Soroban RPC, Horizon,
+    the off-chain price sources, the database — to get a quote, a deposit, a payout or a
+    settlement through that would have been refused with the dependency up. Every one of
+    these is meant to fail closed; one that fails open is the finding.
+
+### The grant's list, mapped
+
+| The grant's scope item | Class |
+|---|---|
+| Reach collateral without authorization | 2, 3 |
+| Submit invalid or replayed signed quotes | 5 |
+| Act as a compromised or malicious quoter | 17 |
+| Get past premium ceilings | 1, 17 |
+| Get past position and exposure limits | 4 |
+| Push the vault into insolvency or undercollateralization | 3 |
+| Force the wrong oracle feed | 6 |
+| Mishandle the expiry price | 6 |
+| Settle in-the-money or out-of-the-money positions incorrectly | 7 |
+| Double-settle or claim the same position twice | 8 |
+| Escalate administrative permissions | 11, 12 |
+| Break BTC/XLM vault isolation | 10 |
+| Corrupt multi-asset configuration | 16 |
+| Exploit liquidity-routing slippage or transaction failure | 18 |
+| Interrupt the settlement runner | 9 |
+| Exploit an unavailable oracle or external integration | 19 |
 
 ---
 
 ## 4. Severity
 
-| Level | What it means here |
-|---|---|
-| **Critical** | Collateral can be taken, or the vault can be made insolvent. Anyone can extract value that is not theirs, or a writer can be prevented from ever recovering what they escrowed. |
-| **High** | Money moves wrongly but recoverably, or an authorization boundary fails. A premium paid above the quote, a limit evaded, an admin action performed without the admin, a distributor drained. |
-| **Medium** | The system reports or enforces something false without moving funds directly: a wrong price on a screen that sizes a decision, an accounting figure that misstates exposure, a gate that fails open. |
-| **Low** | A weakness with no demonstrated path to any of the above — a missing bound with durable caps behind it, an information disclosure of published data, a hardening gap. |
+The definitions are the grant's, word for word. The last column is what each looks like
+in this system; where the two seem to disagree, the definition decides.
+
+| Level | Definition | Here, for example |
+|---|---|---|
+| **Critical** | Unauthorized withdrawal, permanent loss of collateral, arbitrary contract control, systemic insolvency, or invalid settlement across multiple positions. | Escrow taken by someone who is not its owner; a book driven insolvent; a run of positions settled at the wrong price. |
+| **High** | A bug that materially misprices positions, bypasses a core risk control, compromises a privileged role, prevents correct settlement, or puts a meaningful amount of collateral at risk. | A premium paid above the quote or past the ceiling; a limit evaded; an admin or quoter action without its key; a distributor drained; one position made unsettleable. |
+| **Medium** | Limited financial impact, temporary disruption, or wrong behavior under specific conditions, without immediate systemic loss. | An accounting figure that misstates exposure; a gate that fails open behind a durable cap; a book taken offline by an outage it should have ridden out. |
+| **Low / Informational** | No direct financial impact: documentation gaps, usability issues, monitoring improvements, and general hardening suggestions. | A missing bound with durable caps behind it; disclosure of already-published data; an alert that should exist and does not. |
 
 Severity is assigned by us on receipt, stated back to the reporter, and argued about if
 they disagree. A report that claims a level and shows a reproduction that supports it will

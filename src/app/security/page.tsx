@@ -50,7 +50,7 @@ const Warn = ({ children }: { children: React.ReactNode }) => (
 const TOC = [
   ['status', '1. Status and scope'],
   ['rules', '2. Rules of engagement'],
-  ['classes', '3. The sixteen classes'],
+  ['classes', '3. The nineteen classes'],
   ['severity', '4. Severity'],
   ['resolved', '5. When a finding is resolved'],
   ['known', '6. Already found, and known limits'],
@@ -62,12 +62,12 @@ const CLASSES: Array<[string, string, string]> = [
   [
     'The money path',
     'Premium above the quote',
-    'Get the vault to pay a premium the pricing engine did not produce, or one it produced for different inputs — a different strike, tenor, ladder, utilization or book.',
+    'Get the vault to pay a premium the pricing engine did not produce, or one it produced for different inputs — a different strike, tenor, ladder, utilization or book — or one past the instance’s premium ceiling.',
   ],
   [
     '',
-    'Escrow mismatch',
-    'Open a position that escrows less than the payout it can claim, or that the contract records as escrowing something it does not hold.',
+    'Escrow mismatch or unauthorized access',
+    'Open a position that escrows less than the payout it can claim, or that the contract records as escrowing something it does not hold — or move escrowed collateral or a pool balance anywhere without the authorization the contract requires for it.',
   ],
   [
     '',
@@ -81,13 +81,13 @@ const CLASSES: Array<[string, string, string]> = [
   ],
   [
     '',
-    'Quoter signature abuse',
-    'Get the quoter’s co-signature applied to an invocation it did not authorize — a different contract, function, argument, or anything nested under the call it was shown.',
+    'Invalid, replayed or abused quotes',
+    'Get a signed quote accepted that is invalid, expired or already used, or get the quoter’s co-signature applied to an invocation it did not authorize — a different contract, function, argument, or anything nested under the call it was shown.',
   ],
   [
     'Settlement',
     'Settlement at the wrong price',
-    'Make a position settle against a price other than the oracle’s reading at its own expiry — a stale record, a future one, another book’s feed, or a fabricated one.',
+    'Make a position settle against a price other than the oracle’s reading at its own expiry — a stale record, a future one, another book’s feed, a feed the book was never configured with, or a fabricated one.',
   ],
   [
     '',
@@ -96,13 +96,13 @@ const CLASSES: Array<[string, string, string]> = [
   ],
   [
     '',
-    'Double settlement or replay',
-    'Settle a position twice, settle one that is already settled, or make one payout land more than once.',
+    'Double settlement, double claim or replay',
+    'Settle a position twice, settle one that is already settled, claim the same position twice, or make one payout land more than once.',
   ],
   [
     '',
     'Settlement denial',
-    'Make a position that is expired and inside the oracle window permanently unsettleable, stranding its collateral.',
+    'Make a position that is expired and inside the oracle window permanently unsettleable, stranding its collateral — including by interrupting, starving or wedging the settlement runner until the window passes.',
   ],
   [
     '',
@@ -137,26 +137,66 @@ const CLASSES: Array<[string, string, string]> = [
   [
     '',
     'Configuration-shaped failure',
-    'Make a check that is satisfied by the deployment rather than by the code stop holding: an asset gated when it should not be, a book served when it should be gated, a limit reconciled against nothing, or a rail whose safety depends on a trustline that does not exist yet.',
+    'Make a check that is satisfied by the deployment rather than by the code stop holding: an asset gated when it should not be, a book served when it should be gated, a limit reconciled against nothing, a rail whose safety depends on a trustline that does not exist yet, or a registry entry corrupted so one book quotes, books or settles with another’s parameters.',
+  ],
+  [
+    'Around the vault',
+    'Malicious or compromised quoter',
+    'Holding the quoter key, get the vault to pay a premium past max_premium_bps, pay anyone but the writer, or do anything other than co-sign a premium. The quoter is assumed hostile here: the ceiling and the admin separation are what bound it, and getting past either is the finding.',
+  ],
+  [
+    '',
+    'Routing slippage and failure',
+    'Make a routed swap fill below its enforced minimum, take a path off the allowlist, push more than the in-flight bound through a route, or turn a failed or partial route into lost cash or a position written on terms other than the ones it was quoted at.',
+  ],
+  [
+    '',
+    'Unavailable oracle or integration',
+    'Use an outage — Reflector, Soroban RPC, Horizon, the off-chain price sources, the database — to get a quote, a deposit, a payout or a settlement through that would have been refused with the dependency up. Every one of these is meant to fail closed; one that fails open is the finding.',
   ],
 ]
 
-const SEVERITY: Array<[string, string]> = [
+/** The grant’s own scope, item by item, and the class above that carries it. */
+const GRANT_MAP: Array<[string, string]> = [
+  ['Reach collateral without authorization', '2, 3'],
+  ['Submit invalid or replayed signed quotes', '5'],
+  ['Act as a compromised or malicious quoter', '17'],
+  ['Get past premium ceilings', '1, 17'],
+  ['Get past position and exposure limits', '4'],
+  ['Push the vault into insolvency or undercollateralization', '3'],
+  ['Force the wrong oracle feed', '6'],
+  ['Mishandle the expiry price', '6'],
+  ['Settle in-the-money or out-of-the-money positions incorrectly', '7'],
+  ['Double-settle or claim the same position twice', '8'],
+  ['Escalate administrative permissions', '11, 12'],
+  ['Break BTC/XLM vault isolation', '10'],
+  ['Corrupt multi-asset configuration', '16'],
+  ['Exploit liquidity-routing slippage or transaction failure', '18'],
+  ['Interrupt the settlement runner', '9'],
+  ['Exploit an unavailable oracle or external integration', '19'],
+]
+
+/** The grant’s definitions word for word, then what each looks like here. */
+const SEVERITY: Array<[string, string, string]> = [
   [
     'Critical',
-    'Collateral can be taken, or the vault can be made insolvent. Anyone can extract value that is not theirs, or a writer can be prevented from ever recovering what they escrowed.',
+    'Unauthorized withdrawal, permanent loss of collateral, arbitrary contract control, systemic insolvency, or invalid settlement across multiple positions.',
+    'Escrow taken by someone who is not its owner; a book driven insolvent; a run of positions settled at the wrong price.',
   ],
   [
     'High',
-    'Money moves wrongly but recoverably, or an authorization boundary fails. A premium paid above the quote, a limit evaded, an admin action performed without the admin, a distributor drained.',
+    'A bug that materially misprices positions, bypasses a core risk control, compromises a privileged role, prevents correct settlement, or puts a meaningful amount of collateral at risk.',
+    'A premium paid above the quote or past the ceiling; a limit evaded; an admin or quoter action without its key; a distributor drained; one position made unsettleable.',
   ],
   [
     'Medium',
-    'The system reports or enforces something false without moving funds directly: a wrong price on a screen that sizes a decision, an accounting figure that misstates exposure, a gate that fails open.',
+    'Limited financial impact, temporary disruption, or wrong behavior under specific conditions, without immediate systemic loss.',
+    'An accounting figure that misstates exposure; a gate that fails open behind a durable cap; a book taken offline by an outage it should have ridden out.',
   ],
   [
-    'Low',
-    'A weakness with no demonstrated path to any of the above — a missing bound with durable caps behind it, an information disclosure of published data, a hardening gap.',
+    'Low / Informational',
+    'No direct financial impact: documentation gaps, usability issues, monitoring improvements, and general hardening suggestions.',
+    'A missing bound with durable caps behind it; disclosure of already-published data; an alert that should exist and does not.',
   ],
 ]
 
@@ -306,7 +346,7 @@ export default function SecurityPage() {
           finding we can fix before it is a headline.
         </P>
 
-        <H2 id="classes">3. The sixteen classes</H2>
+        <H2 id="classes">3. The nineteen classes</H2>
         <P>
           These are the ways this specific system can be made to do the wrong thing. Each
           names what the attack would achieve, because a class nobody can state an outcome
@@ -324,11 +364,40 @@ export default function SecurityPage() {
             </div>
           </div>
         ))}
+        <H3>The grant&apos;s list, mapped</H3>
+        <P>
+          The grant names its own sixteen scope items. Each is carried by at least one class
+          above; where the two read differently, the grant&apos;s wording governs.
+        </P>
+        <div className="scroll-slim overflow-x-auto my-4">
+          <table className="w-full text-caption">
+            <thead>
+              <tr className="label border-b border-line">
+                <th className="text-left py-2 pr-4">The grant&apos;s scope item</th>
+                <th className="text-left py-2">Class</th>
+              </tr>
+            </thead>
+            <tbody>
+              {GRANT_MAP.map(([item, cls]) => (
+                <tr key={item} className="border-b border-line-light last:border-0">
+                  <td className="py-2 pr-4 text-ink-2">{item}</td>
+                  <td className="py-2 font-code text-ink">{cls}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
 
         <H2 id="severity">4. Severity</H2>
-        {SEVERITY.map(([level, body]) => (
+        <P>
+          The definitions are the grant&apos;s, word for word. The example after each is
+          what it looks like in this system; where the two seem to disagree, the definition
+          decides.
+        </P>
+        {SEVERITY.map(([level, body, here]) => (
           <div key={level} className="my-3 leading-relaxed text-ink-2">
-            <strong className="text-ink">{level}.</strong> {body}
+            <strong className="text-ink">{level}.</strong> {body}{' '}
+            <span className="text-ink-3">Here, for example: {here}</span>
           </div>
         ))}
         <P>

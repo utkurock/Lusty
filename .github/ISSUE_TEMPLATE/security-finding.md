@@ -1,6 +1,6 @@
 ---
 name: Security finding
-about: A finding from the adversarial testnet window (Medium/Low, or already public)
+about: A finding from the adversarial testnet window (Medium/Low/Informational, or already public)
 title: 'SECURITY: '
 labels: security
 ---
@@ -21,11 +21,11 @@ What a report needs, in full: docs/REPORTING.md
 
 ## Severity claimed
 
-<!-- Critical | High | Medium | Low — and one line on why. -->
+<!-- Critical | High | Medium | Low / Informational — and one line on why. -->
 
 ## Class
 
-<!-- One of the sixteen in ADVERSARIAL.md §3, or "none of them" — which is useful too. -->
+<!-- One of the nineteen in ADVERSARIAL.md §3, or "none of them" — which is useful too. -->
 
 ## Affected
 
