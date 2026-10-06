@@ -131,6 +131,13 @@ const CACHE_TTL_MS = 5 * 60_000
 // seconds for a number the second source had all along.
 const SOURCE_COOLDOWN_MS = 10 * 60_000
 
+// How old a σ may be and still price a quote once every source is down. The
+// window is 60 days, so an hour-old σ is the same σ and a day-old one is close
+// to it; past a day the regime it measured may be over, and an outage that
+// long is one to fail closed on rather than ride out on a number nobody can
+// refresh.
+export const MAX_STALE_SIGMA_MS = 24 * 3600_000
+
 export interface RealizedVol {
   /** Annualized realized volatility (decimal, e.g. 0.85 = 85%). */
   sigma: number
@@ -198,6 +205,10 @@ function ewmaSigma(closes: number[]): { sigma: number; sigmaSimple: number; samp
   return { sigma, sigmaSimple, samples: rets.length }
 }
 
+function usable(hit: CacheEntry | undefined, now: number): hit is CacheEntry {
+  return !!hit && now - hit.value.asOf <= MAX_STALE_SIGMA_MS
+}
+
 /**
  * Fetch + estimate one underlying's realized vol. Cached for
  * {@link CACHE_TTL_MS}.
@@ -231,9 +242,9 @@ export async function getRealizedVol(
     source = `coingecko ${asset.coingeckoId} daily closes`
   }
   if (!closes) {
-    // Stale is a worse number than fresh and a far better one than none: the
-    // window is 60 days, so an hour-old σ is the same σ.
-    if (hit) return hit.value
+    // Stale is a worse number than fresh and a far better one than none, up
+    // to MAX_STALE_SIGMA_MS.
+    if (usable(hit, now)) return hit.value
     throw new Error(
       `realized-vol: no price history for ${asset.symbol} — binance, bitstamp and coingecko all failed`,
     )
@@ -241,7 +252,7 @@ export async function getRealizedVol(
 
   const { sigma, sigmaSimple, samples } = ewmaSigma(closes)
   if (!isFinite(sigma) || sigma <= 0) {
-    if (hit) return hit.value
+    if (usable(hit, now)) return hit.value
     throw new Error(`realized-vol: computed σ invalid for ${asset.symbol}`)
   }
 

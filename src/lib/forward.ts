@@ -36,6 +36,11 @@ const SOURCE_TIMEOUT_MS = 2_500
 // cooldown keeps a dead feed from taxing all of them.
 const FAILURE_TTL_MS = 60_000
 
+// How old the last good carry may be and still roll a forward while the perp
+// feed is down. Funding resets every 8h; past one interval the rate being
+// served is not the market's any more, and F = S is the honest fallback.
+export const MAX_STALE_FUNDING_MS = 8 * 3600_000
+
 export interface ForwardInfo {
   /** Forward price at expiry (USD). */
   forward: number
@@ -51,7 +56,7 @@ export interface ForwardInfo {
 
 // Keyed by asset: carry is a property of the underlying, and one slot would
 // roll a BTC spot forward at XLM's funding rate.
-const cache = new Map<string, { fundingAnnual: number; expires: number }>()
+const cache = new Map<string, { fundingAnnual: number; expires: number; fetchedAt: number }>()
 
 // Per-asset "do not ask again before" stamp. Kept apart from `cache` so a
 // cooldown never erases the last good carry: while the feed is down we still
@@ -71,8 +76,10 @@ async function getFundingAnnual(
   const hit = cache.get(asset.symbol)
   if (hit && hit.expires > now) return hit.fundingAnnual
 
-  // Last good carry, or null. Every give-up path below returns this.
-  const stale = hit?.fundingAnnual ?? null
+  // Last good carry while it is recent enough to stand for the market, or
+  // null. Every give-up path below returns this.
+  const stale =
+    hit && now - hit.fetchedAt <= MAX_STALE_FUNDING_MS ? hit.fundingAnnual : null
 
   const until = cooldown.get(asset.symbol)
   if (until !== undefined && until > now) return stale
@@ -92,7 +99,7 @@ async function getFundingAnnual(
     const rate = parseFloat(j.lastFundingRate)
     if (!isFinite(rate)) return giveUp()
     const fundingAnnual = rate * FUNDING_INTERVALS_PER_YEAR
-    cache.set(asset.symbol, { fundingAnnual, expires: now + CACHE_TTL_MS })
+    cache.set(asset.symbol, { fundingAnnual, expires: now + CACHE_TTL_MS, fetchedAt: now })
     cooldown.delete(asset.symbol)
     return fundingAnnual
   } catch {

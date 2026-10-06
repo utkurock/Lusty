@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { getRealizedVol, resetVolCache } from '../vol'
-import { getForward, resetForwardCache } from '../forward'
+import { getRealizedVol, resetVolCache, MAX_STALE_SIGMA_MS } from '../vol'
+import { getForward, resetForwardCache, MAX_STALE_FUNDING_MS } from '../forward'
 
 const CG = (n: number) =>
   ({ ok: true, json: async () => ({ prices: Array.from({ length: n }, (_, i) => [i, 0.2 + i * 0.001]) }) }) as any
@@ -75,5 +75,48 @@ describe('realized-vol source order', () => {
   it('fails closed only when every source is gone', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('connect timeout') }))
     await expect(getRealizedVol(undefined, Date.now())).rejects.toThrow(/no price history/)
+  })
+})
+
+describe('stale inputs have an age limit', () => {
+  beforeEach(() => { resetVolCache(); resetForwardCache() })
+  afterEach(() => { vi.restoreAllMocks() })
+
+  // σ used to be served from the last good reading for as long as every
+  // history source stayed down, with no bound at all. A process up through a
+  // week-long block priced every quote off a week-old regime.
+  it('vol: rides out an outage on the last σ, then fails closed past a day', async () => {
+    let up = true
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      if (!up) throw new Error('connect timeout')
+      return CG(60)
+    }))
+    const t0 = Date.now()
+    const fresh = await getRealizedVol(undefined, t0)
+
+    up = false
+    const hourLater = await getRealizedVol(undefined, t0 + 3600_000)
+    expect(hourLater.sigma).toBe(fresh.sigma)
+
+    await expect(
+      getRealizedVol(undefined, t0 + MAX_STALE_SIGMA_MS + 60_000),
+    ).rejects.toThrow(/no price history/)
+  })
+
+  it('forward: keeps the last carry through a short outage, then rolls at F = S', async () => {
+    let up = true
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      if (!up) throw new Error('connect timeout')
+      return { ok: true, json: async () => ({ lastFundingRate: '0.0001' }) } as any
+    }))
+    const t0 = Date.now()
+    expect((await getForward(0.2, 0.03, undefined, t0)).source).toBe('perp-funding')
+
+    up = false
+    expect((await getForward(0.2, 0.03, undefined, t0 + 120_000)).source).toBe('perp-funding')
+
+    const late = await getForward(0.2, 0.03, undefined, t0 + MAX_STALE_FUNDING_MS + 120_000)
+    expect(late.source).toBe('spot-fallback')
+    expect(late.forward).toBe(0.2)
   })
 })
