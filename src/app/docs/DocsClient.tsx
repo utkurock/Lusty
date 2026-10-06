@@ -1429,10 +1429,13 @@ export default function DocsClient({ reference }: { reference: ReferenceSections
 
   // Select a section and reflect it in the URL hash so the address bar always
   // points at the section you're reading (and the Copy button can grab it).
+  // A new section starts at its top: without this the window keeps the
+  // previous section's scroll offset and opens the next one halfway down.
   const selectSection = (id: string) => {
     setActiveId(id)
     if (typeof window !== 'undefined') {
       history.replaceState(null, '', `#${id}`)
+      window.scrollTo({ top: 0 })
     }
   }
 
@@ -1461,6 +1464,7 @@ export default function DocsClient({ reference }: { reference: ReferenceSections
       const id = HASH_ALIASES[raw] ?? raw
       if (allItems.some((s) => s.id === id)) {
         setActiveId(id)
+        window.scrollTo({ top: 0 })
         return
       }
       // A heading inside a long section: open the section, then scroll to it.
