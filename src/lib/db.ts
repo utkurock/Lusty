@@ -35,10 +35,40 @@ declare global {
  * certificate chain' — a message that surfaces as a 500 on whichever endpoint
  * happened to ask, and says nothing about the setting that caused it.
  */
+/**
+ * A PEM as it arrives from an environment variable, put back into PEM shape.
+ *
+ * A dashboard that stores env values on one line hands the certificate over
+ * with its line breaks turned into spaces, or into the two characters `\n`,
+ * or wrapped in quotes. Node's TLS stack does not reject a certificate like
+ * that; it silently finds nothing in it, verifies against an empty set, and
+ * fails every query with 'self-signed certificate in certificate chain' —
+ * the same message as having no CA at all, which sends you looking in the
+ * wrong place. So the body is rebuilt from the base64 between the markers.
+ */
+export function normalizePem(raw: string): string {
+  const text = raw.trim().replace(/^['"]|['"]$/g, '').replace(/\\n/g, '\n')
+  const blocks = [...text.matchAll(/-----BEGIN ([A-Z0-9 ]+)-----([\s\S]*?)-----END \1-----/g)]
+  if (blocks.length === 0) return text
+  return blocks
+    .map(([, label, body]) => {
+      const b64 = body.replace(/[^A-Za-z0-9+/=]/g, '')
+      const lines = b64.match(/.{1,64}/g) ?? []
+      return [`-----BEGIN ${label}-----`, ...lines, `-----END ${label}-----`].join('\n')
+    })
+    .join('\n') + '\n'
+}
+
 function sslConfig() {
   const caFile = process.env.DB_SSL_CA_FILE
-  const ca = process.env.DB_SSL_CA ?? (caFile ? readFileSync(caFile, 'utf8') : undefined)
-  if (ca) return { ca, rejectUnauthorized: true }
+  const raw = process.env.DB_SSL_CA ?? (caFile ? readFileSync(caFile, 'utf8') : undefined)
+  const ca = raw ? normalizePem(raw) : undefined
+  if (ca) {
+    if (!ca.includes('-----BEGIN CERTIFICATE-----')) {
+      console.error('db: DB_SSL_CA is set but holds no PEM certificate; every query will fail TLS verification.')
+    }
+    return { ca, rejectUnauthorized: true }
+  }
 
   const verify = process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false'
   const supabasePooler = /pooler\.supabase\.com/.test(process.env.DATABASE_URL ?? '')
