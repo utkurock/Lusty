@@ -160,7 +160,9 @@ the attack would achieve, because a class nobody can state an outcome for is not
 19. **Unavailable oracle or integration.** Use an outage — Reflector, Soroban RPC, Horizon,
     the off-chain price sources, the database — to get a quote, a deposit, a payout or a
     settlement through that would have been refused with the dependency up. Every one of
-    these is meant to fail closed; one that fails open is the finding.
+    these is meant to fail closed; one that fails open is the finding. Our own matrix,
+    one dependency down at a time, is `src/lib/__tests__/outage-fail-closed.test.ts`;
+    findings 7 to 9 below came out of writing it.
 
 ### The grant's list, mapped
 
@@ -242,7 +244,7 @@ than counted twice.
 | 6 | Medium | Admin authorization went stale between challenge and verify: a revoked admin could still collect an hour-long session for two minutes afterwards. The route also had no rate limit. | fixed, `92f1078` |
 | 7 | High | `/api/swap` and `/api/anchor/bridge` released the replay guard on **any** payout submit error. A Horizon 504 does not mean the payout failed: it can still land before its time bound, and the released guard then let the same funding hash be paid again. Found 2026-10-06 while scripting class 19. Now only a 400 carrying result codes releases the guard; anything else keeps it, records the payout hash and answers `payout_unconfirmed`. | fixed, `47f7cf6` |
 | 8 | Low | A routed swap's settle read a Horizon outage as "no path payment". It closed the swap, released its routing capacity and journaled a refusal for what may have been a fill, and the writer's put stopped after a swap that had gone through. Found 2026-10-06 while scripting class 19. Now only a 404 means not on the ledger; an unreadable ledger keeps the swap open and answers 503 `retry`, and the client re-asks. | fixed, `2361971` |
-| 9 | Low | Market inputs had no age limit in an outage. With Binance, Bitstamp and CoinGecko all down, the last σ priced every quote for as long as the process stayed up, and the last perp funding rate rolled every forward the same way. Found 2026-10-06 while scripting class 19. σ is now served stale for at most 24 hours, then quoting fails closed; funding for at most one 8-hour interval, then the forward is F = S. | fixed, this commit |
+| 9 | Low | Market inputs had no age limit in an outage. With Binance, Bitstamp and CoinGecko all down, the last σ priced every quote for as long as the process stayed up, and the last perp funding rate rolled every forward the same way. Found 2026-10-06 while scripting class 19. σ is now served stale for at most 24 hours, then quoting fails closed; funding for at most one 8-hour interval, then the forward is F = S. | fixed, `12dd382` |
 
 Full write-up, including what was checked and found sound, is in the security-pass section
 of the tranche notes.
