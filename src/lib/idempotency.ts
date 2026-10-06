@@ -65,6 +65,30 @@ export async function releaseAction(
 }
 
 /**
+ * Keep a reservation whose payout may or may not have landed, and write down
+ * which transaction to look for. `confirmed_at` stays null, so the row reads
+ * as reserved-and-unconfirmed: retries are refused, and whoever reviews it has
+ * the one hash that decides whether the caller was paid.
+ */
+export async function holdUnconfirmed(
+  actionType: ActionType,
+  sourceHash: string,
+  payoutHash: string
+): Promise<void> {
+  try {
+    const pool = getPool()
+    await pool.query(
+      `update processed_actions
+         set payout_hash = $3
+       where action_type = $1 and source_hash = $2 and confirmed_at is null`,
+      [actionType, sourceHash, payoutHash]
+    )
+  } catch (e) {
+    console.error('holdUnconfirmed failed:', e)
+  }
+}
+
+/**
  * Mark the payout side of the action — useful for audit (when did we actually
  * pay) and for the future "stuck in reserved, no payout" sweep job.
  */

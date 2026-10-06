@@ -17,7 +17,8 @@ import {
   type BridgeDirection,
 } from '@/lib/anchor/bridge-proof'
 import type { ProofOperation, ProofTransaction } from '@/lib/swap-proof'
-import { confirmAction, releaseAction, reserveAction } from '@/lib/idempotency'
+import { confirmAction, holdUnconfirmed, releaseAction, reserveAction } from '@/lib/idempotency'
+import { submitPayout } from '@/lib/payout-submit'
 import { logTransaction } from '@/lib/db-queries'
 import { durableRateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
@@ -241,15 +242,35 @@ export async function POST(req: Request) {
       .build()
     payout.sign(distributor)
 
-    let result: Awaited<ReturnType<typeof server.submitTransaction>>
-    try {
-      result = await server.submitTransaction(payout as any)
-    } catch (submitErr) {
+    // The guard is released only when the network refused the payout. On a
+    // timeout the payout may still land, and a released guard would pay this
+    // funding hash again — see lib/payout-submit.
+    const submission = await submitPayout(
+      () => server.submitTransaction(payout as any) as Promise<{ hash: string }>,
+      payout.hash().toString('hex')
+    )
+    if (submission.kind === 'rejected') {
       await releaseAction('swap', body.txHash)
-      throw submitErr
+      throw submission.error
     }
+    if (submission.kind === 'unknown') {
+      await holdUnconfirmed('swap', body.txHash, submission.hash)
+      console.error(
+        `anchor bridge: payout ${submission.hash} for funding tx ${body.txHash} is unconfirmed; guard kept. Reason:`,
+        (submission.error as any)?.message ?? submission.error
+      )
+      return NextResponse.json(
+        {
+          error: 'the network did not confirm the payout in time; it may still land, so do not send again',
+          code: 'payout_unconfirmed',
+          payoutHash: submission.hash,
+        },
+        { status: 502 }
+      )
+    }
+    const result = { hash: submission.hash }
 
-    await confirmAction('swap', body.txHash, (result as any).hash)
+    await confirmAction('swap', body.txHash, result.hash)
 
     // Write the crossing down. Both legs are on the ledger and can be looked
     // up by hash, but only this row can say the two were one movement — which
@@ -266,7 +287,7 @@ export async function POST(req: Request) {
         amount: paidAmount,
         asset: pays.code,
         txHash: body.txHash,
-        premiumHash: (result as any).hash,
+        premiumHash: result.hash,
         metadata: {
           direction: body.direction,
           from: pays.code,
@@ -283,7 +304,7 @@ export async function POST(req: Request) {
       ok: true,
       sourceAmount: paidAmount.toFixed(7),
       destAmount: paidAmount.toFixed(7),
-      payoutHash: (result as any).hash,
+      payoutHash: result.hash,
       ...(warning ? { warning: `History not updated: ${warning}` } : {}),
     })
   } catch (e: any) {

@@ -240,6 +240,7 @@ than counted twice.
 | 4 | High | A position could be indexed more than once. The only replay key was a caller-supplied `txHash`, and `computeExpirySold` SUMS those rows to decide utilization — so duplicates lowered the APR offered to everyone and could read the book as full. | fixed, `92f1078` |
 | 5 | Medium | The quoter co-signed an authorization tree it only compared the root of. Not exploitable against this version of the contract — `open` makes no nested call — but that is a fact about the contract, not about the check. | fixed, `92f1078` |
 | 6 | Medium | Admin authorization went stale between challenge and verify: a revoked admin could still collect an hour-long session for two minutes afterwards. The route also had no rate limit. | fixed, `92f1078` |
+| 7 | High | `/api/swap` and `/api/anchor/bridge` released the replay guard on **any** payout submit error. A Horizon 504 does not mean the payout failed: it can still land before its time bound, and the released guard then let the same funding hash be paid again. Found 2026-10-06 while scripting class 19. Now only a 400 carrying result codes releases the guard; anything else keeps it, records the payout hash and answers `payout_unconfirmed`. | fixed, this commit |
 
 Full write-up, including what was checked and found sound, is in the security-pass section
 of the tranche notes.
