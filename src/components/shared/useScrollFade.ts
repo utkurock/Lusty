@@ -13,7 +13,7 @@ import { RefObject, useEffect } from 'react'
  * Cheap enough to run on every scroll frame: two reads off the element and a
  * custom-property write, no layout of our own.
  */
-export function useScrollFade(ref: RefObject<HTMLElement>, band = 24) {
+export function useScrollFade(ref: RefObject<HTMLElement | null>, band = 24) {
   useEffect(() => {
     const el = ref.current
     if (!el) return
