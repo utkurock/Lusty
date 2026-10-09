@@ -154,3 +154,18 @@ export function fillAmount(
   const step = 10 ** decimals
   return Math.floor(ceiling * fraction * step) / step
 }
+
+/**
+ * The URL, if it is a web address; null otherwise. For links whose text comes
+ * from somewhere else — a feed, a record — before they become an `href`. React
+ * renders a `javascript:` href as written, and the CSP allows inline script, so
+ * one bad item in a third-party feed would run on this origin when clicked.
+ */
+export function safeHttpUrl(raw: string): string | null {
+  try {
+    const url = new URL(raw.trim())
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : null
+  } catch {
+    return null
+  }
+}

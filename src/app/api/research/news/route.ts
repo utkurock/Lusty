@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { safeHttpUrl } from '@/lib/utils'
 import { errorRef } from '@/lib/api-error'
 import { clientRateLimit } from '@/lib/rate-limit'
 
@@ -54,7 +55,7 @@ function parseRssItems(xml: string, defaultSource: string) {
     cursor = itemClose + 7
 
     const title = pick(chunk, 'title')?.value ?? ''
-    const link = pick(chunk, 'link')?.value ?? ''
+    const link = safeHttpUrl(pick(chunk, 'link')?.value ?? '') ?? ''
     const pub = pick(chunk, 'pubDate')?.value ?? ''
     const src = pick(chunk, 'source')?.value || defaultSource
     const publishedAt = pub ? Date.parse(pub) : Date.now()
