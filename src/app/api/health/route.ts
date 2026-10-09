@@ -5,6 +5,7 @@ import { getSpot, resetSpotCache } from '@/lib/spot'
 import { allUnderlyings, enabledUnderlyings, type AssetIssue } from '@/lib/assets'
 import { routingExposure } from '@/lib/routing/budget'
 import { reconcileAll } from '@/lib/vault-limits'
+import { requireAdmin } from '@/lib/admin-auth'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -171,7 +172,59 @@ function checkRouting() {
   }))
 }
 
-export async function GET() {
+// One probe serves everyone who asks within this window. Each fresh probe
+// reads Horizon, the database, every price feed and every book's limits, and
+// the pool behind the database is three connections: answering each request
+// with a probe of its own let anyone hold those connections and RPC quotas
+// with a loop of GETs.
+const CACHE_MS = 15_000
+let cached: { at: number; report: Promise<HealthReport> } | null = null
+
+type HealthReport = Awaited<ReturnType<typeof probe>>
+
+function report(): Promise<HealthReport> {
+  if (cached && Date.now() - cached.at < CACHE_MS) return cached.report
+  const fresh = probe()
+  cached = { at: Date.now(), report: fresh }
+  fresh.catch(() => {
+    if (cached?.report === fresh) cached = null
+  })
+  return fresh
+}
+
+/**
+ * A dependency's error text names hosts, database roles and pooler addresses.
+ * Operators get it with an admin session; everyone else gets the verdict.
+ */
+function redact(r: HealthReport): HealthReport {
+  const hide = <T extends { error?: string }>(c: T): T =>
+    c.error ? { ...c, error: 'unavailable' } : c
+  const c = r.components
+  return {
+    ...r,
+    components: {
+      ...c,
+      horizon: hide(c.horizon),
+      db: hide(c.db),
+      priceFeeds: c.priceFeeds.map(hide),
+      limits: c.limits.map(hide),
+      priceFeed: c.priceFeed && hide(c.priceFeed),
+    },
+  }
+}
+
+export async function GET(req: Request) {
+  const r = await report()
+  const body = typeof requireAdmin(req) === 'string' ? r : redact(r)
+  return NextResponse.json(body, {
+    status: r.ok ? 200 : 503,
+    headers: {
+      'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+    },
+  })
+}
+
+async function probe() {
   const [horizon, db, priceFeeds, limits] = await Promise.all([
     checkHorizon(),
     checkDb(),
@@ -194,27 +247,19 @@ export async function GET() {
     tradeable.every((f) => f.ok) &&
     limits.every((l) => l.ok || !enabled.has(l.underlying))
 
-  return NextResponse.json(
-    {
-      ok: allOk,
-      checkedAt: new Date().toISOString(),
-      components: {
-        horizon,
-        db,
-        assets,
-        priceFeeds,
-        limits,
-        routing: checkRouting(),
-        // The XLM feed under its old name, so an existing status check keeps
-        // reading the field it has always read.
-        priceFeed: priceFeeds.find((f) => f.underlying === 'XLM'),
-      },
+  return {
+    ok: allOk,
+    checkedAt: new Date().toISOString(),
+    components: {
+      horizon,
+      db,
+      assets,
+      priceFeeds,
+      limits,
+      routing: checkRouting(),
+      // The XLM feed under its old name, so an existing status check keeps
+      // reading the field it has always read.
+      priceFeed: priceFeeds.find((f) => f.underlying === 'XLM'),
     },
-    {
-      status: allOk ? 200 : 503,
-      headers: {
-        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-      },
-    }
-  )
+  }
 }
