@@ -58,6 +58,17 @@ function plainText(a: Alert): string {
   return [head, '', a.message, fields].filter(Boolean).join('\n')
 }
 
+/**
+ * Escape text for Slack's mrkdwn. Slack reads `<…>` as control sequences —
+ * `<!channel>` pages everyone, `<https://x|label>` is a link whose target the
+ * label hides — and a security report's summary and contact arrive here
+ * verbatim from an anonymous form. Slack's own rule: escape &, < and >, and
+ * nothing else needs it. No alert this code writes uses markup on purpose.
+ */
+export function slackEscape(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
 async function sendSlack(a: Alert): Promise<ChannelResult> {
   if (!SLACK_WEBHOOK_URL) {
     return { channel: 'slack', status: 'skipped', reason: 'MONITOR_SLACK_WEBHOOK_URL not set' }
@@ -66,7 +77,7 @@ async function sendSlack(a: Alert): Promise<ChannelResult> {
     const res = await fetch(SLACK_WEBHOOK_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: plainText(a) }),
+      body: JSON.stringify({ text: slackEscape(plainText(a)) }),
       cache: 'no-store',
     })
     if (!res.ok) {
