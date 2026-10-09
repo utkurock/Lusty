@@ -330,6 +330,31 @@ async function createSchema(): Promise<void> {
     create index if not exists processed_actions_reserved_at_idx
       on processed_actions (reserved_at desc);
 
+    -- What the quoter has signed (lib/quote-policy). The concentration limits
+    -- used to read only indexed deposits, which a writer's own client reports —
+    -- or does not. A signature is the one step no position can skip, so each
+    -- one reserves its allowance until it is accounted for: 'indexed' once its
+    -- deposit row exists, 'opened' when found on chain unreported, 'unused'
+    -- when its signature lapsed and no such position exists.
+    create table if not exists quote_reservations (
+      id            bigserial primary key,
+      address       text not null,
+      underlying    text not null,
+      subtype       text not null check (subtype in ('call','put')),
+      collateral    numeric not null,
+      notional_usd  numeric not null,
+      strike_price  float8 not null,
+      expiry_iso    text not null,
+      signed_at     timestamptz not null default now(),
+      valid_until   timestamptz not null,
+      state         text not null default 'pending'
+                    check (state in ('pending','opened','indexed','unused'))
+    );
+    create index if not exists quote_reservations_owner_idx
+      on quote_reservations (address, underlying, state);
+    create index if not exists quote_reservations_strike_idx
+      on quote_reservations (underlying, state, strike_price);
+
     -- Circuit breaker: a single-row kill-switch for new deposits (P1-8).
     -- When tripped, the deposit endpoint fails closed (503). Can be set
     -- manually by an admin or automatically by a future risk trigger

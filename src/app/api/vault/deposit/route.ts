@@ -9,6 +9,7 @@ import { realizedApr } from '@/lib/apr'
 import { requestedUnderlying } from '@/lib/assets'
 import { USDC_CODE } from '@/lib/usdc'
 import { limitsRefusal } from '@/lib/vault-limits'
+import { markReservationIndexed } from '@/lib/quote-policy'
 
 export const dynamic = 'force-dynamic'
 
@@ -272,6 +273,15 @@ export async function POST(req: Request) {
     }
 
     await confirmAction('deposit', body.txHash, body.txHash)
+    // The deposit row now counts this position; the quote's reservation stops.
+    await markReservationIndexed({
+      address: position.owner,
+      underlying: asset.symbol,
+      type: position.side,
+      collateral: position.collateral,
+      strike: position.strike,
+      expiry: position.expiry,
+    })
 
     return NextResponse.json({
       ok: true,

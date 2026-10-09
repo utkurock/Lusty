@@ -7,7 +7,7 @@ import { quoteOptionLive } from '@/lib/pricing-server'
 import { getSpot } from '@/lib/spot'
 import { pricingInputsFor } from '@/lib/quote-inputs'
 import { isScheduledExpiry, minDaysToExpiry } from '@/lib/expiries'
-import { assertQuoteAllowed, PolicyRejection } from '@/lib/quote-policy'
+import { assertQuoteAllowed, PolicyRejection, reserveQuote } from '@/lib/quote-policy'
 import { getBreakerState } from '@/lib/circuit-breaker'
 import { requestedUnderlying } from '@/lib/assets'
 import { limitsRefusal } from '@/lib/vault-limits'
@@ -18,6 +18,7 @@ import {
   vaultServer,
   coveredUnits,
   type OptionSide,
+  getPositionsOf,
 } from '@/lib/vault-contract'
 
 export const dynamic = 'force-dynamic'
@@ -262,6 +263,7 @@ export async function POST(req: Request) {
         strikeInventoryLimitUsd: STRIKE_INVENTORY_LIMIT_USD,
         maxUserEpochCallXlm: asset.userEpochCall,
         maxUserEpochPutUsd: asset.userEpochPutUsd,
+        readPositions: () => getPositionsOf(body.address, 100, asset),
       })
     } catch (policyErr) {
       if (policyErr instanceof PolicyRejection) {
@@ -368,6 +370,30 @@ export async function POST(req: Request) {
       sequence + SIGNATURE_LEDGERS,
       NETWORK_PASSPHRASE,
     )
+
+    // ---- reserve it before it leaves
+    //
+    // The signature is what opens the position, so it is what the allowances
+    // count — not the deposit row a client may or may not report afterwards.
+    // No reservation, no signature.
+    try {
+      await reserveQuote({
+        address: body.address,
+        underlying: asset.symbol,
+        type: body.side,
+        collateralAmount: body.collateralAmount,
+        notionalUsd,
+        strikePrice: body.strikePrice,
+        expiryIso,
+        validUntil: new Date(Date.now() + SIGNATURE_LEDGERS * 6_000 + 120_000),
+      })
+    } catch (reserveErr) {
+      console.error('vault/authorize: quote not reserved, signature withheld', reserveErr)
+      return NextResponse.json(
+        { error: 'deposit limit check unavailable — please retry', code: 'limit_check_unavailable' },
+        { status: 503 },
+      )
+    }
 
     const out = entries.map((e, i) => (i === target ? signed : e))
     return NextResponse.json({
