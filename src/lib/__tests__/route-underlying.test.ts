@@ -18,6 +18,7 @@ const WRITER = StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 0x66))
 const getPosition = vi.fn()
 const getSpot = vi.fn()
 const logTransaction = vi.fn()
+const reserveAction = vi.fn(async (..._a: any[]) => ({ alreadyProcessed: false }))
 
 vi.mock('@/lib/vault-contract', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../vault-contract')>()),
@@ -35,7 +36,7 @@ vi.mock('@/lib/db-queries', () => ({
   logTransaction: (...a: any[]) => logTransaction(...a),
 }))
 vi.mock('@/lib/idempotency', () => ({
-  reserveAction: async () => ({ alreadyProcessed: false }),
+  reserveAction: (...a: any[]) => reserveAction(...a),
   releaseAction: async () => {},
   confirmAction: async () => {},
 }))
@@ -115,6 +116,28 @@ describe('deposit resolves the underlying from the request', () => {
     // test needs to go. The asset it carried is the assertion.
     expect(res.status).toBe(404)
     expect(getPosition).toHaveBeenCalledWith(3, expect.objectContaining({ symbol: 'XLM' }))
+  })
+
+  it('guards replay on the position it read, never on the caller s hash', async () => {
+    // The intake index is shared with the swap desk: a caller-chosen key could
+    // be someone else's funding hash, refused there as already processed.
+    getSpot.mockResolvedValue({ price: 0.25 })
+    getPosition.mockResolvedValue({
+      id: 3,
+      owner: WRITER,
+      side: 'call',
+      collateral: 100,
+      strike: 0.3,
+      expiry: new Date(Date.now() + 7 * 86_400_000),
+      premium: 1,
+      settled: false,
+      outcome: 'open',
+    })
+    reserveAction.mockClear()
+    await post(deposit.POST, depositBody({ txHash: 'f'.repeat(64) }))
+
+    expect(reserveAction).toHaveBeenCalledWith('deposit', 'XLM:3')
+    expect(reserveAction).not.toHaveBeenCalledWith('deposit', 'f'.repeat(64))
   })
 })
 

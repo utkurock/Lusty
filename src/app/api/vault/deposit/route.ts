@@ -185,9 +185,13 @@ export async function POST(req: Request) {
 
     // ---- record it once
     //
-    // Same replay ledger the old rail used, so a position can be indexed only
-    // once no matter how many times the client retries.
-    const reservation = await reserveAction('deposit', body.txHash)
+    // Keyed on the position, which was just read off the ledger, and not on
+    // the caller's txHash, which nothing here verifies. The replay ledger's
+    // intake index is shared with the swap desk and the bridge, so a key the
+    // caller chose could be someone else's funding hash: indexing a dust
+    // position under it would refuse their payout as already processed.
+    const replayKey = `${asset.symbol}:${position.id}`
+    const reservation = await reserveAction('deposit', replayKey)
     if (reservation.alreadyProcessed) {
       return NextResponse.json(
         { ok: true, alreadyIndexed: true, positionId: body.positionId },
@@ -245,7 +249,7 @@ export async function POST(req: Request) {
     } catch (dbErr: any) {
       // The position is on chain regardless. Release the reservation so a
       // retry can index it rather than leaving it permanently unrecorded.
-      await releaseAction('deposit', body.txHash)
+      await releaseAction('deposit', replayKey)
 
       // Already indexed, under some other hash. The replay ledger is keyed on
       // the caller's txHash and nothing verifies that string on chain, so it
@@ -272,7 +276,7 @@ export async function POST(req: Request) {
       )
     }
 
-    await confirmAction('deposit', body.txHash, body.txHash)
+    await confirmAction('deposit', replayKey, body.txHash)
     // The deposit row now counts this position; the quote's reservation stops.
     await markReservationIndexed({
       address: position.owner,
