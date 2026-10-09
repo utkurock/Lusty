@@ -429,10 +429,15 @@ impl LustyVault {
         Self::extend_instance(&env);
         env.events().publish(
             (symbol_short!("limits"),),
+            // The per-expiry caps were missing before v5, so a change to them
+            // alone was invisible to anyone watching events. Appended, not
+            // inserted: a reader of the first three fields is unaffected.
             (
                 limits.max_position_call,
                 limits.max_position_put,
                 limits.max_premium_bps,
+                limits.max_expiry_call,
+                limits.max_expiry_put,
             ),
         );
     }

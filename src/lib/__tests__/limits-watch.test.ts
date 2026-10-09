@@ -124,6 +124,14 @@ describe('checkLimitsEvents', () => {
   })
 })
 
+describe('per-expiry caps on a v5 event', () => {
+  it('flag a change away from the declared cap, and are skipped when absent', () => {
+    const v5 = { ...change(), maxExpiryCall: declared.maxExpiryCall * 2, maxExpiryPut: declared.maxExpiryPut }
+    expect(limitsChangeAlert([v5], [xlm])!.severity).toBe('critical')
+    expect(limitsChangeAlert([change()], [xlm])!.severity).toBe('warning')
+  })
+})
+
 describe('parseLimitsEvent', () => {
   it('reads the three values the contract publishes', () => {
     const raw: any = {
@@ -144,6 +152,28 @@ describe('parseLimitsEvent', () => {
       maxPositionPut: 1500,
       maxPremiumBps: 2000,
     })
+  })
+
+  it('reads the per-expiry caps a v5 instance appends, and leaves them unset on v4', () => {
+    const raw: any = {
+      topic: [nativeToScVal('limits', { type: 'symbol' })],
+      value: xdr.ScVal.scvVec([
+        nativeToScVal(500_000_000n, { type: 'i128' }),
+        nativeToScVal(15_000_000_000n, { type: 'i128' }),
+        nativeToScVal(2000, { type: 'u32' }),
+        nativeToScVal(2_500_000_000n, { type: 'i128' }),
+        nativeToScVal(30_000_000_000n, { type: 'i128' }),
+      ]),
+      contractId: { contractId: () => XLM_VAULT },
+      ledger: 8,
+      ledgerClosedAt: '2026-10-06T00:00:00Z',
+    }
+    expect(parseLimitsEvent(raw)).toMatchObject({ maxExpiryCall: 250, maxExpiryPut: 3000 })
+
+    raw.value = xdr.ScVal.scvVec(raw.value.vec().slice(0, 3))
+    const v4 = parseLimitsEvent(raw)!
+    expect(v4.maxExpiryCall).toBeUndefined()
+    expect(v4.maxPositionCall).toBe(50)
   })
 
   it('ignores any other event', () => {

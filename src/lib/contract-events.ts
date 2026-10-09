@@ -357,18 +357,28 @@ export interface LimitsChange {
   maxPositionCall: number
   maxPositionPut: number
   maxPremiumBps: number
+  /** v5 instances only: v4 left the per-expiry caps out of the event. */
+  maxExpiryCall?: number
+  maxExpiryPut?: number
 }
 
 /**
- * Read a `limits` event. The contract publishes the two position caps and the
- * premium ceiling; the per-expiry caps are not in the event, so a change to
- * those alone still shows up here, with values that look unchanged.
+ * Read a `limits` event. Every instance publishes the two position caps and
+ * the premium ceiling; v5 appends the two per-expiry caps. On a v4 instance a
+ * change to the per-expiry caps alone still shows up here, with values that
+ * look unchanged.
  */
 export function parseLimitsEvent(e: sorobanRpc.Api.EventResponse): LimitsChange | null {
   try {
     const topics = e.topic.map((t: xdr.ScVal) => scValToNative(t))
     if (String(topics[0]) !== 'limits') return null
-    const [call, put, bps] = scValToNative(e.value) as [bigint, bigint, number | bigint]
+    const [call, put, bps, expCall, expPut] = scValToNative(e.value) as [
+      bigint,
+      bigint,
+      number | bigint,
+      bigint?,
+      bigint?,
+    ]
     return {
       contractId: e.contractId?.contractId() ?? '',
       ledger: e.ledger,
@@ -377,6 +387,8 @@ export function parseLimitsEvent(e: sorobanRpc.Api.EventResponse): LimitsChange 
       maxPositionCall: Number(call) / TOKEN_SCALE,
       maxPositionPut: Number(put) / TOKEN_SCALE,
       maxPremiumBps: Number(bps),
+      ...(expCall !== undefined ? { maxExpiryCall: Number(expCall) / TOKEN_SCALE } : {}),
+      ...(expPut !== undefined ? { maxExpiryPut: Number(expPut) / TOKEN_SCALE } : {}),
     }
   } catch {
     return null

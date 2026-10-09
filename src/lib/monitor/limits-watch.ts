@@ -34,14 +34,20 @@ const FIELDS = [
   ['maxPositionCall', 'call position cap'],
   ['maxPositionPut', 'put position cap'],
   ['maxPremiumBps', 'premium ceiling (bps)'],
+  // Published only by v5 instances; a v4 event leaves them unset and they are
+  // skipped rather than read as zero.
+  ['maxExpiryCall', 'call per-expiry cap'],
+  ['maxExpiryPut', 'put per-expiry cap'],
 ] as const
 
 /** Where a change departs from what the book declares, field by field. */
 export function departures(change: LimitsChange, asset: UnderlyingAsset): string[] {
   const declared = asset.onchainLimits
-  return FIELDS.filter(([f]) => Math.abs(change[f] - declared[f]) > EPSILON).map(
-    ([f, what]) => `${what} ${declared[f]} → ${change[f]}`,
-  )
+  return FIELDS.flatMap(([f, what]) => {
+    const now = change[f]
+    if (now === undefined || Math.abs(now - declared[f]) <= EPSILON) return []
+    return [`${what} ${declared[f]} → ${now}`]
+  })
 }
 
 /**
