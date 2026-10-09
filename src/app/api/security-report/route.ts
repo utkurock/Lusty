@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { insertSecurityReport } from '@/lib/db-queries'
 import { durableRateLimit } from '@/lib/rate-limit'
-import { getClientIp } from '@/lib/anti-spam'
+import { getClientIp, isJsonRequest } from '@/lib/anti-spam'
 import { sendAlert } from '@/lib/monitor/notify'
 import { parseSecurityReport, reportAlert } from '@/lib/security-report'
 import { reportRef } from '@/lib/adversarial'
@@ -12,8 +12,12 @@ import { reportRef } from '@/lib/adversarial'
 // /api/feedback — a reproduction is mostly explorer links and that is fine.
 
 const MIN_FILL_MS = 5000
+const ALERTS_PER_HOUR = 20
 
 export async function POST(req: Request) {
+  if (!isJsonRequest(req)) {
+    return NextResponse.json({ error: 'expected application/json' }, { status: 415 })
+  }
   try {
     const body = await req.json().catch(() => null)
 
@@ -48,7 +52,15 @@ export async function POST(req: Request) {
 
     // The report is stored either way; a failed notification must not tell the
     // reporter it was lost, and the admin panel still lists it.
-    await sendAlert(reportAlert(id, parsed.report)).catch(() => undefined)
+    //
+    // Alerts are capped across everyone, not per IP: each one pages the
+    // maintainers and spends the email quota, and however many addresses a
+    // flood comes from, past this many an hour the admin panel is where they
+    // are read.
+    const alerts = await durableRateLimit('security-report:alerts', 3_600_000, ALERTS_PER_HOUR)
+    if (alerts.ok) {
+      await sendAlert(reportAlert(id, parsed.report)).catch(() => undefined)
+    }
 
     return NextResponse.json({ ok: true, ref: reportRef(id) })
   } catch (e: any) {

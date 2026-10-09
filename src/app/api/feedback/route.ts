@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { insertFeedback, isDuplicateFeedback } from '@/lib/db-queries'
 import { durableRateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
-import { getClientIp, spamReason } from '@/lib/anti-spam'
+import { getClientIp, isJsonRequest, spamReason } from '@/lib/anti-spam'
 
 const ALLOWED_CATEGORIES = new Set(['general', 'bug', 'feature', 'ux', 'praise'])
 
@@ -11,6 +11,9 @@ const ALLOWED_CATEGORIES = new Set(['general', 'bug', 'feature', 'ux', 'praise']
 const MIN_FILL_MS = 1500
 
 export async function POST(req: Request) {
+  if (!isJsonRequest(req)) {
+    return NextResponse.json({ error: 'expected application/json' }, { status: 415 })
+  }
   try {
     const body = await req.json().catch(() => null)
     if (!body || typeof body.message !== 'string') {
