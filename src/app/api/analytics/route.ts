@@ -13,6 +13,8 @@ const ALLOWED_EVENTS = new Set([
   'swap_open',
   'feedback_open',
   'feedback_submit',
+  'security_report_open',
+  'security_report_submit',
   'faucet_open',
 ])
 

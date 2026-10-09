@@ -801,3 +801,87 @@ export async function getFeedback(limit = 50, offset = 0) {
   }
 }
 
+
+// ── Security reports ───────────────────────────────────────────────
+
+export interface SecurityReportInput {
+  severity: string
+  attackClass: number | null
+  book: string | null
+  summary: string
+  reproduction: string
+  transactions: string | null
+  expected: string
+  actual: string
+  contact: string
+  credit: string | null
+  address: string | null
+  ip: string | null
+}
+
+/** Stores a report and returns its id, which the reporter is handed back. */
+export async function insertSecurityReport(r: SecurityReportInput): Promise<number> {
+  await ensureSchema()
+  const pool = getPool()
+  const res = await pool.query(
+    `insert into security_reports
+       (severity, attack_class, book, summary, reproduction, transactions,
+        expected, actual, contact, credit, address, ip)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+     returning id`,
+    [
+      r.severity,
+      r.attackClass,
+      r.book,
+      r.summary,
+      r.reproduction,
+      r.transactions,
+      r.expected,
+      r.actual,
+      r.contact,
+      r.credit,
+      r.address,
+      r.ip,
+    ]
+  )
+  return Number(res.rows[0].id)
+}
+
+export async function getSecurityReports(limit = 50, offset = 0) {
+  await ensureSchema()
+  const pool = getPool()
+
+  const [count, rows] = await Promise.all([
+    pool.query(`
+      select
+        count(*)::int                                                  as total,
+        count(*) filter (where severity in ('critical', 'high'))::int  as urgent
+      from security_reports
+    `),
+    pool.query(
+      `select * from security_reports order by created_at desc limit $1 offset $2`,
+      [limit, offset]
+    ),
+  ])
+
+  return {
+    rows: rows.rows.map((r: any) => ({
+      id: Number(r.id),
+      severity: r.severity,
+      attackClass: r.attack_class,
+      book: r.book,
+      summary: r.summary,
+      reproduction: r.reproduction,
+      transactions: r.transactions,
+      expected: r.expected,
+      actual: r.actual,
+      contact: r.contact,
+      credit: r.credit,
+      address: r.address,
+      ip: r.ip,
+      createdAt: r.created_at,
+    })),
+    total: count.rows[0].total as number,
+    urgent: count.rows[0].urgent as number,
+  }
+}

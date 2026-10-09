@@ -7,9 +7,11 @@ interface ModalProps {
   onClose: () => void
   title?: string
   children: ReactNode
+  /** 'lg' widens the dialog and scrolls its body, for forms taller than the screen. */
+  size?: 'md' | 'lg'
 }
 
-export function Modal({ open, onClose, title, children }: ModalProps) {
+export function Modal({ open, onClose, title, children, size = 'md' }: ModalProps) {
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -22,7 +24,7 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60" onClick={onClose}>
       <div
         onClick={e => e.stopPropagation()}
-        className="w-full max-w-md raised-card"
+        className={`w-full raised-card ${size === 'lg' ? 'max-w-2xl' : 'max-w-md'}`}
       >
         <div className="flex justify-between items-center px-6 py-4 border-b border-line-light">
           <h3 className="font-mono text-ink">{title}</h3>
@@ -30,7 +32,7 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
             <X size={18} />
           </button>
         </div>
-        <div className="p-6">{children}</div>
+        <div className={size === 'lg' ? 'p-6 max-h-[calc(100vh-9rem)] overflow-y-auto' : 'p-6'}>{children}</div>
       </div>
     </div>
   )

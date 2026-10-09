@@ -383,6 +383,28 @@ async function createSchema(): Promise<void> {
     -- "same ip + same message in the last N minutes".
     create index if not exists feedback_ip_created_at_idx on feedback(ip, created_at desc);
 
+    -- Security reports from the adversarial window's on-site form. Private:
+    -- read only through /api/admin/security-reports. severity is the level the
+    -- reporter claims, not the one triage assigns; contact is how the
+    -- acknowledgement reaches them.
+    create table if not exists security_reports (
+      id            bigserial primary key,
+      severity      text not null check (severity in ('critical', 'high', 'medium', 'low')),
+      attack_class  integer check (attack_class between 1 and 19),
+      book          text,
+      summary       text not null,
+      reproduction  text not null,
+      transactions  text,
+      expected      text not null,
+      actual        text not null,
+      contact       text not null,
+      credit        text,
+      address       text,
+      ip            text,
+      created_at    timestamptz not null default now()
+    );
+    create index if not exists security_reports_created_at_idx on security_reports(created_at desc);
+
     -- Durable rate limits: one counter per key per fixed window, read as a
     -- sliding window by lib/rate-limit. Shared by every process, so a limit
     -- survives a deploy and holds across replicas.

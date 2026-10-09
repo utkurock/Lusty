@@ -7,7 +7,8 @@ labels: security
 
 <!--
 Critical or High — anything that takes collateral, breaks solvency, moves money wrongly,
-or crosses an authorization boundary — goes to utkukaya.tr@gmail.com first, not here.
+or crosses an authorization boundary — goes through the private "report vulnerability"
+form on lusty.finance, or to utkukaya.tr@gmail.com, first — not here.
 Report, get an acknowledgement, then publish whenever you like.
 
 Scope and severity: docs/ADVERSARIAL.md

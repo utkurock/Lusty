@@ -15,9 +15,11 @@ import {
   Activity,
   MessageSquare,
   Star,
+  ShieldAlert,
 } from 'lucide-react'
+import { ATTACK_CLASSES, SEVERITY_LABEL, reportRef, type ReportSeverity } from '@/lib/adversarial'
 
-type Tab = 'overview' | 'users' | 'transactions' | 'analytics' | 'feedback'
+type Tab = 'overview' | 'users' | 'transactions' | 'analytics' | 'feedback' | 'reports'
 
 interface Stats {
   totalUsers: number
@@ -81,6 +83,30 @@ interface FeedbackRow {
   createdAt: string
 }
 
+interface SecurityReportRow {
+  id: number
+  severity: ReportSeverity
+  attackClass: number | null
+  book: string | null
+  summary: string
+  reproduction: string
+  transactions: string | null
+  expected: string
+  actual: string
+  contact: string
+  credit: string | null
+  address: string | null
+  ip: string | null
+  createdAt: string
+}
+
+const SEVERITY_TONE: Record<ReportSeverity, string> = {
+  critical: 'bg-accent-red text-white',
+  high: 'bg-accent-red/20 text-accent-red',
+  medium: 'bg-brand/20 text-ink',
+  low: 'bg-ink-2/15 text-ink-2',
+}
+
 interface FeedbackSummary {
   total: number
   avgRating: number | null
@@ -107,6 +133,11 @@ export function AdminOverlay() {
   const [feedbackTotal, setFeedbackTotal] = useState(0)
   const [feedbackPage, setFeedbackPage] = useState(0)
   const [feedbackSummary, setFeedbackSummary] = useState<FeedbackSummary | null>(null)
+  const [reports, setReports] = useState<SecurityReportRow[]>([])
+  const [reportsTotal, setReportsTotal] = useState(0)
+  const [reportsUrgent, setReportsUrgent] = useState(0)
+  const [reportsPage, setReportsPage] = useState(0)
+  const [expandedReport, setExpandedReport] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
   const authInProgress = useRef(false)
 
@@ -259,6 +290,28 @@ export function AdminOverlay() {
     [sessionToken]
   )
 
+  // Fetch security reports
+  const fetchReports = useCallback(
+    (page: number) => {
+      if (!sessionToken) return
+      setLoading(true)
+      fetch(`/api/admin/security-reports?limit=${PAGE_SIZE}&offset=${page * PAGE_SIZE}`, {
+        headers: adminHeaders,
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.ok) {
+            setReports(data.rows)
+            setReportsTotal(data.total)
+            setReportsUrgent(data.urgent)
+          }
+        })
+        .catch(() => {})
+        .finally(() => setLoading(false))
+    },
+    [sessionToken]
+  )
+
   // Refresh stats when panel opens
   useEffect(() => {
     if (open && sessionToken && tab === 'overview') {
@@ -286,6 +339,10 @@ export function AdminOverlay() {
   useEffect(() => {
     if (open && tab === 'feedback') fetchFeedback(feedbackPage)
   }, [open, tab, feedbackPage, fetchFeedback])
+
+  useEffect(() => {
+    if (open && tab === 'reports') fetchReports(reportsPage)
+  }, [open, tab, reportsPage, fetchReports])
 
   // Close on Escape
   useEffect(() => {
@@ -347,6 +404,7 @@ export function AdminOverlay() {
                   { key: 'users' as Tab, label: 'Users', icon: Users },
                   { key: 'transactions' as Tab, label: 'Transactions', icon: ArrowRightLeft },
                   { key: 'feedback' as Tab, label: 'Feedback', icon: MessageSquare },
+                  { key: 'reports' as Tab, label: 'Reports', icon: ShieldAlert },
                 ]).map(({ key, label, icon: Icon }) => (
                   <button
                     key={key}
@@ -728,6 +786,95 @@ export function AdminOverlay() {
                       </div>
                     )}
                     <Pagination page={feedbackPage} setPage={setFeedbackPage} total={feedbackTotal} pageSize={PAGE_SIZE} />
+                  </div>
+                </div>
+              )}
+
+              {/* Security reports — the adversarial window's private intake */}
+              {tab === 'reports' && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="light-card rounded-sm p-5">
+                      <div className="label mb-1">Reports</div>
+                      <div className="font-mono text-head-md font-bold text-ink">
+                        {reportsTotal.toLocaleString()}
+                      </div>
+                    </div>
+                    <div className="light-card rounded-sm p-5">
+                      <div className="label mb-1">Critical / High claimed</div>
+                      <div className={`font-mono text-head-md font-bold ${reportsUrgent > 0 ? 'text-accent-red' : 'text-ink'}`}>
+                        {reportsUrgent.toLocaleString()}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="light-card rounded-sm">
+                    {loading && (
+                      <div className="px-5 py-10 flex justify-center">
+                        <Loader2 size={20} className="animate-spin text-ink-2" />
+                      </div>
+                    )}
+                    {!loading && reports.map((r) => {
+                      const expanded = expandedReport === r.id
+                      return (
+                        <div key={r.id} className="light-card px-5 py-4">
+                          <button
+                            onClick={() => setExpandedReport(expanded ? null : r.id)}
+                            className="w-full text-left"
+                          >
+                            <div className="flex items-center justify-between mb-1.5 gap-3">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className="font-mono text-tiny text-ink-2">{reportRef(r.id)}</span>
+                                <span className={`label px-1.5 py-0.5 rounded-sm ${SEVERITY_TONE[r.severity]}`}>
+                                  {SEVERITY_LABEL[r.severity]}
+                                </span>
+                                {r.attackClass && (
+                                  <span className="label px-1.5 py-0.5 rounded-sm bg-ink-2/15 truncate">
+                                    {r.attackClass}. {ATTACK_CLASSES[r.attackClass - 1]}
+                                  </span>
+                                )}
+                                {r.book && (
+                                  <span className="label px-1.5 py-0.5 rounded-sm bg-ink-2/15">{r.book}</span>
+                                )}
+                              </div>
+                              <span className="font-mono text-tiny text-ink-2 shrink-0">
+                                {new Date(r.createdAt).toLocaleString()}
+                              </span>
+                            </div>
+                            <p className="text-body text-ink break-words">{r.summary}</p>
+                          </button>
+                          {expanded && (
+                            <div className="mt-3 space-y-3">
+                              {([
+                                ['Reproduction', r.reproduction],
+                                ['Transactions', r.transactions],
+                                ['Expected', r.expected],
+                                ['Actual', r.actual],
+                              ] as const).map(([label, value]) =>
+                                value ? (
+                                  <div key={label}>
+                                    <div className="label mb-1">{label}</div>
+                                    <p className="font-mono text-caption text-ink whitespace-pre-wrap break-words">{value}</p>
+                                  </div>
+                                ) : null
+                              )}
+                            </div>
+                          )}
+                          <div className="font-mono text-tiny text-ink-2 mt-1.5">
+                            {r.contact}
+                            {r.credit && <span> · credit as {r.credit}</span>}
+                            {r.address && <span> · {formatAddress(r.address)}</span>}
+                            {r.ip && <span> · {r.ip}</span>}
+                          </div>
+                        </div>
+                      )
+                    })}
+                    {!loading && reports.length === 0 && (
+                      <div className="px-5 py-10 text-center font-mono text-caption text-ink-2">
+                        No reports yet
+                      </div>
+                    )}
+                    <Pagination page={reportsPage} setPage={setReportsPage} total={reportsTotal} pageSize={PAGE_SIZE} />
                   </div>
                 </div>
               )}

@@ -8,6 +8,7 @@ import { WalletConnectModal } from '@/components/shared/WalletConnectModal'
 import { AdminOverlay } from '@/components/admin/AdminOverlay'
 import { AnalyticsTracker } from '@/components/shared/AnalyticsTracker'
 import { FeedbackWidget } from '@/components/shared/FeedbackWidget'
+import { SecurityReportWidget } from '@/components/shared/SecurityReportWidget'
 
 export const metadata: Metadata = {
   title: 'Lusty — Earn yield upfront',
@@ -53,6 +54,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
             <WalletConnectModal />
             <AdminOverlay />
+            <SecurityReportWidget />
             <FeedbackWidget />
             <AnalyticsTracker />
           </WalletProvider>

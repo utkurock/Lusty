@@ -8,6 +8,14 @@ For the adversarial testnet window. Scope and severity definitions are in
 
 ## Where
 
+**On the site — any severity.** While the window is open, every page of
+[lusty.finance](https://lusty.finance) has a **report vulnerability** button above the
+feedback button. Its fields are the five parts below; the report goes privately to the
+maintainers, nothing in it is shown publicly, and you get a reference (`LSR-…`) back to
+quote. This is the shortest path, and it is fine for Critical and High.
+
+Or, if you would rather not use the form:
+
 **Critical or High** — anything that takes collateral, breaks solvency, moves money
 wrongly, or crosses an authorization boundary:
 

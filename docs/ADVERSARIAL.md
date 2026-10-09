@@ -303,6 +303,8 @@ allowlist. That is where the class multiplies.
 
 ## 9. How to report
 
-See [`REPORTING.md`](./REPORTING.md) for the intake template and where to send it. In
-short: the reproduction, the transaction hashes, what you expected versus what happened,
-and the severity you are claiming.
+The **report vulnerability** button on every page of the site, above the feedback button,
+is the shortest path: private, any severity, and its fields are the intake template.
+Email and GitHub issues still work — see [`REPORTING.md`](./REPORTING.md). In short: the
+reproduction, the transaction hashes, what you expected versus what happened, and the
+severity you are claiming.
