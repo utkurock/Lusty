@@ -885,3 +885,31 @@ export async function getSecurityReports(limit = 50, offset = 0) {
     urgent: count.rows[0].urgent as number,
   }
 }
+
+/** How long a feedback or security-report row keeps the address it came from. */
+export const IP_RETENTION_DAYS = 90
+
+/**
+ * Forget the client address on feedback and security reports once it is older
+ * than `IP_RETENTION_DAYS`. The address is there for spam and abuse triage,
+ * which is over long before then; the report itself is kept. Returns how many
+ * rows were cleared, per table.
+ */
+export async function purgeOldIps(
+  days: number = IP_RETENTION_DAYS,
+): Promise<{ feedback: number; securityReports: number }> {
+  await ensureSchema()
+  const pool = getPool()
+  const interval = `${Math.max(1, Math.floor(days))} days`
+  const fb = await pool.query(
+    `update feedback set ip = null
+      where ip is not null and created_at < now() - $1::interval`,
+    [interval],
+  )
+  const sr = await pool.query(
+    `update security_reports set ip = null
+      where ip is not null and created_at < now() - $1::interval`,
+    [interval],
+  )
+  return { feedback: fb.rowCount ?? 0, securityReports: sr.rowCount ?? 0 }
+}

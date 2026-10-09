@@ -3,6 +3,7 @@ import { cronAuthorized } from '@/lib/cron-auth'
 import { runMonitorChecks } from '@/lib/monitor/checks'
 import { sendAlert } from '@/lib/monitor/notify'
 import { applyAutoBreaker } from '@/lib/monitor/triggers'
+import { purgeOldIps } from '@/lib/db-queries'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -55,6 +56,14 @@ async function handle(req: Request) {
     })
   }
 
+  // Housekeeping that rides on the same timer: client addresses on feedback and
+  // security reports are kept for IP_RETENTION_DAYS and no longer. A failure
+  // here is logged and never stops the risk sweep.
+  const purged = await purgeOldIps().catch((e) => {
+    console.error('monitor: ip retention purge failed', e)
+    return null
+  })
+
   const deliveries = await Promise.all(toDeliver.map((a) => sendAlert(a)))
   const delivered = deliveries.filter((d) => d.delivered).length
 
@@ -69,6 +78,7 @@ async function handle(req: Request) {
       changed: breaker.changed,
     },
     alerts: alerts.map((a) => ({ severity: a.severity, title: a.title })),
+    ...(purged ? { ipsPurged: purged } : {}),
   })
 }
 
