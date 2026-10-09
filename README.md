@@ -211,11 +211,13 @@ schedule that lives only in a hosting dashboard is a schedule nobody can review.
 | `/api/cron/settle` | `0 */2 * * *` | Settles expired positions, and must do so within a day of expiry |
 
 Both authorize the same way, and both return 403 while `CRON_SECRET` is unset,
-so a deployment with no timer attached exposes nothing:
+so a deployment with no timer attached exposes nothing. Send the secret in the
+`Authorization` header: `?secret=` still works but is logged as deprecated,
+because query strings end up in access logs.
 
 ```sh
 curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://<host>/api/cron/settle
-curl -fsS "https://<host>/api/cron/settle?dryRun=1&secret=$CRON_SECRET"  # scan only, signs nothing
+curl -fsS -H "Authorization: Bearer $CRON_SECRET" "https://<host>/api/cron/settle?dryRun=1"  # scan only, signs nothing
 ```
 
 **Settlement has a deadline, and it is about a day.** `settle(id)` prices the

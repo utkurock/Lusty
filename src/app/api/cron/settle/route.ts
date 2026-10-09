@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { cronAuthorized } from '@/lib/cron-auth'
 import { intParam } from '@/lib/utils'
 import { DEFAULT_SCAN_LIMIT, DEFAULT_SETTLE_LIMIT } from '@/lib/settlement'
 import { sweepOnce } from '@/lib/settlement-sweep'
@@ -14,7 +15,7 @@ const CRON_SECRET = process.env.CRON_SECRET ?? ''
  * config file this application reads. See the note at the foot of this comment.
  *
  * Auth: requires CRON_SECRET, as `Authorization: Bearer <s>` (what most
- * schedulers send) or `?secret=<s>`. If CRON_SECRET is unset we fail closed (403)
+ * schedulers send) or, deprecated and logged, `?secret=<s>`. If CRON_SECRET is unset we fail closed (403)
  * rather than leave an endpoint anyone can drive. Same pattern as
  * /api/cron/monitor, deliberately — there should be one way to authorize a
  * scheduled job in this codebase.
@@ -74,9 +75,7 @@ async function handle(req: Request) {
     )
   }
   const url = new URL(req.url)
-  const bearer = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '')
-  const qs = url.searchParams.get('secret')
-  if (bearer !== CRON_SECRET && qs !== CRON_SECRET) {
+  if (!cronAuthorized(req, CRON_SECRET)) {
     return NextResponse.json({ error: 'not authorized' }, { status: 403 })
   }
 

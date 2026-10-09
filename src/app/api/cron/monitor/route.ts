@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { cronAuthorized } from '@/lib/cron-auth'
 import { runMonitorChecks } from '@/lib/monitor/checks'
 import { sendAlert } from '@/lib/monitor/notify'
 import { applyAutoBreaker } from '@/lib/monitor/triggers'
@@ -15,7 +16,7 @@ const CRON_SECRET = process.env.CRON_SECRET ?? ''
  * never read; see /api/cron/settle for the longer version of that mistake.
  *
  * Auth: requires CRON_SECRET, supplied either as `Authorization: Bearer <s>`
- * (what most schedulers send) or `?secret=<s>`. If CRON_SECRET is unset we fail
+ * (what most schedulers send) or, deprecated and logged, `?secret=<s>`. If CRON_SECRET is unset we fail
  * closed (403) rather than expose an unauthenticated endpoint that anyone
  * could spam to blast the alert channels.
  *
@@ -29,9 +30,7 @@ async function handle(req: Request) {
       { status: 403 }
     )
   }
-  const bearer = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '')
-  const qs = new URL(req.url).searchParams.get('secret')
-  if (bearer !== CRON_SECRET && qs !== CRON_SECRET) {
+  if (!cronAuthorized(req, CRON_SECRET)) {
     return NextResponse.json({ error: 'not authorized' }, { status: 403 })
   }
 
