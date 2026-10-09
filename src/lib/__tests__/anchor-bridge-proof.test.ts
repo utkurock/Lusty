@@ -141,3 +141,13 @@ describe('bridge funding proof', () => {
     })
   })
 })
+
+describe('bridge funding through a fee bump', () => {
+  it('refuses it, since both of its hashes would pass the replay guard', () => {
+    const bumped = okTx({
+      fee_bump_transaction: { hash: 'a'.repeat(64) },
+      inner_transaction: { hash: 'b'.repeat(64) },
+    })
+    expect(verify(bumped, [anchorPayment()])).toMatchObject({ code: 'fee_bump', status: 400 })
+  })
+})

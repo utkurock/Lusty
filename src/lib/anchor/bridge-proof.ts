@@ -14,7 +14,7 @@
 import { LUSD_CODE, LUSD_ISSUER, LUSD_DISTRIBUTOR } from '@/lib/lusd'
 import { ANCHOR_ASSET_CODE, ANCHOR_ASSET_ISSUER } from './config'
 import type { ProofOperation, ProofRejection, ProofTransaction } from '@/lib/swap-proof'
-import { AMOUNT_EPSILON } from '@/lib/swap-proof'
+import { AMOUNT_EPSILON, feeBumpRejection } from '@/lib/swap-proof'
 
 export type BridgeDirection = 'anchor_to_cash' | 'cash_to_anchor'
 
@@ -62,6 +62,9 @@ export function verifyBridgeFunding(input: {
       code: 'tx_failed',
     }
   }
+
+  const bumped = feeBumpRejection(tx)
+  if (bumped) return bumped
 
   if (tx.source_account !== address) {
     return { error: 'tx source does not match claimed address', status: 403, code: 'source_mismatch' }

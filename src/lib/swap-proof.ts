@@ -18,6 +18,10 @@ export type SwapDirection = 'xlm_to_lusd' | 'lusd_to_xlm'
 export interface ProofTransaction {
   successful?: boolean
   source_account?: string
+  /** Present only on a fee-bumped transaction. */
+  fee_bump_transaction?: { hash?: string }
+  /** Present only on a fee-bumped transaction. */
+  inner_transaction?: { hash?: string }
 }
 
 /** The fields of a Horizon operation record this check reads. */
@@ -35,6 +39,28 @@ export interface ProofRejection {
   error: string
   status: number
   code: string
+}
+
+/**
+ * Refuse a fee-bumped funding transaction.
+ *
+ * A fee bump has two hashes, the outer envelope's and the inner transaction's,
+ * and Horizon answers to both with the same record: same success, same source,
+ * same payment. The replay guard is keyed on the hash the caller posts, so a
+ * fee-bumped payment could be claimed once under each hash and paid twice.
+ * Nothing this site builds is fee-bumped, so the envelope is refused rather
+ * than reconciled — which also covers rows reserved under either hash before
+ * this check existed.
+ */
+export function feeBumpRejection(tx: ProofTransaction): ProofRejection | null {
+  if (tx.fee_bump_transaction || tx.inner_transaction) {
+    return {
+      error: 'fee-bumped payments are not accepted; send the payment as a plain transaction',
+      status: 400,
+      code: 'fee_bump',
+    }
+  }
+  return null
 }
 
 /** Tolerance on the claimed amount, in units of the asset paid. */
@@ -81,6 +107,9 @@ export function verifyFunding(input: {
       code: 'tx_failed',
     }
   }
+
+  const bumped = feeBumpRejection(tx)
+  if (bumped) return bumped
 
   if (tx.source_account !== address) {
     return {

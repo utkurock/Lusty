@@ -151,3 +151,22 @@ describe('the payout is sized from the ledger', () => {
     }
   })
 })
+
+describe('a fee-bumped payment is refused', () => {
+  // Horizon serves a fee bump under its outer and its inner hash alike, and the
+  // replay guard is keyed on the hash posted — so either hash would be paid.
+  const bumped = okTx({
+    fee_bump_transaction: { hash: 'a'.repeat(64) },
+    inner_transaction: { hash: 'b'.repeat(64) },
+  })
+
+  it('refuses the envelope whichever hash was looked up', () => {
+    expect(verify(bumped, [lusdPayment()])).toMatchObject({ code: 'fee_bump', status: 400 })
+    expect(verify(okTx({ inner_transaction: { hash: 'b'.repeat(64) } }), [lusdPayment()]))
+      .toMatchObject({ code: 'fee_bump' })
+  })
+
+  it('still accepts the plain transaction', () => {
+    expect(verify(okTx(), [lusdPayment()])).toMatchObject({ ok: true })
+  })
+})
