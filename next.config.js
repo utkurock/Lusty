@@ -6,6 +6,11 @@ const nextConfig = {
   experimental: {
     instrumentationHook: true,
   },
+  // Nothing here uses next/image, so the optimizer endpoint only ever served
+  // attackers: several of Next's advisories (AVIF code execution, cache-key
+  // confusion, disk exhaustion) live in /_next/image and are fixed only in 15.5.
+  // Unoptimized, that route answers 404.
+  images: { unoptimized: true },
   async headers() {
     return [
       {
