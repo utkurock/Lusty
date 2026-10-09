@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import type { UnderlyingAsset } from '@/lib/assets'
+import { capacityUsedPct } from '@/lib/capacity'
 
 interface CapacitySummaryProps {
   books: UnderlyingAsset[]
@@ -53,15 +54,7 @@ export function CapacitySummary({ books, side, intervalMs = 30_000 }: CapacitySu
             const res = await fetch(`/api/vault/stats?asset=${symbol}`, {
               cache: 'no-store',
             })
-            const d = await res.json()
-            if (!d?.ok) return { symbol, pct: null }
-            const s = side === 'call' ? d.call : d.put
-            const used = Number(side === 'call' ? s?.utilizedXlm : s?.utilizedUsd)
-            const cap = Number(side === 'call' ? s?.capXlm : s?.capUsd)
-            if (!isFinite(used) || !isFinite(cap) || cap <= 0) {
-              return { symbol, pct: null }
-            }
-            return { symbol, pct: (used / cap) * 100 }
+            return { symbol, pct: capacityUsedPct(await res.json(), side) }
           } catch {
             return { symbol, pct: null }
           }
