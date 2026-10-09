@@ -1,4 +1,4 @@
-//! Lusty Vault — trustless options vault (Soroban, v4).
+//! Lusty Vault — trustless options vault (Soroban, v5).
 //!
 //! The full money loop is on-chain. All three legs of a written option are
 //! contract-enforced:
@@ -72,6 +72,22 @@ use reflector::ReflectorClient;
 /// must block settlement (fail-closed), not settle at a wrong price.
 const MAX_PRICE_STALENESS_SECS: u64 = 3600;
 
+/// How long after expiry a position with no price to settle at stays locked
+/// before it is released as kept. Settlement needs the oracle's reading for
+/// the expiry, Reflector keeps about a day of history, and before v5 a missed
+/// day meant collateral escrowed forever with nothing able to release it. The
+/// price is now recorded on chain by the first settlement or `record_price`
+/// call, so this is for the case where nobody did either in time — and a
+/// month is long enough that no writer can count on it.
+const UNPRICED_RELEASE_SECS: u64 = 30 * 86_400;
+
+/// Ledger close time assumed when converting seconds into TTL ledgers. Shorter
+/// than the network's real close time, so the TTLs it yields err long.
+const LEDGER_SECS: u64 = 5;
+
+/// How far past `UNPRICED_RELEASE_SECS` a position's entries are kept alive.
+const TTL_MARGIN_SECS: u64 = 14 * 86_400;
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Error {
@@ -96,6 +112,14 @@ pub enum Error {
     /// closing the vault to new writers. Rotate by adding first, then removing.
     LastQuoter = 17,
     TooManyQuoters = 18,
+    /// The admin raises the premium band and the quoter prices inside it; one
+    /// account holding both is one key that can do both. See docs/SECURITY.md.
+    QuoterIsAdmin = 19,
+    /// Assigned collateral would be sent back into the vault, where no counter
+    /// accounts for it.
+    InvalidTreasury = 20,
+    /// The oracle reports a scale or a resolution the vault cannot work in.
+    InvalidOracle = 21,
 }
 
 #[contracttype]
@@ -117,6 +141,18 @@ pub struct Config {
     /// settlement never route through it: the admin cannot move collateral,
     /// price an option or settle a position.
     pub admin: Address,
+}
+
+/// The oracle's scale and grid, read once at construction and held from then
+/// on. Strikes are written in `decimals` and expiries on `resolution`, so both
+/// have to mean the same thing at settlement as they did at write — even if the
+/// oracle, which is upgradeable, changes either in between.
+#[contracttype]
+#[derive(Clone)]
+pub struct Feed {
+    pub decimals: u32,
+    /// Seconds between price records.
+    pub resolution: u64,
 }
 
 /// Most pricing keys the vault will hold at once. The set exists for rotation
@@ -257,6 +293,11 @@ enum DataKey {
     /// growing vector, so an active writer can never outgrow a single ledger
     /// entry's size limit.
     OwnerAt(Address, u32),
+    /// The oracle parameters pinned at construction.
+    Feed,
+    /// The price every position on this expiry settles at, at the pinned
+    /// scale, recorded the first time anyone reads it from the oracle.
+    ExpiryPrice(u64),
 }
 
 /// Vault-wide totals, in one read, for verifying solvency from outside. The
@@ -295,13 +336,28 @@ impl LustyVault {
         admin: Address,
         limits: Limits,
     ) {
+        if treasury == env.current_contract_address() {
+            panic_with_error!(&env, Error::InvalidTreasury);
+        }
+        let reflector = ReflectorClient::new(&env, &oracle);
+        let decimals = reflector.decimals();
+        let resolution = Self::resolution_secs(reflector.resolution());
+        // 10^decimals has to fit the i128 arithmetic below with room to spare,
+        // and a zero resolution would make every timestamp its own grid.
+        if decimals > 18 || resolution == 0 {
+            panic_with_error!(&env, Error::InvalidOracle);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::Feed, &Feed { decimals, resolution });
+        Self::store_quoters(&env, &quoters, &admin);
         env.storage().instance().set(
             &DataKey::Config,
             &Config { oracle, feed, token, cash, treasury, admin },
         );
-        Self::store_quoters(&env, &quoters);
         Self::store_limits(&env, &limits);
         env.storage().instance().set(&DataKey::NextId, &0u64);
+        Self::extend_instance(&env);
     }
 
     /// Authorise another pricing key. Admin-only, and the reason the admin
@@ -318,7 +374,8 @@ impl LustyVault {
             panic_with_error!(&env, Error::QuoterExists);
         }
         quoters.push_back(quoter.clone());
-        Self::store_quoters(&env, &quoters);
+        Self::store_quoters(&env, &quoters, &cfg.admin);
+        Self::extend_instance(&env);
         env.events()
             .publish((symbol_short!("quoter"), symbol_short!("add")), quoter);
     }
@@ -339,7 +396,8 @@ impl LustyVault {
         }
         let mut remaining = quoters;
         remaining.remove(index);
-        Self::store_quoters(&env, &remaining);
+        Self::store_quoters(&env, &remaining, &cfg.admin);
+        Self::extend_instance(&env);
         env.events()
             .publish((symbol_short!("quoter"), symbol_short!("remove")), quoter);
     }
@@ -368,6 +426,7 @@ impl LustyVault {
         let cfg: Config = env.storage().instance().get(&DataKey::Config).unwrap();
         cfg.admin.require_auth();
         Self::store_limits(&env, &limits);
+        Self::extend_instance(&env);
         env.events().publish(
             (symbol_short!("limits"),),
             (
@@ -498,18 +557,28 @@ impl LustyVault {
         }
 
         let cfg: Config = env.storage().instance().get(&DataKey::Config).unwrap();
-        let oracle = ReflectorClient::new(&env, &cfg.oracle);
-        let price = Self::settlement_price(&env, &oracle, &cfg, pos.expiry, now);
+        let feed = Self::feed(&env);
+        Self::extend_instance(&env);
+        // No price can still be an answer, but only a month after expiry: by
+        // then the position is released as kept rather than left escrowed
+        // forever. Any sooner and the refusal stands, so a writer cannot wait
+        // out the oracle to dodge an assignment.
+        let price = match Self::expiry_price(&env, &cfg, &feed, pos.expiry, now) {
+            Ok(p) => Some(p),
+            Err(_) if now.saturating_sub(pos.expiry) > UNPRICED_RELEASE_SECS => None,
+            Err(e) => panic_with_error!(&env, e),
+        };
 
         let this = env.current_contract_address();
         let collateral = pos.kind.collateral(&cfg).clone();
-        let scale = 10i128.pow(oracle.decimals());
+        let scale = 10i128.pow(feed.decimals);
         // Assignment is the writer's obligation coming due: a call is exercised
         // above the strike, a put below it. Equality is out-of-the-money for
         // both, matching the off-chain vault's rule.
-        let assigned = match pos.kind {
-            Kind::Call => price > pos.strike,
-            Kind::Put => price < pos.strike,
+        let assigned = match (pos.kind, price) {
+            (_, None) => false,
+            (Kind::Call, Some(p)) => p > pos.strike,
+            (Kind::Put, Some(p)) => p < pos.strike,
         };
 
         let owed = Self::obligation(&env, pos.kind, pos.amount, pos.strike, scale);
@@ -534,10 +603,44 @@ impl LustyVault {
         pos.settled = true;
         pos.outcome = outcome.clone();
         env.storage().persistent().set(&key, &pos);
+        Self::extend_persistent(&env, &key, now + TTL_MARGIN_SECS + UNPRICED_RELEASE_SECS);
 
+        if price.is_none() {
+            env.events().publish((symbol_short!("unpriced"), id), pos.expiry);
+        }
         env.events()
-            .publish((symbol_short!("settle"), id), (outcome.clone(), price));
+            .publish((symbol_short!("settle"), id), (outcome.clone(), price.unwrap_or(0)));
         outcome
+    }
+
+    /// Record the price an expiry settles at, while the oracle still has it.
+    /// Permissionless and idempotent: the first reading is kept and every
+    /// position on that expiry settles at it, whenever it is settled — so a
+    /// position whose own settlement keeps failing (an owner's missing
+    /// trustline, say) no longer runs out of time with the oracle's history.
+    pub fn record_price(env: Env, expiry: u64) -> i128 {
+        let now = env.ledger().timestamp();
+        if now < expiry {
+            panic_with_error!(&env, Error::NotExpired);
+        }
+        let cfg: Config = env.storage().instance().get(&DataKey::Config).unwrap();
+        let feed = Self::feed(&env);
+        Self::extend_instance(&env);
+        Self::expiry_price(&env, &cfg, &feed, expiry, now)
+            .unwrap_or_else(|e| panic_with_error!(&env, e))
+    }
+
+    /// The recorded price for an expiry, if one has been recorded.
+    pub fn recorded_price(env: Env, expiry: u64) -> Option<i128> {
+        let feed = Self::feed(&env);
+        env.storage()
+            .persistent()
+            .get(&DataKey::ExpiryPrice(Self::on_grid(expiry, feed.resolution)))
+    }
+
+    /// The oracle scale and grid this vault was built against.
+    pub fn feed_params(env: Env) -> Feed {
+        Self::feed(&env)
     }
 
     /// How many positions `owner` has written, settled ones included.
@@ -621,6 +724,14 @@ impl LustyVault {
         if expiry <= env.ledger().timestamp() {
             panic_with_error!(&env, Error::InvalidExpiry);
         }
+        // On the oracle's grid: settlement reads one record per grid period, so
+        // an expiry between two records would be a separate exposure bucket
+        // settling at the same print — the per-expiry cap, defeated a second
+        // at a time.
+        let feed = Self::feed(&env);
+        if expiry % feed.resolution != 0 {
+            panic_with_error!(&env, Error::InvalidExpiry);
+        }
         if premium < 0 {
             panic_with_error!(&env, Error::InvalidPremium);
         }
@@ -635,8 +746,8 @@ impl LustyVault {
         // else bounds what the protocol may pay them, so a compromised pricing
         // key could otherwise quote a single writer the whole cash pool.
         let oracle = ReflectorClient::new(&env, &cfg.oracle);
-        let scale = 10i128.pow(oracle.decimals());
-        if premium > Self::premium_cap(&env, &oracle, &cfg, &limits, kind, amount, scale) {
+        let scale = 10i128.pow(feed.decimals);
+        if premium > Self::premium_cap(&env, &oracle, &cfg, &feed, &limits, kind, amount, scale) {
             panic_with_error!(&env, Error::PremiumTooHigh);
         }
         // Exposure cap: nor should many writers together, which the size cap
@@ -673,7 +784,14 @@ impl LustyVault {
 
         let id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap();
         env.storage().instance().set(&DataKey::NextId, &(id + 1));
-        Self::index_for_owner(&env, &owner, id);
+        // Everything this position needs at settlement lives until well after
+        // the last moment it could be settled. Entries that archive are only
+        // restorable, not lost — but a restore nobody makes in time is a
+        // settlement that does not happen.
+        let live_until = expiry + UNPRICED_RELEASE_SECS + TTL_MARGIN_SECS;
+        Self::index_for_owner(&env, &owner, id, live_until);
+        Self::extend_persistent(&env, &DataKey::Exposure(kind, expiry), live_until);
+        Self::extend_instance(&env);
         env.storage().persistent().set(
             &DataKey::Position(id),
             &Position {
@@ -687,6 +805,7 @@ impl LustyVault {
                 outcome: symbol_short!("open"),
             },
         );
+        Self::extend_persistent(&env, &DataKey::Position(id), live_until);
 
         env.events().publish(
             (symbol_short!("deposit"), id),
@@ -703,9 +822,12 @@ impl LustyVault {
     /// leaves nobody able to price, duplicates make `remove_quoter` look like
     /// it revoked a key it did not, and an unbounded set outgrows what one
     /// instance entry can hold.
-    fn store_quoters(env: &Env, quoters: &Vec<Address>) {
+    fn store_quoters(env: &Env, quoters: &Vec<Address>, admin: &Address) {
         if quoters.is_empty() {
             panic_with_error!(env, Error::LastQuoter);
+        }
+        if quoters.contains(admin) {
+            panic_with_error!(env, Error::QuoterIsAdmin);
         }
         if quoters.len() > MAX_QUOTERS {
             panic_with_error!(env, Error::TooManyQuoters);
@@ -782,6 +904,7 @@ impl LustyVault {
         env: &Env,
         oracle: &ReflectorClient,
         cfg: &Config,
+        feed: &Feed,
         limits: &Limits,
         kind: Kind,
         amount: i128,
@@ -792,7 +915,7 @@ impl LustyVault {
             // in — so it needs no price, and the put leg keeps trading through
             // a feed outage.
             Kind::Put => amount,
-            Kind::Call => Self::mul(env, amount, Self::spot(env, oracle, cfg)) / scale,
+            Kind::Call => Self::mul(env, amount, Self::spot(env, oracle, cfg, feed)) / scale,
         };
         Self::mul(env, value, limits.max_premium_bps as i128) / BPS
     }
@@ -801,7 +924,7 @@ impl LustyVault {
     /// wants the price AT expiry; this wants the price NOW, so `lastprice` is
     /// the right read — but a stale one must block the write rather than value
     /// today's collateral at a price that no longer holds.
-    fn spot(env: &Env, oracle: &ReflectorClient, cfg: &Config) -> i128 {
+    fn spot(env: &Env, oracle: &ReflectorClient, cfg: &Config, feed: &Feed) -> i128 {
         let lp = oracle
             .lastprice(&reflector::Asset::Other(cfg.feed.clone()))
             .unwrap_or_else(|| panic_with_error!(env, Error::NoPrice));
@@ -813,7 +936,54 @@ impl LustyVault {
         {
             panic_with_error!(env, Error::StalePrice);
         }
-        lp.price
+        Self::rescale(env, lp.price, oracle.decimals(), feed.decimals)
+    }
+
+    /// A price read at the oracle's current scale, at the scale this vault
+    /// pinned. Identity unless the oracle changed its decimals since.
+    fn rescale(env: &Env, price: i128, live: u32, pinned: u32) -> i128 {
+        if live == pinned {
+            price
+        } else if live > pinned {
+            price / 10i128.pow(live - pinned)
+        } else {
+            Self::mul(env, price, 10i128.pow(pinned - live))
+        }
+    }
+
+    fn feed(env: &Env) -> Feed {
+        env.storage().instance().get(&DataKey::Feed).unwrap()
+    }
+
+    /// Reflector documents resolution in seconds (300 = 5 min) but some
+    /// deployments report milliseconds (300000); implausibly large values are
+    /// read as milliseconds.
+    fn resolution_secs(raw: u32) -> u64 {
+        if raw >= 100_000 { (raw / 1000) as u64 } else { raw as u64 }
+    }
+
+    fn on_grid(ts: u64, resolution: u64) -> u64 {
+        ts - (ts % resolution)
+    }
+
+    /// Keep the instance — config, limits, quoters, counters, and the code it
+    /// runs — alive for the network's longest TTL, topping it up whenever it
+    /// has fallen below half of that.
+    fn extend_instance(env: &Env) {
+        let max = env.storage().max_ttl();
+        env.storage().instance().extend_ttl(max / 2, max);
+    }
+
+    /// Keep a persistent entry alive until about `until` (unix seconds),
+    /// within the network's longest TTL. Past that bound anyone can extend it
+    /// further with an ExtendFootprintTTL operation; the contract need not be
+    /// involved.
+    fn extend_persistent(env: &Env, key: &DataKey, until: u64) {
+        let now = env.ledger().timestamp();
+        let ledgers = until.saturating_sub(now) / LEDGER_SECS + 1;
+        let max = env.storage().max_ttl();
+        let to = if ledgers > max as u64 { max } else { ledgers as u32 };
+        env.storage().persistent().extend_ttl(key, to, to);
     }
 
     fn mul(env: &Env, a: i128, b: i128) -> i128 {
@@ -850,14 +1020,14 @@ impl LustyVault {
     /// Append `id` to the owner's index so their positions stay discoverable
     /// from contract state alone, long after the RPC's event window has rolled
     /// past the deposit.
-    fn index_for_owner(env: &Env, owner: &Address, id: u64) {
+    fn index_for_owner(env: &Env, owner: &Address, id: u64, live_until: u64) {
         let n = Self::owner_count(env, owner);
-        env.storage()
-            .persistent()
-            .set(&DataKey::OwnerAt(owner.clone(), n), &id);
-        env.storage()
-            .persistent()
-            .set(&DataKey::OwnerCount(owner.clone()), &(n + 1));
+        let at = DataKey::OwnerAt(owner.clone(), n);
+        let count = DataKey::OwnerCount(owner.clone());
+        env.storage().persistent().set(&at, &id);
+        env.storage().persistent().set(&count, &(n + 1));
+        Self::extend_persistent(env, &at, live_until);
+        Self::extend_persistent(env, &count, live_until);
     }
 
     /// Move this expiry's exposure by `delta` and return the new total.
@@ -900,29 +1070,46 @@ impl LustyVault {
         next
     }
 
+    /// The price an expiry settles at, at the pinned scale: the recorded one
+    /// if anybody has recorded it, otherwise read from the oracle now and
+    /// recorded, so every later position on the expiry settles at the same
+    /// number however late it is settled.
+    fn expiry_price(env: &Env, cfg: &Config, feed: &Feed, expiry: u64, now: u64) -> Result<i128, Error> {
+        let ts_norm = Self::on_grid(expiry, feed.resolution);
+        let key = DataKey::ExpiryPrice(ts_norm);
+        if let Some(p) = env.storage().persistent().get::<DataKey, i128>(&key) {
+            return Ok(p);
+        }
+        let oracle = ReflectorClient::new(env, &cfg.oracle);
+        let price = Self::rescale(
+            env,
+            Self::oracle_price(&oracle, cfg, ts_norm, expiry, now)?,
+            oracle.decimals(),
+            feed.decimals,
+        );
+        env.storage().persistent().set(&key, &price);
+        Self::extend_persistent(env, &key, now + UNPRICED_RELEASE_SECS + TTL_MARGIN_SECS);
+        env.events().publish((symbol_short!("price"), ts_norm), price);
+        Ok(price)
+    }
+
     /// Expiry-pinned settlement price, mirroring the off-chain vault's rule:
     /// the writer's claim timing must not change the outcome. Reads the
     /// historical price at the expiry period; falls back to `lastprice` only
-    /// while it is fresh (≤ 1h). A stale/empty feed BLOCKS settlement
-    /// (fail-closed) rather than settling at a wrong price.
-    fn settlement_price(
-        env: &Env,
+    /// while the claim is prompt AND that reading is from at or after expiry.
+    /// A stale or empty feed BLOCKS settlement (fail-closed) rather than
+    /// settling at a wrong price.
+    fn oracle_price(
         oracle: &ReflectorClient,
         cfg: &Config,
+        ts_norm: u64,
         expiry: u64,
         now: u64,
-    ) -> i128 {
+    ) -> Result<i128, Error> {
         let asset = reflector::Asset::Other(cfg.feed.clone());
 
-        // Normalize the expiry to the feed's resolution grid. Reflector
-        // documents resolution in seconds (300 = 5min) but some deployments
-        // report milliseconds (300000); treat implausibly-large values as ms.
-        let res_raw = oracle.resolution();
-        let res_secs: u64 = if res_raw >= 100_000 { (res_raw / 1000) as u64 } else { res_raw as u64 };
-        let ts_norm = if res_secs > 0 { expiry - (expiry % res_secs) } else { expiry };
-
         if let Some(p) = oracle.price(&asset, &ts_norm) {
-            return p.price;
+            return Ok(p.price);
         }
         // No historical record. The live price is a valid proxy for the
         // expiry price ONLY when the claim is prompt — within the staleness
@@ -932,15 +1119,19 @@ impl LustyVault {
         // the writer the timing discretion expiry-pinning removes. So gate on
         // `now - expiry`, not merely on how fresh the lastprice record is.
         if now.saturating_sub(expiry) > MAX_PRICE_STALENESS_SECS {
-            panic_with_error!(env, Error::StalePrice);
+            return Err(Error::StalePrice);
         }
-        let lp = oracle
-            .lastprice(&asset)
-            .unwrap_or_else(|| panic_with_error!(env, Error::NoPrice));
+        let lp = oracle.lastprice(&asset).ok_or(Error::NoPrice)?;
         if now.saturating_sub(lp.timestamp) > MAX_PRICE_STALENESS_SECS {
-            panic_with_error!(env, Error::StalePrice);
+            return Err(Error::StalePrice);
         }
-        lp.price
+        // And never a reading from before expiry. In the first moments after
+        // expiry the latest record is often the previous period's, and taking
+        // it would let whoever settles first pick between the two prints.
+        if lp.timestamp < ts_norm {
+            return Err(Error::StalePrice);
+        }
+        Ok(lp.price)
     }
 }
 

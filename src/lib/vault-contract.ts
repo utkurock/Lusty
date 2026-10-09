@@ -697,7 +697,7 @@ function contractErrorCode(events?: xdr.DiagnosticEvent[]): number | null {
 const VAULT_ERRORS: Record<number, string> = {
   1: 'Invalid amount',
   2: 'Invalid strike',
-  3: 'Expiry must be in the future',
+  3: 'Expiry must be in the future and on the oracle s five-minute grid',
   4: 'Position not found',
   5: 'Position already settled',
   6: 'Position has not expired yet',
@@ -713,6 +713,10 @@ const VAULT_ERRORS: Record<number, string> = {
   16: 'That quoter is already registered',
   17: 'Cannot remove the last quoter',
   18: 'Too many quoters',
+  // v5 instances only.
+  19: 'The admin cannot also be a quoter',
+  20: 'The treasury cannot be the vault itself',
+  21: 'The oracle reports a scale or resolution the vault cannot use',
 }
 
 /**

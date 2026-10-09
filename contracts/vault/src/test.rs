@@ -1,7 +1,8 @@
 #![cfg(test)]
 
 use super::reflector::{Asset, PriceData};
-use super::{Kind, Limits, LustyVault, LustyVaultClient, MAX_QUOTERS};
+use super::{DataKey, Kind, Limits, LustyVault, LustyVaultClient, MAX_QUOTERS};
+use soroban_sdk::testutils::storage::Persistent as _;
 use soroban_sdk::testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke};
 use soroban_sdk::{
     contract, contractimpl, symbol_short, token, vec, Address, Env, IntoVal, Symbol, Vec,
@@ -43,8 +44,14 @@ impl MockOracle {
         env.storage().instance().get(&symbol_short!("last"))
     }
 
-    pub fn decimals(_env: Env) -> u32 {
-        14
+    /// 14 unless a test changes it — Reflector is upgradeable, and the vault
+    /// must not read a strike written at one scale against a price at another.
+    pub fn decimals(env: Env) -> u32 {
+        env.storage().instance().get(&symbol_short!("dec")).unwrap_or(14)
+    }
+
+    pub fn set_decimals(env: Env, decimals: u32) {
+        env.storage().instance().set(&symbol_short!("dec"), &decimals);
     }
 
     pub fn resolution(_env: Env) -> u32 {
@@ -430,15 +437,13 @@ fn settlement_is_pinned_to_expiry_not_claim_time() {
 }
 
 #[test]
-fn settle_normalizes_expiry_to_feed_resolution() {
+#[should_panic(expected = "Error(Contract, #3)")] // InvalidExpiry
+fn an_expiry_off_the_oracle_grid_is_refused() {
+    // Settlement reads one record per 300s period, while exposure is capped
+    // per expiry timestamp. An expiry 100s into a period would be a fresh cap
+    // bucket settling at the same print as EXPIRY's.
     let s = setup();
-    // Expiry 100s into a 300s period → price recorded at the period start.
-    let expiry = EXPIRY + 100;
-    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &expiry, &PREMIUM, &s.quoter);
-    s.oracle.set_price(&EXPIRY, &30_000_000_000_000); // EXPIRY % 300 == 0
-    s.env.ledger().with_mut(|l| l.timestamp = expiry + 60);
-
-    assert_eq!(s.vault.settle(&id), symbol_short!("assigned"));
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &(EXPIRY + 100), &PREMIUM, &s.quoter);
 }
 
 #[test]
@@ -465,12 +470,25 @@ fn settle_rejects_double_settlement() {
 fn settle_falls_back_to_fresh_lastprice() {
     let s = setup();
     let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
-    // No historical record; lastprice is 10 min old → accepted.
+    // No historical record; the live reading is the expiry period's own.
     let now = EXPIRY + 60;
-    s.oracle.set_lastprice(&23_000_000_000_000, &(now - 600));
+    s.oracle.set_lastprice(&23_000_000_000_000, &EXPIRY);
     s.env.ledger().with_mut(|l| l.timestamp = now);
 
     assert_eq!(s.vault.settle(&id), symbol_short!("kept"));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")] // StalePrice
+fn settle_refuses_a_fallback_from_before_expiry() {
+    // Right after expiry the latest record is often the previous period's. Fresh
+    // as it is, settling on it would let whoever calls first choose the print:
+    // here OTM at T-300, so an ITM writer would keep their collateral.
+    let s = setup();
+    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
+    s.oracle.set_lastprice(&23_000_000_000_000, &(EXPIRY - 300));
+    s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 60);
+    s.vault.settle(&id);
 }
 
 #[test]
@@ -1018,6 +1036,166 @@ fn register_vault_with_quoters(quoters: Vec<Address>) {
             usdc.address(),
             Address::generate(&env),
             quoters,
+            admin,
+            limits(MAX_POSITION_CALL, MAX_POSITION_PUT),
+        ),
+    );
+}
+
+// ── v5: recorded prices, release, oracle pinning, TTL ──────────────
+
+#[test]
+fn the_first_settlement_records_the_price_for_the_rest_of_the_expiry() {
+    // A position whose own settlement could not go through in time used to
+    // lose its price with the oracle's history. The first settlement on an
+    // expiry now writes the price down, and every later one reads it.
+    let s = setup();
+    let first = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
+    let second = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
+    s.oracle.set_price(&EXPIRY, &30_000_000_000_000);
+    s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 60);
+    assert_eq!(s.vault.settle(&first), symbol_short!("assigned"));
+    assert_eq!(s.vault.recorded_price(&EXPIRY), Some(30_000_000_000_000));
+
+    // Two days on: the oracle has pruned the record, and the live price would
+    // say the call is out of the money. The recorded price still decides.
+    s.oracle.set_price(&EXPIRY, &0);
+    s.oracle.clear_lastprice();
+    s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 2 * 86400);
+    assert_eq!(s.vault.settle(&second), symbol_short!("assigned"));
+}
+
+#[test]
+fn anyone_can_record_an_expirys_price_before_settling_anything() {
+    let s = setup();
+    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
+    s.oracle.set_price(&EXPIRY, &23_000_000_000_000);
+    s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 60);
+    assert_eq!(s.vault.record_price(&EXPIRY), 23_000_000_000_000);
+
+    s.oracle.clear_lastprice();
+    s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 5 * 86400);
+    assert_eq!(s.vault.settle(&id), symbol_short!("kept"));
+    // Recording again changes nothing.
+    assert_eq!(s.vault.record_price(&EXPIRY), 23_000_000_000_000);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")] // NotExpired
+fn a_price_cannot_be_recorded_before_its_expiry() {
+    let s = setup();
+    s.vault.record_price(&EXPIRY);
+}
+
+#[test]
+fn a_position_nobody_priced_is_released_as_kept_after_a_month() {
+    // Before v5 this collateral was escrowed for good. A month gives no writer
+    // a timing option worth waiting for, and the books are released with it.
+    let s = setup();
+    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
+    s.oracle.clear_lastprice();
+    s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 31 * 86400);
+
+    assert_eq!(s.vault.settle(&id), symbol_short!("kept"));
+    assert_eq!(s.token.balance(&s.writer), WRITER_XLM);
+    assert_eq!(s.vault.escrowed(&Kind::Call), 0);
+    assert_eq!(s.vault.owed(&Kind::Call), 0);
+    assert_eq!(s.vault.exposure(&Kind::Call, &EXPIRY), 0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")] // StalePrice
+fn an_unpriced_position_stays_locked_inside_the_month() {
+    let s = setup();
+    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
+    s.oracle.clear_lastprice();
+    s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 29 * 86400);
+    s.vault.settle(&id);
+}
+
+#[test]
+fn a_change_in_the_oracles_decimals_does_not_move_the_strike() {
+    // Strike written at 14 decimals; the oracle moves to 16 before expiry and
+    // reports $0.30 at its new scale. The vault reads $0.30, not $30.
+    let s = setup();
+    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
+    s.oracle.set_decimals(&16);
+    s.oracle.set_price(&EXPIRY, &3_000_000_000_000_000);
+    s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 60);
+
+    assert_eq!(s.vault.settle(&id), symbol_short!("assigned"));
+    assert_eq!(s.vault.recorded_price(&EXPIRY), Some(30_000_000_000_000));
+    // The assignment pays the strike value at the pinned scale: 100 × $0.25.
+    assert_eq!(s.cash.balance(&s.writer), PREMIUM + 25_0000000);
+    assert_eq!(s.vault.feed_params().decimals, 14);
+    assert_eq!(s.vault.feed_params().resolution, 300);
+}
+
+#[test]
+fn a_positions_entries_outlive_its_settlement_window() {
+    let s = setup();
+    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
+    let ttl = s.env.as_contract(&s.vault.address, || {
+        s.env.storage().persistent().get_ttl(&DataKey::Position(id))
+    });
+    let max = s.env.as_contract(&s.vault.address, || s.env.storage().max_ttl());
+    // Seven days to expiry plus a month and a margin, in five-second ledgers —
+    // or the network's ceiling, whichever is lower.
+    let wanted = ((EXPIRY - START) + 44 * 86400) / 5;
+    assert!(ttl as u64 >= wanted.min(max as u64));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #19)")] // QuoterIsAdmin
+fn the_admin_cannot_add_itself_as_a_quoter() {
+    let s = setup();
+    s.vault.add_quoter(&s.admin);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #19)")] // QuoterIsAdmin
+fn the_constructor_refuses_the_admin_as_a_quoter() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(admin.clone());
+    let usdc = env.register_stellar_asset_contract_v2(admin.clone());
+    let oracle_id = env.register(MockOracle, ());
+    env.register(
+        LustyVault,
+        (
+            oracle_id,
+            Symbol::new(&env, "XLM"),
+            sac.address(),
+            usdc.address(),
+            Address::generate(&env),
+            vec![&env, admin.clone()],
+            admin,
+            limits(MAX_POSITION_CALL, MAX_POSITION_PUT),
+        ),
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #20)")] // InvalidTreasury
+fn the_constructor_refuses_the_vault_as_its_own_treasury() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(admin.clone());
+    let usdc = env.register_stellar_asset_contract_v2(admin.clone());
+    let oracle_id = env.register(MockOracle, ());
+    let vault_id = Address::generate(&env);
+    env.register_at(
+        &vault_id,
+        LustyVault,
+        (
+            oracle_id,
+            Symbol::new(&env, "XLM"),
+            sac.address(),
+            usdc.address(),
+            vault_id.clone(),
+            vec![&env, Address::generate(&env)],
             admin,
             limits(MAX_POSITION_CALL, MAX_POSITION_PUT),
         ),

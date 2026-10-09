@@ -57,6 +57,37 @@ never depends on the protocol being online.
 - A stale or empty feed blocks settlement rather than settling at a wrong
   price.
 
+### v5 (in this tree, not yet deployed)
+
+The source here is v5. The live instances below are still v4, and nothing
+changes for them until a v5 instance is deployed and the books are pointed at it.
+
+- **The expiry price is recorded on chain.** The first `settle` on an expiry,
+  or a call to the permissionless `record_price(expiry)`, stores the price it
+  read, and every later position on that expiry settles at the stored price.
+  A position whose own settlement keeps failing no longer runs out of time
+  with the oracle's ~24h history.
+- **Nothing stays escrowed forever.** A position with no recorded price and
+  none available from the oracle is released as kept 30 days after expiry.
+  Before that the refusal stands, so a writer cannot wait out the oracle to
+  avoid assignment.
+- **The `lastprice` fallback must be from at or after expiry.** Before v5, a
+  fresh reading from the period before expiry was accepted, so whoever
+  settled first could choose between two prints.
+- **Expiries must be on the oracle's grid.** `write` refuses an expiry that is
+  not a multiple of the feed resolution (`InvalidExpiry`, 3). Exposure is
+  capped per expiry timestamp, and an off-grid expiry was a fresh cap bucket
+  settling at the same print.
+- **The oracle's decimals and resolution are pinned at construction**
+  (`feed_params()`). A later change of decimals is rescaled instead of being
+  read against strikes written at the old scale.
+- **TTLs are extended.** The instance is extended on every state change, and
+  each position's entries are kept alive past its release date, up to the
+  network's maximum.
+- **The admin cannot be a quoter** (`QuoterIsAdmin`, 19), and **the treasury
+  cannot be the vault** (`InvalidTreasury`, 20). An oracle with an unusable
+  scale or grid is refused at deploy (`InvalidOracle`, 21).
+
 ### What the contract refuses
 
 Checks run before any collateral moves, and a failure reverts the whole
