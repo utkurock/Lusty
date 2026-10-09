@@ -1,13 +1,13 @@
 import { NextResponse } from 'next/server'
 import { getLeaderboard, getUserStats } from '@/lib/db-queries'
 import { isValidStellarAddress } from '@/lib/utils'
-import { rateLimit } from '@/lib/rate-limit'
+import { clientRateLimit } from '@/lib/rate-limit'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: Request) {
   try {
-    const rl = rateLimit('leaderboard:global', 60_000, 120)
+    const rl = clientRateLimit(req, 'leaderboard', 60_000, 30, 600)
     if (!rl.ok) {
       return NextResponse.json(
         { error: `rate limited — retry after ${rl.retryAfter}s` },

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSpot } from '@/lib/spot'
-import { rateLimit } from '@/lib/rate-limit'
+import { clientRateLimit } from '@/lib/rate-limit'
 import { resolveUnderlying, type UnderlyingAsset } from '@/lib/assets'
 
 export const dynamic = 'force-dynamic'
@@ -121,7 +121,7 @@ async function change24h(asset: UnderlyingAsset): Promise<number | null> {
 }
 
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ asset: string }> },
 ) {
   const { asset: raw } = await params
@@ -135,7 +135,7 @@ export async function GET(
     )
   }
 
-  const rl = rateLimit(`price-${asset.symbol}`, 60_000, 240)
+  const rl = clientRateLimit(req, `price-${asset.symbol}`, 60_000, 60, 1200)
   if (!rl.ok) {
     return NextResponse.json(
       { error: `rate limited — retry after ${rl.retryAfter}s` },

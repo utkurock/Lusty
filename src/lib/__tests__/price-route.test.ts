@@ -11,7 +11,10 @@ import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
 
 const getSpot = vi.fn()
 vi.mock('@/lib/spot', () => ({ getSpot: (...a: any[]) => getSpot(...a) }))
-vi.mock('@/lib/rate-limit', () => ({ rateLimit: () => ({ ok: true }) }))
+vi.mock('@/lib/rate-limit', () => ({
+  rateLimit: () => ({ ok: true }),
+  clientRateLimit: () => ({ ok: true }),
+}))
 
 let price: typeof import('@/app/api/price/[asset]/route')
 

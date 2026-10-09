@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { quoteLadder, quoteOptionLive } from '@/lib/pricing-server'
 import { getSpot } from '@/lib/spot'
-import { rateLimit } from '@/lib/rate-limit'
+import { clientRateLimit } from '@/lib/rate-limit'
 import { pricingInputsFor } from '@/lib/quote-inputs'
 import { requestedUnderlying } from '@/lib/assets'
 import { limitsRefusal } from '@/lib/vault-limits'
@@ -90,7 +90,7 @@ export async function GET(req: Request) {
 
     // Cheap shared rate limit so a public endpoint can't be used to pummel the
     // upstream price feeds through us.
-    const rl = rateLimit('vault-quote:global', 60_000, 240)
+    const rl = clientRateLimit(req, 'vault-quote', 60_000, 60, 1200)
     if (!rl.ok) {
       return NextResponse.json(
         { error: `rate limited — retry after ${rl.retryAfter}s` },

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { rateLimit } from '@/lib/rate-limit'
+import { clientRateLimit } from '@/lib/rate-limit'
 
 // Multiple free RSS feeds for XLM/Stellar news — no API key needed.
 const FEEDS = [
@@ -96,9 +96,9 @@ async function fetchFeed(feed: typeof FEEDS[number]): Promise<any[]> {
   }
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
-    const rl = rateLimit('news:global', 60_000, 60)
+    const rl = clientRateLimit(req, 'news', 60_000, 20, 300)
     if (!rl.ok) {
       return NextResponse.json(
         { error: `rate limited — retry after ${rl.retryAfter}s` },

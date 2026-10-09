@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { ensureSchema, getPool } from '@/lib/db'
-import { durableRateLimit } from '@/lib/rate-limit'
+import { clientRateLimit, durableRateLimit } from '@/lib/rate-limit'
+import { requireAdmin } from '@/lib/admin-auth'
 
 // Desk note for the research page. Every 3 hours we call Gemini with the
 // latest XLM ticker and persist the note to Supabase. Reads always come
@@ -354,7 +355,10 @@ function staticFallbackPayload() {
 
 export async function GET(req: Request) {
   try {
-    const rl = await durableRateLimit('commentary:global', 60_000, 30)
+    // Per client first, so one caller cannot spend the shared ceiling and turn
+    // the panel off for everybody else.
+    const mine = clientRateLimit(req, 'commentary', 60_000, 10)
+    const rl = mine.ok ? await durableRateLimit('commentary:global', 60_000, 30) : mine
     if (!rl.ok) {
       return NextResponse.json(
         { error: `rate limited — retry after ${rl.retryAfter}s` },
@@ -363,7 +367,11 @@ export async function GET(req: Request) {
     }
 
     const url = new URL(req.url)
-    const force = url.searchParams.get('force') === '1'
+    // Skipping the cache costs a paid model call. Operators may; the public
+    // gets the cached note until it ages out, which bounds Gemini calls at one
+    // per cache window no matter how often the panel is asked.
+    const force =
+      url.searchParams.get('force') === '1' && typeof requireAdmin(req) === 'string'
 
     // Try to read latest cached row from DB. DB failure is non-fatal.
     let row: any = null

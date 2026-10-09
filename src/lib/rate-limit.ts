@@ -1,4 +1,5 @@
 import { getPool, ensureSchema } from './db'
+import { getClientIp } from './anti-spam'
 
 const hits = new Map<string, number[]>()
 
@@ -41,6 +42,28 @@ export function rateLimit(
   timestamps.push(now)
   hits.set(key, timestamps)
   return { ok: true }
+}
+
+/**
+ * A limit per client and a ceiling over everyone, both in memory.
+ *
+ * A single shared key is a switch any one client can flip: spend the bucket and
+ * every other visitor is refused until it refills. Keyed per client address
+ * (lib/anti-spam), one client spends only its own allowance, and the ceiling
+ * still bounds what the route asks of whatever sits behind it.
+ */
+export function clientRateLimit(
+  req: Request,
+  scope: string,
+  windowMs: number,
+  perClient: number,
+  /** Omit when the caller enforces its own ceiling, e.g. a durable one. */
+  overall?: number
+): RateLimitResult {
+  const ip = getClientIp(req) ?? 'anon'
+  const mine = rateLimit(`${scope}:ip:${ip}`, windowMs, perClient)
+  if (!mine.ok || overall === undefined) return mine
+  return rateLimit(`${scope}:all`, windowMs, overall)
 }
 
 /**

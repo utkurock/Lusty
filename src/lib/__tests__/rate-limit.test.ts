@@ -132,3 +132,23 @@ describe('slidingWindowDecision', () => {
     expect(d).toEqual({ ok: false, retryAfter: 42 })
   })
 })
+
+describe('clientRateLimit', () => {
+  // A single shared key let one client spend the bucket and lock every other
+  // visitor out. Each client now spends only its own allowance.
+  const from = (ip: string) =>
+    new Request('http://t/api', { headers: { 'cf-connecting-ip': ip } })
+
+  it('refuses the client that spent its allowance and serves the next one', async () => {
+    const { clientRateLimit } = await import('../rate-limit')
+    for (let i = 0; i < 5; i++) clientRateLimit(from('198.51.100.1'), 'crl-a', 60_000, 5, 100)
+    expect(clientRateLimit(from('198.51.100.1'), 'crl-a', 60_000, 5, 100).ok).toBe(false)
+    expect(clientRateLimit(from('198.51.100.2'), 'crl-a', 60_000, 5, 100).ok).toBe(true)
+  })
+
+  it('still holds an overall ceiling across clients', async () => {
+    const { clientRateLimit } = await import('../rate-limit')
+    for (let i = 0; i < 3; i++) clientRateLimit(from(`203.0.113.${i}`), 'crl-b', 60_000, 5, 3)
+    expect(clientRateLimit(from('203.0.113.99'), 'crl-b', 60_000, 5, 3).ok).toBe(false)
+  })
+})
