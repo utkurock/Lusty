@@ -3,6 +3,10 @@ import { safeHttpUrl } from '@/lib/utils'
 import { errorRef } from '@/lib/api-error'
 import { clientRateLimit } from '@/lib/rate-limit'
 
+// Per request: the rate limit reads the caller's address. The feeds themselves
+// are still cached for two minutes by the fetch below.
+export const dynamic = 'force-dynamic'
+
 // Multiple free RSS feeds for XLM/Stellar news — no API key needed.
 const FEEDS = [
   {
