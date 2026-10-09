@@ -14,6 +14,8 @@ import { getVaultStats, getPosition, settlePosition } from '../vault-contract'
 import {
   scanForSettlement,
   runSettlement,
+  prioritize,
+  resetSettlementMemory,
   DEFAULT_SCAN_LIMIT,
   ORACLE_HISTORY_SECS,
 } from '../settlement'
@@ -56,6 +58,7 @@ function book(positions: VaultPosition[], nextId = positions.length) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  resetSettlementMemory()
 })
 
 describe('intParam — the runner\'s batch limits depend on it', () => {
@@ -314,5 +317,50 @@ describe('runSettlement', () => {
       { id: 2, underlying: 'XLM' },
     ])
     expect(settlePosition).not.toHaveBeenCalled()
+  })
+})
+
+describe('the order a run submits in', () => {
+  const at = (id: number, over: Record<string, unknown> = {}) => ({
+    id,
+    owner: 'GWRITER',
+    underlying: 'XLM' as const,
+    side: 'call' as const,
+    strike: 0.25,
+    collateral: 1000,
+    expiry: new Date(NOW.getTime() - day),
+    settleBy: new Date(NOW.getTime() - day + ORACLE_HISTORY_SECS * 1000),
+    pastDeadline: false,
+    ...over,
+  })
+
+  it('puts positions it can still close ahead of ones past their deadline', () => {
+    const order = prioritize([at(0, { pastDeadline: true }), at(1), at(2, { pastDeadline: true }), at(3)])
+    expect(order.map((c) => c.id)).toEqual([1, 3, 0, 2])
+  })
+
+  it('closes the soonest deadline first', () => {
+    const later = new Date(NOW.getTime() + day)
+    const order = prioritize([at(0, { settleBy: later }), at(1)])
+    expect(order.map((c) => c.id)).toEqual([1, 0])
+  })
+
+  it('sends a position that keeps failing behind ones not yet tried', async () => {
+    // Positions whose payout can never land — the owner merged the account —
+    // fail identically every run. In id order they would take the whole cap
+    // every sweep, and every position behind them would age out unsettled.
+    vi.mocked(settlePosition).mockImplementation(async (id: number) => {
+      if (id < 2) throw new Error('trustline missing')
+      return { txHash: `hash-${id}`, outcome: 'kept' }
+    })
+    const book = [at(0), at(1), at(2), at(3)]
+
+    const first = await runSettlement(book, {} as any, 2)
+    expect(first.failed.map((f) => f.id)).toEqual([0, 1])
+    expect(first.settled).toEqual([])
+
+    const second = await runSettlement(book, {} as any, 2)
+    expect(second.settled.map((s) => s.id)).toEqual([2, 3])
+    expect(second.deferred.map((d) => d.id)).toEqual([0, 1])
   })
 })

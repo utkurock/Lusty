@@ -71,6 +71,8 @@ beforeEach(() => {
   getVaultStats.mockReset()
   getPosition.mockReset()
   settlePosition.mockReset()
+  settlement.resetSettlementMemory()
+  sweep.resetSweepMemory()
 })
 
 describe('the scan walks one book at a time', () => {
@@ -179,6 +181,42 @@ describe('the sweep reports each book apart', () => {
       'XLM#0',
       'BTC#0',
     ])
+  })
+})
+
+describe('the sweep reaches the whole book', () => {
+  it('reads past the first scan page instead of stopping at it', async () => {
+    chain({ XLM: 450, BTC: 0 })
+    const report = await sweep.sweepOnce({ dryRun: true })
+    const xlm = report.books.find((b) => b.underlying === 'XLM')!
+
+    expect(xlm.scan.scanned).toBe(450)
+    expect(xlm.scan.nextCursor).toBeNull()
+    expect(xlm.due.map((d) => d.id)).toContain(449)
+  })
+
+  it('starts the next sweep at the lowest id that has not settled', async () => {
+    chain({ XLM: 300, BTC: 0 })
+    getPosition.mockImplementation(async (id: number) => ({ ...expired(id), settled: id < 250 }))
+
+    await sweep.sweepOnce({ dryRun: true })
+    getPosition.mockClear()
+    const again = await sweep.sweepOnce({ dryRun: true })
+    const xlm = again.books.find((b) => b.underlying === 'XLM')!
+
+    expect(xlm.scan.cursor).toBe(250)
+    expect(xlm.scan.scanned).toBe(50)
+    expect(getPosition).not.toHaveBeenCalledWith(249, expect.anything())
+  })
+
+  it('scans one page from an explicit cursor, for a sweep run by hand', async () => {
+    chain({ XLM: 450, BTC: 0 })
+    const report = await sweep.sweepOnce({ dryRun: true, from: 100, scanLimit: 10 })
+    expect(report.books.find((b) => b.underlying === 'XLM')!.scan).toMatchObject({
+      cursor: 100,
+      scanned: 10,
+      nextCursor: 110,
+    })
   })
 })
 

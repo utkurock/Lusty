@@ -81,7 +81,11 @@ async function handle(req: Request) {
   }
 
   const dryRun = url.searchParams.get('dryRun') === '1'
-  const from = intParam(url.searchParams, 'from', 0)
+  // Absent means the whole book from its low-water mark; a value scans one
+  // page from there, for looking at a particular range by hand.
+  const from = url.searchParams.has('from')
+    ? intParam(url.searchParams, 'from', 0)
+    : undefined
   const scanLimit = intParam(url.searchParams, 'limit', DEFAULT_SCAN_LIMIT)
   const settleLimit = intParam(
     url.searchParams,

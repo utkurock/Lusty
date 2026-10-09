@@ -34,6 +34,13 @@ import {
 export const DEFAULT_SCAN_LIMIT = 200
 /** How many settlements one run will submit, whatever the scan turned up. */
 export const DEFAULT_SETTLE_LIMIT = 25
+/**
+ * How many ids one automatic sweep reads per book, across as many scan pages as
+ * that takes. The page above bounds one read; this bounds the run. Reaching it
+ * is reported, never silent: the next sweep resumes from the book's low-water
+ * mark, which only moves past ids that have settled.
+ */
+export const DEFAULT_SWEEP_SCAN_LIMIT = 2000
 
 // The settle-by deadline is defined in lib/oracle-window, which the dashboard
 // imports too — the runner and the screen must not disagree about which
@@ -84,6 +91,12 @@ export interface ScanResult {
   /** Ids whose read failed. Not settled, not assumed settled. */
   unreadable: number[]
   /**
+   * The lowest id in this window that is not known to be settled — open, due,
+   * past its deadline or unreadable — or null if every id read had settled.
+   * Everything below it is settled for good, so a sweep may start there.
+   */
+  firstOpen: number | null
+  /**
    * Ids past the oracle's history window. Still attempted — the window is a
    * property of the feed, not of this code, and being wrong about it must not
    * strand a position — but a failure on one of these is the permanent kind
@@ -122,11 +135,13 @@ export async function scanForSettlement(opts: {
   const candidates: SettlementCandidate[] = []
   const unreadable: number[] = []
   const stranded: number[] = []
+  let firstOpen: number | null = null
 
   for (let id = cursor; id < end; id++) {
     try {
       const p = await getPosition(id, asset)
       if (p.settled) continue
+      if (firstOpen === null) firstOpen = id
       if (p.expiry.getTime() > now.getTime()) continue
       const settleBy = new Date(p.expiry.getTime() + ORACLE_HISTORY_SECS * 1000)
       const pastDeadline = now.getTime() > settleBy.getTime()
@@ -145,6 +160,7 @@ export async function scanForSettlement(opts: {
     } catch (err) {
       console.warn(`settlement: could not read ${positionKey(asset.symbol, id)}`, err)
       unreadable.push(id)
+      if (firstOpen === null) firstOpen = id
     }
   }
 
@@ -158,6 +174,7 @@ export async function scanForSettlement(opts: {
     unexamined: Math.max(0, nextId - end),
     candidates,
     unreadable,
+    firstOpen,
     pastDeadline: stranded,
   }
 }
@@ -188,8 +205,48 @@ export interface SettlementRun {
   deferred: { id: number; underlying: UnderlyingSymbol }[]
 }
 
+// How many times each position has failed to settle in this process, by
+// positionKey. A position whose settlement can never succeed — its owner merged
+// the account the payout goes to, or dropped the trustline — fails identically
+// every run. Taken in id order, enough of those would fill the per-run cap on
+// every sweep and nothing behind them would ever be submitted, until their
+// oracle window closed too. Ordering by this count sends each one to the back
+// after its first failure, so a run always reaches positions it has not tried.
+const failures = new Map<string, number>()
+
+/** Forget every recorded failure. Tests only. */
+export function resetSettlementMemory(): void {
+  failures.clear()
+}
+
 /**
- * Settle each candidate, one transaction at a time.
+ * The order a run submits in: positions still inside their oracle window
+ * before those past it, the ones that have failed least before the ones that
+ * keep failing, then the soonest deadline first.
+ *
+ * Past-deadline positions are still attempted — the window is the feed's
+ * property, not this code's — but only with what is left of the cap, never in
+ * place of a position that can still be closed.
+ */
+export function prioritize(
+  candidates: SettlementCandidate[],
+  failedBefore: (c: SettlementCandidate) => number = (c) =>
+    failures.get(positionKey(c.underlying, c.id)) ?? 0,
+): SettlementCandidate[] {
+  return candidates
+    .map((c, i) => ({ c, i, f: failedBefore(c) }))
+    .sort(
+      (a, b) =>
+        Number(a.c.pastDeadline) - Number(b.c.pastDeadline) ||
+        a.f - b.f ||
+        a.c.settleBy.getTime() - b.c.settleBy.getTime() ||
+        a.i - b.i
+    )
+    .map((x) => x.c)
+}
+
+/**
+ * Settle each candidate, one transaction at a time, in `prioritize` order.
  *
  * One failure never stops the run. A stale feed is the likeliest cause and the
  * contract refuses it on purpose; usually that means the position is not
@@ -207,8 +264,9 @@ export async function runSettlement(
   maxSettlements = DEFAULT_SETTLE_LIMIT,
 ): Promise<SettlementRun> {
   const cap = Math.max(0, Math.floor(maxSettlements))
-  const take = candidates.slice(0, cap)
-  const deferred = candidates
+  const ordered = prioritize(candidates)
+  const take = ordered.slice(0, cap)
+  const deferred = ordered
     .slice(cap)
     .map((c) => ({ id: c.id, underlying: c.underlying }))
 
@@ -233,7 +291,10 @@ export async function runSettlement(
     try {
       const { txHash, outcome } = await settlePosition(c.id, signer, asset)
       settled.push({ id: c.id, underlying: c.underlying, txHash, outcome })
+      failures.delete(positionKey(c.underlying, c.id))
     } catch (err: any) {
+      const key = positionKey(c.underlying, c.id)
+      failures.set(key, (failures.get(key) ?? 0) + 1)
       failed.push({
         id: c.id,
         underlying: c.underlying,

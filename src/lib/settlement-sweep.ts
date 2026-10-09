@@ -1,10 +1,16 @@
 import { Keypair } from '@stellar/stellar-sdk'
-import { settleableUnderlyings, type UnderlyingSymbol } from '@/lib/assets'
+import {
+  settleableUnderlyings,
+  type UnderlyingAsset,
+  type UnderlyingSymbol,
+} from '@/lib/assets'
 import {
   scanForSettlement,
   runSettlement,
   DEFAULT_SCAN_LIMIT,
   DEFAULT_SETTLE_LIMIT,
+  DEFAULT_SWEEP_SCAN_LIMIT,
+  type ScanResult,
   type SettlementCandidate,
   type SettlementFailure,
   type SettlementOutcome,
@@ -66,8 +72,78 @@ export interface SweepReport {
   note?: string
 }
 
+// Per book, the lowest id not known to be settled. Every id below it has
+// settled, and settlement is final, so a sweep may start here instead of at 0.
+// In-process only: a restart starts again from 0, which is slower and not
+// wrong.
+const lowWater = new Map<UnderlyingSymbol, number>()
+
+/** Forget every book's low-water mark. Tests only. */
+export function resetSweepMemory(): void {
+  lowWater.clear()
+}
+
+type BookScan = Omit<ScanResult, 'firstOpen'>
+
+/**
+ * Walk one book from its low-water mark to `nextId`, a page at a time, up to
+ * `budget` ids. A single page from id 0 — what this used to do — never reads a
+ * position past the first page, however many are due behind it.
+ */
+async function scanBook(
+  asset: UnderlyingAsset,
+  pageSize: number,
+  budget: number,
+): Promise<BookScan> {
+  const start = lowWater.get(asset.symbol) ?? 0
+  let cursor: number | null = start
+  let scanned = 0
+  let firstOpen: number | null = null
+  let last: ScanResult | null = null
+  const candidates: SettlementCandidate[] = []
+  const unreadable: number[] = []
+  const pastDeadline: number[] = []
+
+  while (cursor !== null && scanned < budget) {
+    const page: ScanResult = await scanForSettlement({
+      from: cursor,
+      limit: Math.min(pageSize, budget - scanned),
+      asset,
+    })
+    last = page
+    scanned += page.scanned
+    candidates.push(...page.candidates)
+    unreadable.push(...page.unreadable)
+    pastDeadline.push(...page.pastDeadline)
+    if (firstOpen === null) firstOpen = page.firstOpen
+    if (page.scanned === 0) break
+    cursor = page.nextCursor
+  }
+
+  const nextId = last?.nextId ?? 0
+  const nextCursor = last?.nextCursor ?? null
+  // Advance only over ids read and found settled.
+  lowWater.set(asset.symbol, firstOpen ?? nextCursor ?? nextId)
+
+  return {
+    underlying: asset.symbol,
+    cursor: start,
+    scanned,
+    nextId,
+    nextCursor,
+    unexamined: last?.unexamined ?? 0,
+    candidates,
+    unreadable,
+    pastDeadline,
+  }
+}
+
 export async function sweepOnce(opts: {
   dryRun?: boolean
+  /**
+   * Scan one page from this id instead of the whole book. For a sweep run by
+   * hand; it leaves the low-water mark alone.
+   */
   from?: number
   scanLimit?: number
   settleLimit?: number
@@ -88,11 +164,11 @@ export async function sweepOnce(opts: {
   // unwell says so in its own row and the rest of the sweep still runs.
   for (const asset of settleableUnderlyings()) {
     try {
-      const scan = await scanForSettlement({
-        from: opts.from ?? 0,
-        limit: opts.scanLimit ?? DEFAULT_SCAN_LIMIT,
-        asset,
-      })
+      const pageSize = opts.scanLimit ?? DEFAULT_SCAN_LIMIT
+      const scan: BookScan =
+        opts.from !== undefined
+          ? await scanForSettlement({ from: opts.from, limit: pageSize, asset })
+          : await scanBook(asset, pageSize, DEFAULT_SWEEP_SCAN_LIMIT)
       candidates.push(...scan.candidates)
       books.push({
         underlying: scan.underlying,
