@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
 import { Keypair, StrKey } from '@stellar/stellar-sdk'
+import { upcomingExpiryDates } from '../expiries'
+import { XLM } from '../assets'
+
+// The quoter co-signs scheduled expiries only, so the request names one.
+const scheduledExpiry = () => upcomingExpiryDates(new Date(), XLM.expiry)[0].toISOString()
 
 // Class 19: every dependency down, one at a time.
 // ===============================================
@@ -98,7 +103,7 @@ const cosign = async () => {
         side: 'call',
         collateralAmount: 100,
         strikePrice: 0.3,
-        expiryIso: new Date(Date.now() + 10 * 86_400_000).toISOString(),
+        expiryIso: scheduledExpiry(),
         premium: 0,
         authEntries: ['AAAA'],
       }),

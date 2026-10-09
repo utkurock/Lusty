@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
 import { Keypair, StrKey } from '@stellar/stellar-sdk'
+import { upcomingExpiryDates } from '../expiries'
+import { XLM } from '../assets'
+
+// The quoter co-signs scheduled expiries only, so the request names one.
+const scheduledExpiry = () => upcomingExpiryDates(new Date(), XLM.expiry)[0].toISOString()
 
 // The money routes, asked which underlying they are operating on.
 //
@@ -78,7 +83,7 @@ const authorizeBody = (extra: object = {}) => ({
   side: 'call',
   collateralAmount: 100,
   strikePrice: 0.25,
-  expiryIso: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+  expiryIso: scheduledExpiry(),
   premium: 1,
   authEntries: ['AAAA'],
   ...extra,

@@ -110,6 +110,23 @@ export function upcomingExpiryDates(
   return scheduleFrom(from, params)
 }
 
+/**
+ * Whether `expiryMs` is exactly one of the book's open expiries.
+ *
+ * The contract caps exposure per expiry timestamp, to the second, while
+ * settlement rounds every expiry down to the oracle's five-minute record. An
+ * expiry one second off the schedule is therefore a fresh cap bucket that
+ * settles on the same price print, so the quoter co-signs scheduled expiries
+ * and nothing in between.
+ */
+export function isScheduledExpiry(
+  expiryMs: number,
+  params: ExpiryParams,
+  from: Date = new Date(),
+): boolean {
+  return upcomingExpiryDates(from, params).some((d) => d.getTime() === expiryMs)
+}
+
 function daysBetween(a: Date, b: Date): number {
   return Math.max(0, Math.ceil((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24)))
 }

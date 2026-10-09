@@ -3,6 +3,7 @@ import { StrKey } from '@stellar/stellar-sdk'
 import { declare, type AssetDeclaration } from '../assets/schema'
 import { XLM, BTC, type ExpiryParams } from '../assets'
 import {
+  isScheduledExpiry,
   getExpiryOptions,
   maxOpenExpiryDays,
   minDaysToExpiry,
@@ -197,5 +198,31 @@ describe('the two real books are unmoved', () => {
       for (const d of dates) expect(d.getUTCDay()).toBe(5)
       expect((dates[2].getTime() - dates[0].getTime()) / DAY).toBe(14)
     }
+  })
+})
+
+describe('the quoter signs the schedule and nothing between it', () => {
+  // The contract counts exposure per expiry second; settlement reads one
+  // five-minute record. A second off the schedule is a new cap bucket on the
+  // same print.
+  const from = new Date('2026-08-03T12:00:00Z')
+
+  it('accepts each open expiry exactly', () => {
+    for (const d of upcomingExpiryDates(from, XLM.expiry)) {
+      expect(isScheduledExpiry(d.getTime(), XLM.expiry, from)).toBe(true)
+    }
+  })
+
+  it('refuses the same expiry a second or a minute off', () => {
+    const [front] = upcomingExpiryDates(from, XLM.expiry)
+    expect(isScheduledExpiry(front.getTime() + 1000, XLM.expiry, from)).toBe(false)
+    expect(isScheduledExpiry(front.getTime() - 60_000, XLM.expiry, from)).toBe(false)
+  })
+
+  it('refuses a date past the last open expiry', () => {
+    const dates = upcomingExpiryDates(from, XLM.expiry)
+    const last = dates[dates.length - 1]
+    const beyond = last.getTime() + XLM.expiry.tenorDays * 86_400_000
+    expect(isScheduledExpiry(beyond, XLM.expiry, from)).toBe(false)
   })
 })

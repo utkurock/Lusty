@@ -6,7 +6,7 @@ import { credentialAddress, describeMismatch } from '@/lib/vault-auth'
 import { quoteOptionLive } from '@/lib/pricing-server'
 import { getSpot } from '@/lib/spot'
 import { pricingInputsFor } from '@/lib/quote-inputs'
-import { minDaysToExpiry } from '@/lib/expiries'
+import { isScheduledExpiry, minDaysToExpiry } from '@/lib/expiries'
 import { assertQuoteAllowed, PolicyRejection } from '@/lib/quote-policy'
 import { getBreakerState } from '@/lib/circuit-breaker'
 import { requestedUnderlying } from '@/lib/assets'
@@ -190,6 +190,12 @@ export async function POST(req: Request) {
     }
     if (daysToExpiry > MAX_DAYS_TO_EXPIRY) {
       return NextResponse.json({ error: 'expiry too far out' }, { status: 400 })
+    }
+    if (!isScheduledExpiry(expiryMs, asset.expiry)) {
+      return NextResponse.json(
+        { error: 'that is not one of the open expiries', code: 'unscheduled_expiry' },
+        { status: 400 },
+      )
     }
 
     const rl = await durableRateLimit(`authorize:${body.address}`, 3600_000, 30)
