@@ -68,6 +68,7 @@ export interface SweepReport {
   settled: SettlementOutcome[]
   failed: SettlementFailure[]
   deferred: { id: number; underlying: UnderlyingSymbol }[]
+  pricesRecorded: { underlying: UnderlyingSymbol; expiry: string }[]
   /** Set when the sweep could only scan — no signing key configured. */
   note?: string
 }
@@ -220,6 +221,7 @@ export async function sweepOnce(opts: {
     settled: [],
     failed: [],
     deferred: [],
+    pricesRecorded: [],
   }
 
   if (dryRun) return report

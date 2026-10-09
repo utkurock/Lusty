@@ -621,6 +621,55 @@ export async function settlePosition(
   return { txHash: sent.hash, outcome }
 }
 
+/**
+ * Write an expiry's settlement price onto a v5 instance while the oracle still
+ * has it, so positions on that expiry settle at it however late they are
+ * settled. Permissionless and idempotent on the contract's side, and — like
+ * `settle` — it moves no funds: the signer pays a fee and gains nothing.
+ *
+ *   'recorded'     submitted now
+ *   'already'      the instance holds a price for this expiry; nothing sent
+ *   'unsupported'  a v4 instance, which has no `record_price`; nothing sent
+ */
+export async function recordExpiryPrice(
+  expiry: Date,
+  signer: Keypair,
+  asset: UnderlyingAsset = XLM,
+): Promise<'recorded' | 'already' | 'unsupported'> {
+  const ts = nativeToScVal(BigInt(Math.floor(expiry.getTime() / 1000)), { type: 'u64' })
+  let existing: unknown
+  try {
+    existing = await readVault('recorded_price', [ts], asset)
+  } catch (err: any) {
+    if (/non-?existent|MissingValue|function/i.test(String(err?.message ?? err))) return 'unsupported'
+    throw err
+  }
+  if (existing !== null && existing !== undefined) return 'already'
+
+  const server = vaultServer()
+  const account = await server.getAccount(signer.publicKey())
+  const tx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
+    .addOperation(new Contract(requireVaultId(asset)).call('record_price', ts))
+    .setTimeout(180)
+    .build()
+
+  const sim = await server.simulateTransaction(tx)
+  if (rpc.Api.isSimulationError(sim)) {
+    throw new Error(readableContractError(sim.error, 'record_price', sim.events))
+  }
+  const prepared = rpc.assembleTransaction(tx, sim).build()
+  prepared.sign(signer)
+  const sent = await server.sendTransaction(prepared)
+  if (sent.status === 'ERROR') {
+    throw new Error(`vault record_price rejected: ${JSON.stringify(sent.errorResult)}`)
+  }
+  await waitForTransaction(server, sent.hash, 30, 'record_price')
+  return 'recorded'
+}
+
 async function waitForTransaction(
   server: rpc.Server,
   hash: string,

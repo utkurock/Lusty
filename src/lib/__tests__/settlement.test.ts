@@ -8,9 +8,10 @@ vi.mock('../vault-contract', () => ({
   getVaultStats: vi.fn(),
   getPosition: vi.fn(),
   settlePosition: vi.fn(),
+  recordExpiryPrice: vi.fn(),
 }))
 
-import { getVaultStats, getPosition, settlePosition } from '../vault-contract'
+import { getVaultStats, getPosition, settlePosition, recordExpiryPrice } from '../vault-contract'
 import {
   scanForSettlement,
   runSettlement,
@@ -362,5 +363,46 @@ describe('the order a run submits in', () => {
     const second = await runSettlement(book, {} as any, 2)
     expect(second.settled.map((s) => s.id)).toEqual([2, 3])
     expect(second.deferred.map((d) => d.id)).toEqual([0, 1])
+  })
+})
+
+describe('a failure inside the oracle window records its expiry s price', () => {
+  const due = (id: number, expiry: Date, pastDeadline = false) => ({
+    id,
+    owner: 'GWRITER',
+    underlying: 'XLM' as const,
+    side: 'call' as const,
+    strike: 0.25,
+    collateral: 1000,
+    expiry,
+    settleBy: new Date(expiry.getTime() + ORACLE_HISTORY_SECS * 1000),
+    pastDeadline,
+  })
+
+  it('writes each failing expiry once, and leaves past-deadline ones alone', async () => {
+    // A position whose payout cannot land keeps failing; on v5 the price it
+    // will settle at is put on chain before the oracle forgets it.
+    const a = new Date(NOW.getTime() - day)
+    const b = new Date(NOW.getTime() - 2 * day)
+    vi.mocked(settlePosition).mockRejectedValue(new Error('trustline missing'))
+    vi.mocked(recordExpiryPrice).mockResolvedValue('recorded')
+
+    const run = await runSettlement([due(0, a), due(1, a), due(2, b, true)], {} as any)
+
+    expect(recordExpiryPrice).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(recordExpiryPrice).mock.calls[0][0]).toEqual(a)
+    expect(run.pricesRecorded).toEqual([{ underlying: 'XLM', expiry: a.toISOString() }])
+  })
+
+  it('reports nothing for an instance without record_price, and survives a failure', async () => {
+    vi.mocked(settlePosition).mockRejectedValue(new Error('trustline missing'))
+    vi.mocked(recordExpiryPrice).mockResolvedValueOnce('unsupported')
+    const v4 = await runSettlement([due(0, new Date(NOW.getTime() - day))], {} as any)
+    expect(v4.pricesRecorded).toEqual([])
+
+    vi.mocked(recordExpiryPrice).mockRejectedValueOnce(new Error('rpc down'))
+    const down = await runSettlement([due(1, new Date(NOW.getTime() - day))], {} as any)
+    expect(down.pricesRecorded).toEqual([])
+    expect(down.failed).toHaveLength(1)
   })
 })

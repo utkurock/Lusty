@@ -112,7 +112,7 @@ describe('what the runner can reach', () => {
     })
   }
 
-  it('touches exactly one contract entrypoint, and it is settle', () => {
+  it('touches only settle and record_price, neither of which moves funds to anyone but the owner', () => {
     // vault-contract.ts is a shared client that also knows how to open a
     // position, so the runner's import of it cannot be checked by absence.
     // What can be checked is which of its exports the runner actually names.
@@ -127,10 +127,11 @@ describe('what the runner can reach', () => {
       .map((s) => s.replace(/^\s*type\s+/, '').trim())
       .filter(Boolean)
 
-    // getVaultStats and getPosition are reads. settlePosition is the only
-    // thing on this list that writes, and settle is all it can invoke.
+    // getVaultStats and getPosition are reads. settlePosition invokes settle;
+    // recordExpiryPrice invokes record_price (v5), which is permissionless and
+    // moves no funds — it writes down a price the oracle already published.
     expect(new Set(named)).toEqual(
-      new Set(['getVaultStats', 'getPosition', 'settlePosition', 'OptionSide'])
+      new Set(['getVaultStats', 'getPosition', 'settlePosition', 'recordExpiryPrice', 'OptionSide'])
     )
   })
 })

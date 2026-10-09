@@ -73,6 +73,7 @@ async function tick() {
         : `${b.underlying} ${b.scan.scanned}/${b.scan.nextId} due ${b.due.length}`
     )
     parts.push(`settled ${r.settled.length}`, `failed ${r.failed.length}`)
+    if (r.pricesRecorded.length > 0) parts.push(`prices recorded ${r.pricesRecorded.length}`)
     if (r.note) parts.push(r.note)
     console.log(`settlement sweep: ${parts.join(' · ')}`)
 

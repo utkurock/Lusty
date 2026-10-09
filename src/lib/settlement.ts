@@ -9,6 +9,7 @@ import {
   getVaultStats,
   getPosition,
   settlePosition,
+  recordExpiryPrice,
   type OptionSide,
 } from './vault-contract'
 
@@ -203,6 +204,11 @@ export interface SettlementRun {
   failed: SettlementFailure[]
   /** Candidates left for the next run because the submit cap was reached. */
   deferred: { id: number; underlying: UnderlyingSymbol }[]
+  /**
+   * Expiries whose price this run wrote onto a v5 instance, because a position
+   * on them failed to settle while the oracle still had the reading.
+   */
+  pricesRecorded: { underlying: UnderlyingSymbol; expiry: string }[]
 }
 
 // How many times each position has failed to settle in this process, by
@@ -304,5 +310,29 @@ export async function runSettlement(
     }
   }
 
-  return { settled, failed, deferred }
+  // A position that failed inside its oracle window may well keep failing —
+  // an owner's missing trustline is not the runner's to fix. Its expiry's price
+  // is written on chain now, so whenever it does settle, it settles at the
+  // price it was always going to, rather than running out of oracle history.
+  // v4 instances have no such call and are skipped.
+  const pricesRecorded: SettlementRun['pricesRecorded'] = []
+  const seen = new Set<string>()
+  for (const f of failed) {
+    if (f.permanent) continue
+    const c = take.find((t) => t.id === f.id && t.underlying === f.underlying)
+    const asset = c && settleableUnderlying(c.underlying)
+    if (!c || !asset) continue
+    const key = `${c.underlying}@${c.expiry.getTime()}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    try {
+      if ((await recordExpiryPrice(c.expiry, signer, asset)) === 'recorded') {
+        pricesRecorded.push({ underlying: c.underlying, expiry: c.expiry.toISOString() })
+      }
+    } catch (err: any) {
+      console.warn(`settlement: could not record ${key}'s price: ${err?.message ?? err}`)
+    }
+  }
+
+  return { settled, failed, deferred, pricesRecorded }
 }

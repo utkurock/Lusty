@@ -12,11 +12,13 @@ const BTC_ISSUER = StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 0x44))
 const getVaultStats = vi.fn()
 const getPosition = vi.fn()
 const settlePosition = vi.fn()
+const recordExpiryPrice = vi.fn()
 
 vi.mock('../vault-contract', () => ({
   getVaultStats: (...a: any[]) => getVaultStats(...a),
   getPosition: (...a: any[]) => getPosition(...a),
   settlePosition: (...a: any[]) => settlePosition(...a),
+  recordExpiryPrice: (...a: any[]) => recordExpiryPrice(...a),
 }))
 
 let settlement: typeof import('../settlement')
