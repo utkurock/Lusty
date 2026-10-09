@@ -10,7 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@creit.tech/stellar-wallets-kit": "latest",
+    "@creit.tech/stellar-wallets-kit": "2.1.0",
     "@stellar/stellar-sdk": "^16.1.0",
     "@types/node": "^20",
     "@types/pg": "^8.20.0",
