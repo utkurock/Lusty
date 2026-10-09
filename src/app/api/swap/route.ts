@@ -21,6 +21,7 @@ import { submitPayout } from '@/lib/payout-submit'
 import { LUSD_CODE, LUSD_ISSUER, LUSD_DISTRIBUTOR } from '@/lib/lusd'
 import {
   verifyFunding,
+  FUNDING_MAX_AGE_MS,
   type ProofOperation,
   type ProofTransaction,
 } from '@/lib/swap-proof'
@@ -189,6 +190,7 @@ export async function POST(req: Request) {
       direction: body.direction,
       address: body.address,
       sourceAmount: body.sourceAmount,
+      maxAgeMs: FUNDING_MAX_AGE_MS,
     })
     if (!('ok' in proof)) {
       return NextResponse.json(
@@ -209,7 +211,9 @@ export async function POST(req: Request) {
       grossDest = paidAmount / spot
     }
     const swapFee = grossDest * spread
-    const destAmount = grossDest - swapFee
+    // Never more than the caller was shown. A price that moved their way since
+    // the quote is not theirs to collect.
+    const destAmount = Math.min(grossDest - swapFee, body.expectedDestAmount)
 
     // Ensure the recipient has the necessary trustline
     const recipient = await server.loadAccount(body.address)

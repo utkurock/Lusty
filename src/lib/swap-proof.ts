@@ -18,6 +18,8 @@ export type SwapDirection = 'xlm_to_lusd' | 'lusd_to_xlm'
 export interface ProofTransaction {
   successful?: boolean
   source_account?: string
+  /** When the ledger closed the transaction, ISO 8601. */
+  created_at?: string
   /** Present only on a fee-bumped transaction. */
   fee_bump_transaction?: { hash?: string }
   /** Present only on a fee-bumped transaction. */
@@ -63,6 +65,15 @@ export function feeBumpRejection(tx: ProofTransaction): ProofRejection | null {
   return null
 }
 
+/**
+ * How old a funding payment may be when it is claimed. The swap prices at claim
+ * time, so a payment that could be claimed whenever its sender liked would be a
+ * free option on the price: pay now, keep the hash, claim once the market moved
+ * the right way. A wallet claims seconds after paying; this leaves room for a
+ * retry and none for waiting on the market.
+ */
+export const FUNDING_MAX_AGE_MS = 15 * 60_000
+
 /** Tolerance on the claimed amount, in units of the asset paid. */
 export const AMOUNT_EPSILON = 0.01
 
@@ -78,6 +89,9 @@ export function verifyFunding(input: {
   direction: SwapDirection
   address: string
   sourceAmount: number
+  /** Refuse a payment older than this. Omitted, age is not checked. */
+  maxAgeMs?: number
+  now?: number
 }): ProofRejection | { ok: true; paidAmount: number } {
   const { tx, operations, direction, address, sourceAmount } = input
 
@@ -110,6 +124,19 @@ export function verifyFunding(input: {
 
   const bumped = feeBumpRejection(tx)
   if (bumped) return bumped
+
+  if (input.maxAgeMs !== undefined) {
+    const closedAt = Date.parse(tx.created_at ?? '')
+    const age = (input.now ?? Date.now()) - closedAt
+    if (!isFinite(closedAt) || age > input.maxAgeMs) {
+      return {
+        error:
+          'that payment is too old to swap at today s price — contact support to have it returned',
+        status: 400,
+        code: 'funding_stale',
+      }
+    }
+  }
 
   if (tx.source_account !== address) {
     return {

@@ -170,3 +170,25 @@ describe('a fee-bumped payment is refused', () => {
     expect(verify(okTx(), [lusdPayment()])).toMatchObject({ ok: true })
   })
 })
+
+describe('a funding payment is claimed while it is fresh', () => {
+  // The swap prices at claim time. A payment claimable whenever its sender
+  // liked would be an option on the price, paid for by the distributor.
+  const NOW = Date.parse('2026-10-09T12:00:00Z')
+  const at = (msAgo: number) => okTx({ created_at: new Date(NOW - msAgo).toISOString() })
+
+  it('accepts a payment made minutes ago', () => {
+    expect(verify(at(60_000), [lusdPayment()], { maxAgeMs: 15 * 60_000, now: NOW }))
+      .toMatchObject({ ok: true })
+  })
+
+  it('refuses one held back past the window', () => {
+    expect(verify(at(16 * 60_000), [lusdPayment()], { maxAgeMs: 15 * 60_000, now: NOW }))
+      .toMatchObject({ code: 'funding_stale', status: 400 })
+  })
+
+  it('refuses one whose close time it cannot read', () => {
+    expect(verify(okTx(), [lusdPayment()], { maxAgeMs: 15 * 60_000, now: NOW }))
+      .toMatchObject({ code: 'funding_stale' })
+  })
+})
