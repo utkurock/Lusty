@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic'
 
 export async function GET(req: Request) {
   try {
-    const result = requireAdmin(req)
+    const result = await requireAdmin(req)
     if (result instanceof NextResponse) return result
 
     const summary = await getAnalyticsSummary()

@@ -5,7 +5,7 @@ import { getSpot, resetSpotCache } from '@/lib/spot'
 import { allUnderlyings, enabledUnderlyings, type AssetIssue } from '@/lib/assets'
 import { routingExposure } from '@/lib/routing/budget'
 import { reconcileAll } from '@/lib/vault-limits'
-import { requireAdmin } from '@/lib/admin-auth'
+import { isAdminRequest } from '@/lib/admin-auth'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -215,7 +215,7 @@ function redact(r: HealthReport): HealthReport {
 
 export async function GET(req: Request) {
   const r = await report()
-  const body = typeof requireAdmin(req) === 'string' ? r : redact(r)
+  const body = (await isAdminRequest(req)) ? r : redact(r)
   return NextResponse.json(body, {
     status: r.ok ? 200 : 503,
     headers: {

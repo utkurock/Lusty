@@ -22,7 +22,7 @@ export const dynamic = 'force-dynamic'
  * what makes it worth keeping.
  */
 export async function GET(req: Request) {
-  const admin = requireAdmin(req)
+  const admin = await requireAdmin(req)
   if (admin instanceof NextResponse) return admin
 
   const result: Record<string, unknown> = {

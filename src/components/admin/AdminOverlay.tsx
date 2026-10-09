@@ -143,6 +143,21 @@ export function AdminOverlay() {
 
   const PAGE_SIZE = 20
 
+  // End the session on the server whenever this one is dropped — the wallet
+  // disconnected or switched, or the page went away — instead of leaving a
+  // live token behind for the rest of its hour.
+  useEffect(() => {
+    if (!sessionToken) return
+    return () => {
+      fetch('/api/admin/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': sessionToken },
+        body: JSON.stringify({ action: 'logout' }),
+        keepalive: true,
+      }).catch(() => {})
+    }
+  }, [sessionToken])
+
   // Authenticate admin via wallet signature when wallet connects
   useEffect(() => {
     if (!connected || !address || !signTransaction) {

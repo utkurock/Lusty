@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { ensureSchema, getPool } from '@/lib/db'
 import { clientRateLimit, durableRateLimit } from '@/lib/rate-limit'
-import { requireAdmin } from '@/lib/admin-auth'
+import { isAdminRequest } from '@/lib/admin-auth'
 
 // Desk note for the research page. Every 3 hours we call Gemini with the
 // latest XLM ticker and persist the note to Supabase. Reads always come
@@ -371,7 +371,7 @@ export async function GET(req: Request) {
     // gets the cached note until it ages out, which bounds Gemini calls at one
     // per cache window no matter how often the panel is asked.
     const force =
-      url.searchParams.get('force') === '1' && typeof requireAdmin(req) === 'string'
+      url.searchParams.get('force') === '1' && (await isAdminRequest(req))
 
     // Try to read latest cached row from DB. DB failure is non-fatal.
     let row: any = null

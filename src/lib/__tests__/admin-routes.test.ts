@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // request.
 
 const queries: string[] = []
+const allowlisted = vi.hoisted(() => ({ value: true }))
 
 vi.mock('@/lib/db', () => ({
   ensureSchema: async () => {
@@ -16,6 +17,9 @@ vi.mock('@/lib/db', () => ({
   },
   getPool: () => ({
     query: async (text: string) => {
+      if (text.includes('admin_users where address')) {
+        return { rows: allowlisted.value ? [{ '?column?': 1 }] : [] }
+      }
       queries.push(text)
       return { rows: [{ ok: 1, c: 0 }] }
     },
@@ -23,11 +27,14 @@ vi.mock('@/lib/db', () => ({
 }))
 
 const validate = vi.hoisted(() => vi.fn<(token: string) => string | null>())
-vi.mock('@/lib/admin-sessions', () => ({ validateSession: validate }))
+const revoke = vi.hoisted(() => vi.fn<(token: string) => void>())
+vi.mock('@/lib/admin-sessions', () => ({ validateSession: validate, revokeSession: revoke }))
 
 beforeEach(() => {
   queries.length = 0
   validate.mockReset()
+  revoke.mockReset()
+  allowlisted.value = true
 })
 
 async function get(headers: Record<string, string> = {}) {
@@ -58,5 +65,21 @@ describe('/api/debug/db is admin only', () => {
     const body = await res.json()
     expect(Array.isArray(body.steps)).toBe(true)
     expect(queries.length).toBeGreaterThan(0)
+  })
+})
+
+describe('a session ends when its wallet leaves the allowlist', () => {
+  // The allowlist is how access is revoked. A session used to be checked only
+  // against its token, so a removed admin kept the panel — and the circuit
+  // breaker — for the rest of the hour.
+  it('refuses a live session whose wallet was removed, and ends it', async () => {
+    vi.resetModules()
+    validate.mockReturnValue('GREMOVED')
+    allowlisted.value = false
+    const res = await get({ 'x-admin-token': 'still-live' })
+    expect(res.status).toBe(403)
+    expect(revoke).toHaveBeenCalledWith('still-live')
+    // The allowlist read is the only thing it did; the diagnostics never ran.
+    expect(queries.filter((q) => q !== 'ensureSchema')).toEqual([])
   })
 })

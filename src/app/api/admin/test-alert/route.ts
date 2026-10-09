@@ -12,7 +12,7 @@ export const dynamic = 'force-dynamic'
  * triggered reaches Slack."
  */
 export async function POST(req: Request) {
-  const auth = requireAdmin(req)
+  const auth = await requireAdmin(req)
   if (auth instanceof NextResponse) return auth
 
   const result = await sendAlert({

@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic'
  * Both admin-gated (x-admin-token).
  */
 export async function GET(req: Request) {
-  const auth = requireAdmin(req)
+  const auth = await requireAdmin(req)
   if (auth instanceof NextResponse) return auth
   try {
     const state = await getBreakerState()
@@ -25,7 +25,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const auth = requireAdmin(req)
+  const auth = await requireAdmin(req)
   if (auth instanceof NextResponse) return auth
 
   let body: { tripped?: unknown; reason?: unknown }

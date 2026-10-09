@@ -59,3 +59,8 @@ export function validateSession(token: string): string | null {
   }
   return s.address
 }
+
+/** End a session now: sign-out, or a wallet that left the allowlist. */
+export function revokeSession(token: string): void {
+  sessions.delete(token)
+}

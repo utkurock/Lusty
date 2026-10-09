@@ -16,6 +16,7 @@ vi.mock('@/lib/db-queries', () => ({
     return 7
   },
   getSecurityReports: async () => ({ rows: [], total: 0, urgent: 0 }),
+  isAdmin: async () => true,
 }))
 
 vi.mock('@/lib/rate-limit', () => ({
@@ -31,7 +32,7 @@ vi.mock('@/lib/monitor/notify', () => ({
 }))
 
 const validate = vi.hoisted(() => vi.fn<(token: string) => string | null>())
-vi.mock('@/lib/admin-sessions', () => ({ validateSession: validate }))
+vi.mock('@/lib/admin-sessions', () => ({ validateSession: validate, revokeSession: () => {} }))
 
 beforeEach(() => {
   inserted.length = 0

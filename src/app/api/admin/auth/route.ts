@@ -11,7 +11,12 @@ import { isAdmin } from '@/lib/db-queries'
 import { isValidStellarAddress } from '@/lib/utils'
 import { durableRateLimit } from '@/lib/rate-limit'
 import { getClientIp } from '@/lib/anti-spam'
-import { createChallenge, consumeChallenge, createSession } from '@/lib/admin-sessions'
+import {
+  createChallenge,
+  consumeChallenge,
+  createSession,
+  revokeSession,
+} from '@/lib/admin-sessions'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,6 +27,9 @@ export const dynamic = 'force-dynamic'
  *
  * Step 2: { action: 'verify', challengeId, signedXdr }
  *   → Verifies signature, returns { token } session token
+ *
+ * Sign-out: { action: 'logout' } with the session in x-admin-token
+ *   → Ends that session now rather than at the end of its hour
  */
 export async function POST(req: Request) {
   try {
@@ -38,6 +46,12 @@ export async function POST(req: Request) {
         { error: `rate limited — retry after ${rl.retryAfter}s` },
         { status: 429 },
       )
+    }
+
+    if (body.action === 'logout') {
+      const token = req.headers.get('x-admin-token')
+      if (token) revokeSession(token)
+      return NextResponse.json({ ok: true })
     }
 
     if (body.action === 'challenge') {
