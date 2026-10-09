@@ -1,11 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  // Runs src/instrumentation.ts once per server process. The settlement sweep
-  // starts there: it must run whether or not anyone visits the site.
-  experimental: {
-    instrumentationHook: true,
-  },
+  // src/instrumentation.ts runs once per server process without a flag since
+  // Next 15. The settlement sweep starts there: it must run whether or not
+  // anyone visits the site.
   // Nothing here uses next/image, so the optimizer endpoint only ever served
   // attackers: several of Next's advisories (AVIF code execution, cache-key
   // confusion, disk exhaustion) live in /_next/image and are fixed only in 15.5.
