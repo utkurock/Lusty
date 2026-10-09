@@ -24,7 +24,10 @@ const nextConfig = {
             key: 'Content-Security-Policy',
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-eval' 'unsafe-inline' https://s3.tradingview.com https://*.tradingview.com",
+              // 'unsafe-eval' only in development, where React's dev build needs
+              // it for its debugging tools. A production bundle has no eval, so
+              // there it would only have been a gift to an injected script.
+              `script-src 'self'${process.env.NODE_ENV === 'production' ? '' : " 'unsafe-eval'"} 'unsafe-inline' https://s3.tradingview.com https://*.tradingview.com`,
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "img-src 'self' data: blob: https:",
               "font-src 'self' https://fonts.gstatic.com",
