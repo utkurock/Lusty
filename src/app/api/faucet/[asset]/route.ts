@@ -9,6 +9,7 @@ import {
   BASE_FEE,
 } from '@stellar/stellar-sdk'
 import { logTransaction } from '@/lib/db-queries'
+import { errorRef, UserFacingError } from '@/lib/api-error'
 import { durableRateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
 import { dripFor, assertDripAllowed, FaucetRejection, type Drip } from '@/lib/faucet'
@@ -37,9 +38,9 @@ async function friendbot(address: string): Promise<string | null> {
   const body = await res.text().catch(() => '')
   if (!res.ok) {
     if (body.includes('op_already_exists') || res.status === 400) {
-      throw new Error('This account is already funded on testnet.')
+      throw new UserFacingError('This account is already funded on testnet.')
     }
-    throw new Error(`Friendbot refused (${res.status}).`)
+    throw new UserFacingError(`Friendbot refused (${res.status}).`)
   }
   try {
     return JSON.parse(body)?.hash ?? null
@@ -52,7 +53,7 @@ async function friendbot(address: string): Promise<string | null> {
 async function payFromDistributor(address: string, drip: Drip): Promise<string> {
   const secret = DISTRIBUTORS[drip.symbol]
   if (!secret || !drip.issuer) {
-    throw new Error(`The ${drip.symbol} faucet is not configured on this server.`)
+    throw new UserFacingError(`The ${drip.symbol} faucet is not configured on this server.`)
   }
   const server = new Horizon.Server(HORIZON)
   const asset = new Asset(drip.code, drip.issuer)
@@ -61,13 +62,13 @@ async function payFromDistributor(address: string, drip: Drip): Promise<string> 
   // with a result code nobody can act on. Say which step is missing instead.
   const recipient = await server.loadAccount(address).catch(() => null)
   if (!recipient) {
-    throw new Error('Account not found — take the XLM drip first.')
+    throw new UserFacingError('Account not found — take the XLM drip first.')
   }
   const holds = recipient.balances.some(
     (b: any) => b.asset_code === drip.code && b.asset_issuer === drip.issuer,
   )
   if (!holds) {
-    throw new Error(`Open a ${drip.code} trustline first.`)
+    throw new UserFacingError(`Open a ${drip.code} trustline first.`)
   }
 
   const distributor = Keypair.fromSecret(secret)
@@ -149,8 +150,7 @@ export async function POST(
         txHash: hash ?? undefined,
       })
     } catch (dbErr: any) {
-      warning = `not recorded: ${dbErr?.message ?? 'unknown DB error'}`
-      console.error('faucet: drip not logged', dbErr)
+      warning = `not recorded (${errorRef('faucet: drip not logged', dbErr)})`
     }
 
     return NextResponse.json({
@@ -164,7 +164,7 @@ export async function POST(
     const extras = e?.response?.data?.extras
     return NextResponse.json(
       {
-        error: e?.message ?? 'faucet failed',
+        error: e instanceof UserFacingError ? e.message : `faucet failed (${errorRef('faucet', e)})`,
         detail: extras?.result_codes ?? e?.response?.data?.title ?? undefined,
       },
       { status: 500 },

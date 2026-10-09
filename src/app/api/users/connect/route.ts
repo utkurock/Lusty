@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { errorRef } from '@/lib/api-error'
 import { upsertUser } from '@/lib/db-queries'
 import { durableRateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
@@ -22,7 +23,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true })
   } catch (e: any) {
     return NextResponse.json(
-      { error: 'connect failed', detail: e?.message ?? 'unknown' },
+      { error: 'connect failed', ref: errorRef('users/connect', e) },
       { status: 500 }
     )
   }

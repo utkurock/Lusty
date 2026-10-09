@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { errorRef } from '@/lib/api-error'
 import { fetchVaultEvents, type VaultEvent } from '@/lib/contract-events'
 import {
   getPosition,
@@ -186,7 +187,7 @@ export async function GET(req: Request) {
     )
   } catch (e: any) {
     return NextResponse.json(
-      { error: 'failed to load events', detail: e?.message ?? 'unknown' },
+      { error: 'failed to load events', ref: errorRef('vault/events', e) },
       { status: 500 }
     )
   }

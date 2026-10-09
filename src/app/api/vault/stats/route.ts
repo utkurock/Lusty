@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { errorRef } from '@/lib/api-error'
 import { Horizon } from '@stellar/stellar-sdk'
 import { rateLimit } from '@/lib/rate-limit'
 import {
@@ -135,7 +136,7 @@ export async function GET(req: Request) {
     )
   } catch (e: any) {
     return NextResponse.json(
-      { error: 'failed to read vault stats', detail: e?.message ?? 'unknown' },
+      { error: 'failed to read vault stats', ref: errorRef('vault/stats', e) },
       { status: 500 }
     )
   }

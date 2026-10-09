@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { errorRef } from '@/lib/api-error'
 import { insertSecurityReport } from '@/lib/db-queries'
 import { durableRateLimit } from '@/lib/rate-limit'
 import { getClientIp, isJsonRequest } from '@/lib/anti-spam'
@@ -65,7 +66,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, ref: reportRef(id) })
   } catch (e: any) {
     return NextResponse.json(
-      { error: 'report failed', detail: e?.message ?? 'unknown' },
+      { error: 'report failed', ref: errorRef('security-report', e) },
       { status: 500 }
     )
   }

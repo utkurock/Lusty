@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { errorRef } from '@/lib/api-error'
 import {
   Asset,
   BASE_FEE,
@@ -124,7 +125,7 @@ export async function GET(req: Request) {
   } catch (e: any) {
     console.error('anchor bridge preflight failed:', e?.message ?? e)
     return NextResponse.json(
-      { ready: false, reason: `the bridge is unavailable right now — ${e?.message ?? 'unknown'}` },
+      { ready: false, reason: `the bridge is unavailable right now (${errorRef('bridge preflight', e)})` },
       { status: 503 }
     )
   }
@@ -296,7 +297,7 @@ export async function POST(req: Request) {
         },
       })
     } catch (dbErr: any) {
-      warning = dbErr?.message ?? 'unknown DB error'
+      warning = errorRef('bridge: not recorded', dbErr)
       console.error('anchor bridge: crossing not recorded:', dbErr)
     }
 
@@ -309,7 +310,7 @@ export async function POST(req: Request) {
     })
   } catch (e: any) {
     const extras = e?.response?.data?.extras
-    const detail = extras?.result_codes ?? e?.response?.data?.title ?? e?.message ?? 'unknown'
+    const detail = extras?.result_codes ?? e?.response?.data?.title ?? errorRef('bridge', e)
     // A crossing that reaches here has already taken the user's payment: the
     // funding transaction is on the ledger and the payout is not. Name the hash
     // in the log, because it is the only record of what the protocol owes.

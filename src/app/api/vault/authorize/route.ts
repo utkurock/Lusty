@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { errorRef } from '@/lib/api-error'
 import { Keypair, authorizeEntry, xdr } from '@stellar/stellar-sdk'
 import { durableRateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
@@ -408,7 +409,7 @@ export async function POST(req: Request) {
   } catch (e: any) {
     console.error('vault/authorize failed', e)
     return NextResponse.json(
-      { error: 'authorization failed', detail: e?.message ?? 'unknown' },
+      { error: 'authorization failed', ref: errorRef('vault/authorize', e) },
       { status: 500 },
     )
   }

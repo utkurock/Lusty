@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { errorRef } from '@/lib/api-error'
 import { getPositionsForAddress, type DbPosition } from '@/lib/db-queries'
 import { isValidStellarAddress } from '@/lib/utils'
 import { rateLimit } from '@/lib/rate-limit'
@@ -128,7 +129,7 @@ export async function GET(req: Request) {
     )
   } catch (e: any) {
     return NextResponse.json(
-      { error: 'failed to load portfolio', detail: e?.message ?? 'unknown' },
+      { error: 'failed to load portfolio', ref: errorRef('vault/portfolio', e) },
       { status: 500 }
     )
   }

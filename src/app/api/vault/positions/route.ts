@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { errorRef } from '@/lib/api-error'
 import {
   getPositionsForAddress,
   backfillPositionApr,
@@ -212,7 +213,7 @@ export async function GET(req: Request) {
     )
   } catch (e: any) {
     return NextResponse.json(
-      { error: 'failed to load positions', detail: e?.message ?? 'unknown' },
+      { error: 'failed to load positions', ref: errorRef('vault/positions', e) },
       { status: 500 }
     )
   }

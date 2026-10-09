@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { errorRef } from '@/lib/api-error'
 import { getSpot } from '@/lib/spot'
 import { clientRateLimit } from '@/lib/rate-limit'
 import { resolveUnderlying, type UnderlyingAsset } from '@/lib/assets'
@@ -163,7 +164,7 @@ export async function GET(
     // fallback price on a trading screen is worse than a blank one.
     console.error(`price/${asset.symbol}: no source could answer`, e)
     return NextResponse.json(
-      { error: 'price unavailable', detail: e?.message ?? 'unknown' },
+      { error: 'price unavailable', ref: errorRef('price', e) },
       { status: 503 }
     )
   }

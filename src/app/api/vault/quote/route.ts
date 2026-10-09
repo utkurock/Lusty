@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { errorRef } from '@/lib/api-error'
 import { quoteLadder, quoteOptionLive } from '@/lib/pricing-server'
 import { getSpot } from '@/lib/spot'
 import { clientRateLimit } from '@/lib/rate-limit'
@@ -153,7 +154,7 @@ export async function GET(req: Request) {
     )
   } catch (e: any) {
     return NextResponse.json(
-      { error: 'quote failed', detail: e?.message ?? 'unknown' },
+      { error: 'quote failed', ref: errorRef('vault/quote', e) },
       { status: 500 },
     )
   }

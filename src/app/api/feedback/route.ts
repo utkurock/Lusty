@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { errorRef } from '@/lib/api-error'
 import { insertFeedback, isDuplicateFeedback } from '@/lib/db-queries'
 import { durableRateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
@@ -102,7 +103,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true })
   } catch (e: any) {
     return NextResponse.json(
-      { error: 'feedback failed', detail: e?.message ?? 'unknown' },
+      { error: 'feedback failed', ref: errorRef('feedback', e) },
       { status: 500 }
     )
   }

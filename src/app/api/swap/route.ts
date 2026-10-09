@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { errorRef } from '@/lib/api-error'
 import {
   Keypair,
   Horizon,
@@ -123,7 +124,7 @@ export async function GET(req: Request) {
     return NextResponse.json(
       {
         ready: false,
-        reason: `pricing is unavailable right now — ${e?.message ?? 'unknown'}`,
+        reason: `pricing is unavailable right now (${errorRef('swap preflight', e)})`,
       },
       { status: 503 }
     )
@@ -293,7 +294,7 @@ export async function POST(req: Request) {
           console.error('swap:', feeNote)
         }
       } catch (feeErr: any) {
-        feeNote = `FEE_WALLET load failed: ${feeErr?.message ?? 'unknown'}`
+        feeNote = `fee wallet unavailable (${errorRef('swap: fee wallet', feeErr)})`
         console.error('swap:', feeNote)
       }
     }
@@ -368,7 +369,7 @@ export async function POST(req: Request) {
         },
       })
     } catch (dbErr: any) {
-      dbWarning = dbErr?.message ?? 'unknown DB error'
+      dbWarning = errorRef('swap: not logged', dbErr)
       console.error('Failed to log swap transaction:', dbErr)
     }
 
@@ -385,7 +386,7 @@ export async function POST(req: Request) {
   } catch (e: any) {
     const extras = e?.response?.data?.extras
     const detail =
-      extras?.result_codes ?? e?.response?.data?.title ?? e?.message ?? 'unknown'
+      extras?.result_codes ?? e?.response?.data?.title ?? errorRef('swap', e)
     // A swap that gets this far has already taken the user's payment: the
     // funding transaction is on the ledger and the payout is not. Returning the
     // reason to the browser and keeping none of it server-side left those

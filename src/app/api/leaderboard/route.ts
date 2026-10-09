@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { errorRef } from '@/lib/api-error'
 import { getLeaderboard, getUserStats } from '@/lib/db-queries'
 import { isValidStellarAddress } from '@/lib/utils'
 import { clientRateLimit } from '@/lib/rate-limit'
@@ -35,7 +36,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: true, ...data })
   } catch (e: any) {
     return NextResponse.json(
-      { error: 'leaderboard failed', detail: e?.message ?? 'unknown' },
+      { error: 'leaderboard failed', ref: errorRef('leaderboard', e) },
       { status: 500 }
     )
   }

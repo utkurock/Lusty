@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { errorRef } from '@/lib/api-error'
 import { clientRateLimit } from '@/lib/rate-limit'
 
 // Multiple free RSS feeds for XLM/Stellar news — no API key needed.
@@ -127,7 +128,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: true, items: deduped.slice(0, 15) })
   } catch (e: any) {
     return NextResponse.json(
-      { error: 'news fetch failed', detail: e?.message ?? 'unknown' },
+      { error: 'news fetch failed', ref: errorRef('news', e) },
       { status: 500 }
     )
   }

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { errorRef } from '@/lib/api-error'
 import { durableRateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
 import { reserveAction, releaseAction, confirmAction } from '@/lib/idempotency'
@@ -270,7 +271,7 @@ export async function POST(req: Request) {
           ok: true,
           indexed: false,
           positionId: position.id,
-          warning: `Position is open on chain but was not indexed: ${dbErr?.message ?? 'unknown DB error'}`,
+          warning: `Position is open on chain but was not indexed (${errorRef('vault/deposit: indexing', dbErr)})`,
         },
         { status: 200 },
       )
@@ -299,7 +300,7 @@ export async function POST(req: Request) {
   } catch (e: any) {
     console.error('vault/deposit failed', e)
     return NextResponse.json(
-      { error: 'vault deposit indexing failed', detail: e?.message ?? 'unknown' },
+      { error: 'vault deposit indexing failed', ref: errorRef('vault/deposit', e) },
       { status: 500 },
     )
   }
