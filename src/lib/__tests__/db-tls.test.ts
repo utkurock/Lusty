@@ -89,3 +89,21 @@ describe('sslConfig', () => {
     expect(sslConfig()).toEqual({ rejectUnauthorized: false })
   })
 })
+
+describe('TLS settings in the connection string', () => {
+  // node-postgres lets URL parameters override the ssl object beside them.
+  it('are removed, so the pool s own verification stands', async () => {
+    const { withoutUrlTls } = await import('../db')
+    const out = withoutUrlTls(
+      'postgresql://u:p@db.example.supabase.com:6543/postgres?sslmode=no-verify&application_name=lusty&sslrootcert=/tmp/x'
+    )
+    expect(out).not.toMatch(/sslmode|sslrootcert/)
+    expect(out).toContain('application_name=lusty')
+    expect(out).toContain('u:p@db.example.supabase.com:6543/postgres')
+  })
+
+  it('leaves a string it cannot parse alone', async () => {
+    const { withoutUrlTls } = await import('../db')
+    expect(withoutUrlTls('not a url')).toBe('not a url')
+  })
+})

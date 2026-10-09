@@ -111,12 +111,32 @@ export function sslConfig() {
   return { rejectUnauthorized: verify }
 }
 
+/**
+ * The connection string with its TLS parameters removed. node-postgres merges
+ * `sslmode`, `ssl` and `sslrootcert` from the URL over the `ssl` object passed
+ * beside it, so `?sslmode=no-verify` on a pasted URL would silently turn
+ * certificate verification off, and `?sslmode=require` would drop the bundled
+ * CA. How this pool verifies its server is decided by `sslConfig` alone.
+ */
+export function withoutUrlTls(connectionString: string): string {
+  let url: URL
+  try {
+    url = new URL(connectionString)
+  } catch {
+    return connectionString
+  }
+  for (const k of ['sslmode', 'ssl', 'sslcert', 'sslkey', 'sslrootcert', 'uselibpqcompat']) {
+    url.searchParams.delete(k)
+  }
+  return url.toString()
+}
+
 export function getPool(): Pool {
   if (!global.__pgPool) {
     const connectionString = process.env.DATABASE_URL
     if (!connectionString) throw new Error('DATABASE_URL not set')
     global.__pgPool = new Pool({
-      connectionString,
+      connectionString: withoutUrlTls(connectionString),
       ssl: sslConfig(),
       max: 3,
       // Supabase transaction pooler kills idle connections aggressively;
