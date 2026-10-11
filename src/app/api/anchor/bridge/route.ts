@@ -9,7 +9,7 @@ import {
   Operation,
   TransactionBuilder,
 } from '@stellar/stellar-sdk'
-import { LUSD_CODE, LUSD_ISSUER, LUSD_DISTRIBUTOR } from '@/lib/lusd'
+import { LUSD_ISSUER } from '@/lib/lusd'
 import { ANCHOR_ASSET_CODE, ANCHOR_ASSET_ISSUER, BRIDGE_MIN_AMOUNT } from '@/lib/anchor/config'
 import {
   isBridgeDirection,
@@ -17,13 +17,21 @@ import {
   verifyBridgeFunding,
   type BridgeDirection,
 } from '@/lib/anchor/bridge-proof'
-import type { ProofOperation, ProofTransaction } from '@/lib/swap-proof'
+import {
+  canonicalFundingHash,
+  distributorMismatch,
+  FUNDING_MAX_AGE_MS,
+  type ProofOperation,
+  type ProofTransaction,
+} from '@/lib/swap-proof'
 import { confirmAction, holdUnconfirmed, releaseAction, reserveAction } from '@/lib/idempotency'
 import { submitPayout } from '@/lib/payout-submit'
 import { logTransaction } from '@/lib/db-queries'
 import { durableRateLimit } from '@/lib/rate-limit'
+import { getClientIp } from '@/lib/anti-spam'
 import { isValidStellarAddress } from '@/lib/utils'
 import { ensureSchema, getPool } from '@/lib/db'
+import { readJsonCapped, BodyTooLargeError } from '@/lib/request-body'
 
 /** The one crossing this route pays out on; see below for why. */
 const SERVED_DIRECTION: BridgeDirection = 'anchor_to_cash'
@@ -70,7 +78,7 @@ function balanceOf(account: Horizon.AccountResponse, leg: { code: string; issuer
 function configured(): string | null {
   if (!LUSD_ISSUER || !DISTRIBUTOR_SECRET) return 'the bridge is not configured on the server'
   if (!ANCHOR_ASSET_ISSUER) return 'no anchor asset issuer is configured'
-  return null
+  return distributorMismatch(DISTRIBUTOR_SECRET)
 }
 
 /**
@@ -81,6 +89,16 @@ function configured(): string | null {
  * writes to, and the float the payout comes out of.
  */
 export async function GET(req: Request) {
+  // A database round trip and a Horizon account load per call, for anyone:
+  // bounded per client so one caller cannot spend them for everyone.
+  const rl = await durableRateLimit(`anchor-bridge-preflight:ip:${getClientIp(req) ?? 'anon'}`, 60_000, 30)
+  if (!rl.ok) {
+    return NextResponse.json(
+      { ready: false, reason: `rate limited — retry after ${rl.retryAfter}s` },
+      { status: 429 }
+    )
+  }
+
   const url = new URL(req.url)
   const direction = url.searchParams.get('direction')
   const amount = Number(url.searchParams.get('amount') ?? '0')
@@ -135,15 +153,32 @@ export async function POST(req: Request) {
   // Hoisted so the catch below can name the funding transaction it failed on.
   let fundingHashForLog: string | undefined
   try {
-    const body = (await req.json()) as BridgeBody
-    fundingHashForLog = typeof body?.txHash === 'string' ? body.txHash : undefined
+    let body: BridgeBody | null
+    try {
+      body = await readJsonCapped<BridgeBody>(req)
+    } catch (e) {
+      if (e instanceof BodyTooLargeError) {
+        return NextResponse.json({ error: 'request body too large' }, { status: 413 })
+      }
+      throw e
+    }
+    if (!body || typeof body !== 'object') {
+      return NextResponse.json({ error: 'expected a JSON body' }, { status: 400 })
+    }
 
     if (!isValidStellarAddress(body.address)) {
       return NextResponse.json({ error: 'invalid address' }, { status: 400 })
     }
-    if (!body.txHash || typeof body.txHash !== 'string') {
-      return NextResponse.json({ error: 'missing txHash' }, { status: 400 })
+    // One spelling of the funding hash for Horizon, the replay guard and the
+    // log alike — see canonicalFundingHash for why any other is refused.
+    const txHash = canonicalFundingHash(body.txHash)
+    if (!txHash) {
+      return NextResponse.json(
+        { error: 'txHash must be a 64-character hex transaction hash', code: 'invalid_tx_hash' },
+        { status: 400 }
+      )
     }
+    fundingHashForLog = txHash
     if (!isBridgeDirection(body.direction) || body.direction !== SERVED_DIRECTION) {
       return NextResponse.json({ error: 'invalid direction' }, { status: 400 })
     }
@@ -167,9 +202,11 @@ export async function POST(req: Request) {
     }
 
     const server = new Horizon.Server(HORIZON)
-    const tx = await server.transactions().transaction(body.txHash).call().catch(() => null)
+    const fetched = await server.transactions().transaction(txHash).call().catch(() => null)
+    // The record must name the transaction asked for, by its own hash.
+    const tx = fetched && (fetched as ProofTransaction).hash === txHash ? fetched : null
     const operations = tx
-      ? (await server.operations().forTransaction(body.txHash).call()).records
+      ? (await server.operations().forTransaction(txHash).call()).records
       : []
 
     const proof = verifyBridgeFunding({
@@ -178,6 +215,7 @@ export async function POST(req: Request) {
       direction: body.direction,
       address: body.address,
       sourceAmount: body.sourceAmount,
+      maxAgeMs: FUNDING_MAX_AGE_MS,
     })
     if (!('ok' in proof)) {
       return NextResponse.json({ error: proof.error, code: proof.code }, { status: proof.status })
@@ -217,7 +255,7 @@ export async function POST(req: Request) {
     // The replay guard shares the swap route's action type on purpose: one
     // on-chain payment to the distributor funds a swap OR a crossing, never
     // both, and that exclusivity is enforced by the same unique index.
-    const reservation = await reserveAction('swap', body.txHash)
+    const reservation = await reserveAction('swap', txHash)
     if (reservation.alreadyProcessed) {
       return NextResponse.json(
         {
@@ -251,13 +289,13 @@ export async function POST(req: Request) {
       payout.hash().toString('hex')
     )
     if (submission.kind === 'rejected') {
-      await releaseAction('swap', body.txHash)
+      await releaseAction('swap', txHash)
       throw submission.error
     }
     if (submission.kind === 'unknown') {
-      await holdUnconfirmed('swap', body.txHash, submission.hash)
+      await holdUnconfirmed('swap', txHash, submission.hash)
       console.error(
-        `anchor bridge: payout ${submission.hash} for funding tx ${body.txHash} is unconfirmed; guard kept. Reason:`,
+        `anchor bridge: payout ${submission.hash} for funding tx ${txHash} is unconfirmed; guard kept. Reason:`,
         (submission.error as any)?.message ?? submission.error
       )
       return NextResponse.json(
@@ -271,7 +309,7 @@ export async function POST(req: Request) {
     }
     const result = { hash: submission.hash }
 
-    await confirmAction('swap', body.txHash, result.hash)
+    await confirmAction('swap', txHash, result.hash)
 
     // Write the crossing down. Both legs are on the ledger and can be looked
     // up by hash, but only this row can say the two were one movement — which
@@ -287,7 +325,7 @@ export async function POST(req: Request) {
         subtype: 'anchor_bridge',
         amount: paidAmount,
         asset: pays.code,
-        txHash: body.txHash,
+        txHash,
         premiumHash: result.hash,
         metadata: {
           direction: body.direction,

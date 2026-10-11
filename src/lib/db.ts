@@ -462,6 +462,23 @@ async function createSchema(): Promise<void> {
     );
     create index if not exists rate_limits_expires_at_idx on rate_limits(expires_at);
 
+    -- The swap's XLM flow ledger (lib/idempotency): one row per funding hash,
+    -- reserved before the payout is signed. lusd_to_xlm may pay an address no
+    -- more XLM than it paid in through xlm_to_lusd, and everyone together no
+    -- more than a daily ceiling; 'pending' rows count against both, because a
+    -- payout whose outcome is unknown may have landed.
+    create table if not exists swap_flows (
+      funding_hash  text primary key,
+      address       text not null,
+      direction     text not null check (direction in ('xlm_to_lusd','lusd_to_xlm')),
+      xlm_in        numeric not null default 0,
+      xlm_out       numeric not null default 0,
+      status        text not null default 'pending' check (status in ('pending','settled')),
+      created_at    timestamptz not null default now()
+    );
+    create index if not exists swap_flows_address_idx on swap_flows(address);
+    create index if not exists swap_flows_created_at_idx on swap_flows(created_at desc);
+
     -- Where each event watcher stopped reading the ledger, so a deploy resumes
     -- the scan instead of re-reading (and re-alerting) its lookback window.
     create table if not exists event_cursors (

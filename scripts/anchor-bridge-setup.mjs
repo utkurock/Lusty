@@ -24,6 +24,7 @@ import {
   Networks,
   Operation,
   TransactionBuilder,
+  WebAuth,
 } from '@stellar/stellar-sdk'
 
 // Minimal .env.local loader so the script runs without dotenv.
@@ -74,13 +75,40 @@ async function discover() {
     issuer,
     auth: read('WEB_AUTH_ENDPOINT'),
     transfer: read('TRANSFER_SERVER')?.replace(/\/$/, ''),
+    signingKey: read('SIGNING_KEY'),
   }
 }
 
-/** SEP-10, signed with the distributor's key. */
-async function login(auth) {
+/**
+ * SEP-10, signed with the distributor's key.
+ *
+ * The key that signs here is the one every payout is signed with, and the
+ * challenge is whatever a server on someone else's domain sends. Signed as it
+ * arrived — under the passphrase the server named, with no look inside — a
+ * hostile or compromised anchor could hand over any transaction at all and
+ * get it back carrying the distributor's signature. So the challenge is read
+ * the way SEP-10 says a client must: testnet passphrase pinned here, sequence
+ * zero (which can never be submitted), sourced by and already signed with the
+ * SIGNING_KEY from the anchor's stellar.toml, only manage_data operations, the
+ * first keyed '<home domain> auth' for our account, and web_auth_domain naming
+ * the endpoint's host. Anything else is refused before the key is touched.
+ */
+async function login(auth, signingKey) {
+  if (!signingKey) throw new Error(`${HOME_DOMAIN}/.well-known/stellar.toml has no SIGNING_KEY`)
   const challenge = await json(`${auth}?account=${PUB}&home_domain=${HOME_DOMAIN}`)
-  const tx = TransactionBuilder.fromXDR(challenge.transaction, challenge.network_passphrase)
+  if (challenge.network_passphrase && challenge.network_passphrase !== Networks.TESTNET) {
+    throw new Error('the SEP-10 challenge is not for testnet; refusing to sign it')
+  }
+  const { tx, clientAccountID } = WebAuth.readChallengeTx(
+    challenge.transaction,
+    signingKey,
+    Networks.TESTNET,
+    HOME_DOMAIN,
+    new URL(auth).host,
+  )
+  if (clientAccountID !== PUB) {
+    throw new Error('the SEP-10 challenge names a different account; refusing to sign it')
+  }
   tx.sign(distributor)
   const { token } = await json(auth, {
     method: 'POST',
@@ -107,7 +135,7 @@ async function balances() {
 }
 
 async function main() {
-  const { issuer, auth, transfer } = await discover()
+  const { issuer, auth, transfer, signingKey } = await discover()
   console.log(`anchor ${HOME_DOMAIN} issues ${ASSET_CODE} as ${issuer}`)
   console.log(`distributor ${PUB}`)
 
@@ -132,7 +160,7 @@ async function main() {
   }
 
   if (deposits > 0) {
-    const token = await login(auth)
+    const token = await login(auth, signingKey)
     const headers = { Authorization: `Bearer ${token}` }
 
     for (let i = 1; i <= deposits; i++) {

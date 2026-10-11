@@ -17,6 +17,8 @@ const WRITER = Keypair.random().publicKey()
 const FUNDING = 'a'.repeat(64)
 
 process.env.LUSD_DISTRIBUTOR_SECRET = DISTRIBUTOR.secret()
+// The route refuses a secret that is not the advertised distributor's.
+process.env.NEXT_PUBLIC_LUSD_DISTRIBUTOR = DISTRIBUTOR.publicKey()
 process.env.NEXT_PUBLIC_LUSD_ISSUER = Keypair.random().publicKey()
 
 const guard = {
@@ -38,15 +40,18 @@ vi.mock('@/lib/anchor/bridge-proof', async (importOriginal) => {
 const submitTransaction = vi.fn()
 vi.mock('@stellar/stellar-sdk', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@stellar/stellar-sdk')>()
-  const { LUSD_CODE, LUSD_ISSUER } = await import('@/lib/lusd')
   class Server {
     transactions() {
-      return { transaction: () => ({ call: async () => ({ successful: true }) }) }
+      // The record names itself: the route pays only on the hash it asked for.
+      return { transaction: (id: string) => ({ call: async () => ({ hash: id, successful: true }) }) }
     }
     operations() {
       return { forTransaction: () => ({ call: async () => ({ records: [] }) }) }
     }
     async loadAccount(id: string) {
+      // Read here rather than in the factory, which runs when this file's own
+      // import of the SDK is hoisted — before the env above is set.
+      const { LUSD_CODE, LUSD_ISSUER } = await import('@/lib/lusd')
       const acct = new actual.Account(id, '100')
       return Object.assign(acct, {
         balances: [{ asset_code: LUSD_CODE, asset_issuer: LUSD_ISSUER, balance: '1000' }],

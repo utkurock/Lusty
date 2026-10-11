@@ -7,6 +7,7 @@
  *   - type='claim'                       → action_type='claim',   source=metadata.depositHash
  *   - type='deposit' subtype='swap'      → action_type='swap',    source=tx_hash
  *   - type='deposit' subtype=call|put    → action_type='deposit', source=tx_hash
+ *     (legacy payment-verified rows only; contract-era rows are skipped)
  *
  * Idempotent: ON CONFLICT DO NOTHING. Safe to re-run. Also reports any
  * historical hash that was consumed by BOTH a deposit and a swap (intake
@@ -91,6 +92,12 @@ async function backfillSwaps() {
 }
 
 async function backfillDeposits() {
+  // Only the legacy, payment-verified deposit rows. A contract-era row (one
+  // with metadata.positionId) carries the caller's txHash, which the deposit
+  // route never checked against the chain — it reserves those positions on
+  // `${underlying}:${positionId}` at index time instead. Copied in here, that
+  // unverified string would sit in the intake index where it could be someone
+  // else's swap or bridge funding hash, refused to them as already processed.
   const res = await pool.query(`
     insert into processed_actions (action_type, source_hash, reserved_at, confirmed_at, payout_hash)
     select distinct on (tx_hash)
@@ -103,6 +110,7 @@ async function backfillDeposits() {
     where type = 'deposit'
       and subtype in ('call','put')
       and tx_hash is not null
+      and not (coalesce(metadata, '{}'::jsonb) ? 'positionId')
     order by tx_hash, created_at asc
     on conflict do nothing
     returning source_hash

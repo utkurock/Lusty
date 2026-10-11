@@ -17,6 +17,12 @@
 //
 // All three are counted from the `transactions` table, so they hold across
 // serverless instances — the in-memory rate limiter in front of them does not.
+//
+// dailyMax has a cost of its own: it is shared, so one client farming fresh
+// addresses could spend the whole day's allowance and close the faucet for
+// everybody else. A fourth bound, per client address (the network one, not the
+// Stellar one), caps how many claims a single client takes of the day — see
+// assertClientAllowed.
 
 import { LUSD_CODE, LUSD_ISSUER } from './lusd'
 import { BTC } from './assets'
@@ -41,6 +47,13 @@ const num = (raw: string | undefined, fallback: number) => {
   const n = Number(raw)
   return isFinite(n) && n > 0 ? n : fallback
 }
+
+/**
+ * Claims of one asset one client may take in a rolling day, whatever Stellar
+ * addresses it names. Generous enough for a few testers behind one NAT; at the
+ * LUSD defaults it takes fifty clients, not one, to empty the daily cap.
+ */
+export const FAUCET_CLIENT_DAILY_CLAIMS = num(process.env.FAUCET_CLIENT_DAILY_CLAIMS, 10)
 
 /**
  * The faucet's assets, by the name a URL can carry.
@@ -97,7 +110,7 @@ export function dripFor(raw: unknown): Drip | null {
 export class FaucetRejection extends Error {
   constructor(
     message: string,
-    readonly code: 'cooldown' | 'lifetime_cap' | 'daily_cap',
+    readonly code: 'cooldown' | 'lifetime_cap' | 'daily_cap' | 'client_cap',
     readonly retryAfter?: number,
   ) {
     super(message)
@@ -172,6 +185,30 @@ export async function assertDripAllowed(
     throw new FaucetRejection(
       `The ${drip.symbol} faucet has given out its daily allowance — try again tomorrow.`,
       'daily_cap',
+    )
+  }
+}
+
+/**
+ * Whether this client may take one more claim of this drip today.
+ *
+ * Called once the address-level checks above have passed, so a claim refused
+ * for its cooldown does not also spend the client's allowance. Counted in the
+ * durable rate-limit table, keyed on the client's network address (or one
+ * shared bucket when none can be read), so it holds across instances.
+ */
+export async function assertClientAllowed(client: string, drip: Drip): Promise<void> {
+  const { durableRateLimit } = await import('./rate-limit')
+  const rl = await durableRateLimit(
+    `faucet:${drip.symbol}:client:${client}`,
+    FAUCET_COOLDOWN_MS,
+    FAUCET_CLIENT_DAILY_CLAIMS,
+  )
+  if (!rl.ok) {
+    throw new FaucetRejection(
+      `This network has taken its ${drip.symbol} for today — try again in ${hours(rl.retryAfter * 1000)}h.`,
+      'client_cap',
+      rl.retryAfter,
     )
   }
 }

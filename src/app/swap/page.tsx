@@ -98,7 +98,10 @@ export default function SwapPage() {
         fromAsset === 'XLM' ? 'xlm_to_lusd' : 'lusd_to_xlm'
       setStatus('Checking the protocol can cover this…')
       const pre = await fetch(
-        `/api/swap?direction=${direction}&amount=${encodeURIComponent(parsed)}`,
+        // The address lets the server check this wallet's XLM credit and the
+        // daily outflow cap now, rather than refusing after the LUSD is paid.
+        `/api/swap?direction=${direction}&amount=${encodeURIComponent(parsed)}` +
+          `&address=${encodeURIComponent(address)}`,
         { cache: 'no-store' }
       )
       const preData = await pre.json().catch(() => null)

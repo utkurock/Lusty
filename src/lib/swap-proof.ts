@@ -10,12 +10,15 @@
 // asset the direction names, in the amount claimed. Any one of those missing
 // and there is no proof — not a smaller payout, no payout.
 
+import { Keypair } from '@stellar/stellar-sdk'
 import { LUSD_CODE, LUSD_ISSUER, LUSD_DISTRIBUTOR } from './lusd'
 
 export type SwapDirection = 'xlm_to_lusd' | 'lusd_to_xlm'
 
 /** The fields of a Horizon transaction record this check reads. */
 export interface ProofTransaction {
+  /** The transaction's own hash, lowercase hex. */
+  hash?: string
   successful?: boolean
   source_account?: string
   /** When the ledger closed the transaction, ISO 8601. */
@@ -66,11 +69,52 @@ export function feeBumpRejection(tx: ProofTransaction): ProofRejection | null {
 }
 
 /**
- * How old a funding payment may be when it is claimed. The swap prices at claim
- * time, so a payment that could be claimed whenever its sender liked would be a
- * free option on the price: pay now, keep the hash, claim once the market moved
- * the right way. A wallet claims seconds after paying; this leaves room for a
- * retry and none for waiting on the market.
+ * A funding hash in the one spelling the replay guard keys on, or null.
+ *
+ * The guard is keyed on the hash the caller posts, but the payout is
+ * authorized by whatever record Horizon returns for it — and the SDK puts the
+ * posted string into a URL path, where './H', 'x/../H' and '%2e/H' all resolve
+ * to /transactions/H. Each of those spellings was a new key for one payment,
+ * so each was paid. A transaction hash is 64 hex characters; anything else is
+ * refused before Horizon is asked, and case is folded so 'H' and its uppercase
+ * are one key. The route then also requires the record's own hash to match.
+ */
+export function canonicalFundingHash(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null
+  const hash = raw.trim().toLowerCase()
+  return /^[0-9a-f]{64}$/.test(hash) ? hash : null
+}
+
+/**
+ * Why the distributor key cannot pay out here, or null when it can.
+ *
+ * The proof accepts payments made TO the advertised distributor address; the
+ * payout is signed by whatever account LUSD_DISTRIBUTOR_SECRET holds. If the
+ * two drift apart — a rotated key, a copy-pasted env — users fund one account
+ * and the other pays, so neither balance means what the checks assume. Refuse
+ * rather than guess which one is right.
+ */
+export function distributorMismatch(secret: string): string | null {
+  let signer: string
+  try {
+    signer = Keypair.fromSecret(secret).publicKey()
+  } catch {
+    return 'the distributor secret is not a valid Stellar secret key'
+  }
+  return signer === LUSD_DISTRIBUTOR
+    ? null
+    : 'the distributor secret does not belong to the advertised distributor address'
+}
+
+/**
+ * How old a funding payment may be when it is claimed. A payment that could be
+ * claimed whenever its sender liked would be a free option on the price: pay
+ * now, keep the hash, claim once the market moved the right way. The swap now
+ * also prices at the worse of the funding-time and the claim-time rate, which
+ * takes the upside out of waiting; this bound keeps the window short anyway. A
+ * wallet claims seconds after paying; this leaves room for a retry and none for
+ * waiting on the market. The bridge has no price, but applies the same bound so
+ * an old payment cannot be re-presented indefinitely.
  */
 export const FUNDING_MAX_AGE_MS = 15 * 60_000
 

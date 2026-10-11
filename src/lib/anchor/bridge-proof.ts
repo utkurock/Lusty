@@ -44,6 +44,9 @@ export function verifyBridgeFunding(input: {
   direction: BridgeDirection
   address: string
   sourceAmount: number
+  /** Refuse a payment older than this. Omitted, age is not checked. */
+  maxAgeMs?: number
+  now?: number
 }): ProofRejection | { ok: true; paidAmount: number } {
   const { tx, operations, direction, address, sourceAmount } = input
   const { pays } = legsOf(direction)
@@ -65,6 +68,22 @@ export function verifyBridgeFunding(input: {
 
   const bumped = feeBumpRejection(tx)
   if (bumped) return bumped
+
+  // No price moves under a one-for-one crossing, but an old payment is still
+  // a hash that can be presented again: the replay guard is the only thing
+  // between it and a second payout, and an unbounded window gives any slip in
+  // that guard forever to be found. The swap's bound applies here too.
+  if (input.maxAgeMs !== undefined) {
+    const closedAt = Date.parse(tx.created_at ?? '')
+    const age = (input.now ?? Date.now()) - closedAt
+    if (!isFinite(closedAt) || age > input.maxAgeMs) {
+      return {
+        error: 'that payment is too old to cross — contact support to have it returned',
+        status: 400,
+        code: 'funding_stale',
+      }
+    }
+  }
 
   if (tx.source_account !== address) {
     return { error: 'tx source does not match claimed address', status: 403, code: 'source_mismatch' }

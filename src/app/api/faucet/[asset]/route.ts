@@ -11,8 +11,16 @@ import {
 import { logTransaction } from '@/lib/db-queries'
 import { errorRef, UserFacingError } from '@/lib/api-error'
 import { durableRateLimit } from '@/lib/rate-limit'
+import { getClientIp, isJsonRequest } from '@/lib/anti-spam'
+import { readJsonCapped, BodyTooLargeError } from '@/lib/request-body'
 import { isValidStellarAddress } from '@/lib/utils'
-import { dripFor, assertDripAllowed, FaucetRejection, type Drip } from '@/lib/faucet'
+import {
+  dripFor,
+  assertDripAllowed,
+  assertClientAllowed,
+  FaucetRejection,
+  type Drip,
+} from '@/lib/faucet'
 
 // The testnet faucet, one asset per request.
 // =========================================
@@ -89,6 +97,11 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ asset: string }> },
 ) {
+  // A cross-site form can post text/plain without a preflight; requiring JSON
+  // puts every claim behind CORS, which this API does not grant.
+  if (!isJsonRequest(req)) {
+    return NextResponse.json({ error: 'expected application/json' }, { status: 415 })
+  }
   try {
     const { asset: raw } = await params
     const drip = dripFor(raw)
@@ -99,7 +112,16 @@ export async function POST(
       )
     }
 
-    const { address } = await req.json().catch(() => ({}))
+    let parsed: { address?: unknown } | null
+    try {
+      parsed = await readJsonCapped(req)
+    } catch (e) {
+      if (e instanceof BodyTooLargeError) {
+        return NextResponse.json({ error: 'request body too large' }, { status: 413 })
+      }
+      throw e
+    }
+    const address = parsed && typeof parsed === 'object' ? parsed.address : undefined
     if (!isValidStellarAddress(address)) {
       return NextResponse.json({ error: 'invalid address' }, { status: 400 })
     }
@@ -116,6 +138,9 @@ export async function POST(
 
     try {
       await assertDripAllowed(address, drip)
+      // Last, so only a claim every other bound would pay spends the client's
+      // share of the day.
+      await assertClientAllowed(getClientIp(req) ?? 'anon', drip)
     } catch (capErr) {
       if (capErr instanceof FaucetRejection) {
         return NextResponse.json(
