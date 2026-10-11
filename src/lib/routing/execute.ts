@@ -121,23 +121,27 @@ export function swapOperation(swap: RoutedSwap): xdrOperation {
 type xdrOperation = ReturnType<typeof Operation.pathPaymentStrictReceive>
 
 /**
- * The transaction for the writer's wallet to sign.
+ * The transaction for the writer's wallet to sign, and its hash.
  *
  * Built against their account, sent from their account, delivered to whoever
  * the swap names — this module never holds anything and never signs anything.
  * What it guarantees is the shape of what they are asked to sign.
+ *
+ * The hash is what settle holds the ledger to. Signing does not change it, so
+ * the transaction the wallet submits lands under exactly this hash; anything
+ * else offered as "the fill" is some other transaction.
  */
 export async function buildSwapTx(
   swap: RoutedSwap,
   source: string,
-): Promise<string> {
+): Promise<{ xdr: string; hash: string }> {
   const account = await new Horizon.Server(HORIZON_URL).loadAccount(source)
-  return new TransactionBuilder(account, {
+  const tx = new TransactionBuilder(account, {
     fee: BASE_FEE,
     networkPassphrase: NETWORK_PASSPHRASE,
   })
     .addOperation(swapOperation(swap))
     .setTimeout(120)
     .build()
-    .toXDR()
+  return { xdr: tx.toXDR(), hash: tx.hash().toString('hex') }
 }

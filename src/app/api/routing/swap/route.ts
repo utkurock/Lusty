@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { requestedUnderlying } from '@/lib/assets'
 import { durableRateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
+import { BodyTooLargeError, readJsonCapped } from '@/lib/request-body'
 import {
   prepareRoutedSwap,
   RoutedSwapRefused,
@@ -23,10 +24,18 @@ export const dynamic = 'force-dynamic'
  * What it guards is the routing capacity and the journal the monitor reads.
  */
 export async function POST(req: Request) {
+  // Capped as it arrives: both actions take a handful of short fields, and an
+  // uncapped read buffered the whole body before anything here looked at it.
   let body: any
   try {
-    body = await req.json()
-  } catch {
+    body = await readJsonCapped(req)
+  } catch (e) {
+    if (e instanceof BodyTooLargeError) {
+      return NextResponse.json({ error: 'request body too large' }, { status: 413 })
+    }
+    body = null
+  }
+  if (body === null) {
     return NextResponse.json({ error: 'invalid JSON' }, { status: 400 })
   }
 

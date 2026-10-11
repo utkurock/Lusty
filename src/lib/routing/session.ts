@@ -18,6 +18,13 @@
 // Horizon and records the fill only when a successful path payment with these
 // ends, this account and this amount is on the ledger. Anything else releases
 // the reservation and records that the swap did not fill.
+//
+// AND IT MUST BE THE TRANSACTION PREPARE BUILT. Matching by shape alone let a
+// caller name any path payment of the right ends and amount — an old one, one
+// that cost far more than this swap was allowed to, the same one for several
+// ids — and have each journaled as this swap's fill, which is what the monitor
+// reads realised slippage off. So prepare keeps the hash it built, settle
+// accepts that hash only, and one hash closes at most one swap.
 
 import { randomUUID } from 'crypto'
 import { Horizon } from '@stellar/stellar-sdk'
@@ -47,6 +54,8 @@ interface Pending {
   book: string
   reserved: Reserved
   swap: RoutedSwap
+  /** The hash of the transaction prepare built; the only one that fills it. */
+  txHash: string
   /** Same lapse as the reservation: an abandoned swap must not linger. */
   expiresAt: number
 }
@@ -56,9 +65,21 @@ const PENDING_TTL_MS = 120_000
 
 const pending = new Map<string, Pending>()
 
+/**
+ * Hashes that already closed a swap, until no pending swap could still carry
+ * them. Two prepares for one account in the same second build the same
+ * transaction — same sequence number, same time bounds — so the same hash, and
+ * without this one ledger fill would settle both. Bounded by time: an entry
+ * outlives every swap prepared before it was written, and no longer.
+ */
+const closedBy = new Map<string, number>() // txHash -> forgetAt
+
 function sweep(now: number): void {
   for (const [id, p] of pending) {
     if (p.expiresAt <= now) pending.delete(id)
+  }
+  for (const [hash, forgetAt] of closedBy) {
+    if (forgetAt <= now) closedBy.delete(hash)
   }
 }
 
@@ -121,9 +142,9 @@ export async function prepareRoutedSwap(params: {
     throw e
   }
 
-  let xdr: string
+  let built: { xdr: string; hash: string }
   try {
-    xdr = await buildSwapTx(swap, address)
+    built = await buildSwapTx(swap, address)
   } catch (e) {
     release(reserved)
     throw e
@@ -131,8 +152,15 @@ export async function prepareRoutedSwap(params: {
 
   sweep(now)
   const id = randomUUID()
-  pending.set(id, { address, book: book.symbol, reserved, swap, expiresAt: now + PENDING_TTL_MS })
-  return { id, xdr, destAmount: swap.destAmount, quoted: swap.quote.sendAmount, sendMax: swap.sendMax }
+  pending.set(id, {
+    address,
+    book: book.symbol,
+    reserved,
+    swap,
+    txHash: built.hash.toLowerCase(),
+    expiresAt: now + PENDING_TTL_MS,
+  })
+  return { id, xdr: built.xdr, destAmount: swap.destAmount, quoted: swap.quote.sendAmount, sendMax: swap.sendMax }
 }
 
 /** What Horizon says one path payment did. The subset settle reads. */
@@ -163,6 +191,11 @@ export function fillRefusal(swap: RoutedSwap, address: string, op: LedgerPathPay
   if (op.source_asset_code !== send.code || op.source_asset_issuer !== send.issuer) return 'it spent a different asset'
   if (op.asset_code !== receive.code || op.asset_issuer !== receive.issuer) return 'it delivered a different asset'
   if (Number(op.amount) !== swap.destAmount) return `it delivered ${op.amount}, not ${swap.destAmount}`
+  // The network will not let the prepared transaction spend past sendMax, so a
+  // payment that did was some other transaction, whatever else it matches.
+  if (!(Number(op.source_amount) <= swap.sendMax)) {
+    return `it spent ${op.source_amount}, above the ${swap.sendMax} bound`
+  }
   return null
 }
 
@@ -228,9 +261,12 @@ export async function settleRoutedSwap(params: {
 
   if (!params.txHash) return notFilled(params.reason?.slice(0, 200) || 'abandoned before submission')
 
+  const hash = params.txHash.toLowerCase()
+  if (hash !== p.txHash) return notFilled('that is not the transaction prepared for this swap')
+
   let op: LedgerPathPayment | null
   try {
-    op = await (params.read ?? readPathPayment)(params.txHash)
+    op = await (params.read ?? readPathPayment)(hash)
   } catch (e) {
     // The swap stays pending and its reservation stays held: recording it as
     // unfilled would put a fill the ledger may well hold into the journal as a
@@ -240,8 +276,18 @@ export async function settleRoutedSwap(params: {
     }
     throw e
   }
+  // Another settle of this same id may have closed it while Horizon answered.
+  // It journaled the outcome already; a second entry would contradict it.
+  if (pending.get(params.id) !== p) return { filled: false, reason: 'no such swap, or it lapsed' }
   const refusal = fillRefusal(p.swap, p.address, op)
   if (refusal) return notFilled(refusal)
+
+  // Checked and marked in one synchronous step, after the ledger read and with
+  // no await before record(). Placed before the read, every concurrent settle
+  // of swaps sharing this hash would pass the check while the others waited on
+  // Horizon, and each would journal the one fill as its own.
+  if (closedBy.has(hash)) return notFilled('that transaction already closed another swap')
+  closedBy.set(hash, now + 2 * PENDING_TTL_MS)
 
   pending.delete(params.id)
   release(p.reserved)
@@ -261,4 +307,5 @@ export async function settleRoutedSwap(params: {
 /** Tests only. */
 export function resetRoutedSwaps(): void {
   pending.clear()
+  closedBy.clear()
 }

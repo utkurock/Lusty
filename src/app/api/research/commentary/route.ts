@@ -360,10 +360,9 @@ export async function GET(req: Request) {
     // Per client first, so one caller cannot spend the shared ceiling and turn
     // the panel off for everybody else.
     const mine = clientRateLimit(req, 'commentary', 60_000, 10)
-    const rl = mine.ok ? await durableRateLimit('commentary:global', 60_000, 30) : mine
-    if (!rl.ok) {
+    if (!mine.ok) {
       return NextResponse.json(
-        { error: `rate limited — retry after ${rl.retryAfter}s` },
+        { error: `rate limited — retry after ${mine.retryAfter}s` },
         { status: 429 }
       )
     }
@@ -394,6 +393,19 @@ export async function GET(req: Request) {
       if (ageMs < CACHE_TTL_MS) {
         return NextResponse.json({ ...rowToPayload(row), cached: true })
       }
+    }
+
+    // The shared ceiling is charged here, on the path that pays for Binance and
+    // Gemini, and nowhere else. A cached read costs nothing upstream; charging
+    // it let ordinary panel traffic spend the budget and answer 429 to readers
+    // a cached note would have served. At the ceiling, the reader gets the note
+    // we have, stale or static, rather than an error.
+    const gen = await durableRateLimit('commentary:global', 60_000, 30)
+    if (!gen.ok) {
+      if (row) {
+        return NextResponse.json({ ...rowToPayload(row), cached: true, stale: true })
+      }
+      return NextResponse.json({ ...staticFallbackPayload(), cached: false, stale: true })
     }
 
     const [ticker, tech] = await Promise.all([fetchTicker(), fetchTech()])

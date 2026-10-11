@@ -4,6 +4,7 @@ import { errorRef } from '@/lib/api-error'
 import { upsertUser } from '@/lib/db-queries'
 import { clientRateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
+import { BodyTooLargeError, readJsonCapped } from '@/lib/request-body'
 
 const HORIZON = process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
 
@@ -15,7 +16,9 @@ const HORIZON = process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.
 // that exists on the network is recorded: a random valid key is not a user.
 export async function POST(req: Request) {
   try {
-    const { address } = await req.json()
+    // The body is one address. Capped, so a larger one is refused as it
+    // arrives instead of being buffered ahead of the limiter.
+    const address = (await readJsonCapped(req))?.address
     if (!isValidStellarAddress(address)) {
       return NextResponse.json({ error: 'invalid address' }, { status: 400 })
     }
@@ -40,6 +43,9 @@ export async function POST(req: Request) {
     await upsertUser(address)
     return NextResponse.json({ ok: true })
   } catch (e: any) {
+    if (e instanceof BodyTooLargeError) {
+      return NextResponse.json({ error: 'request body too large' }, { status: 413 })
+    }
     return NextResponse.json(
       { error: 'connect failed', ref: errorRef('users/connect', e) },
       { status: 500 }

@@ -11,6 +11,8 @@ import { isAdmin } from '@/lib/db-queries'
 import { isValidStellarAddress } from '@/lib/utils'
 import { durableRateLimit } from '@/lib/rate-limit'
 import { getClientIp } from '@/lib/anti-spam'
+import { errorRef } from '@/lib/api-error'
+import { BodyTooLargeError, readJsonCapped } from '@/lib/request-body'
 import {
   createChallenge,
   consumeChallenge,
@@ -33,7 +35,12 @@ export const dynamic = 'force-dynamic'
  */
 export async function POST(req: Request) {
   try {
-    const body = await req.json()
+    // Capped: this is an anonymous door, and the limiter below only runs once
+    // the body is in. A signed challenge is well under the default cap.
+    const body = await readJsonCapped(req)
+    if (!body || typeof body !== 'object') {
+      return NextResponse.json({ error: 'invalid JSON' }, { status: 400 })
+    }
 
     // Nothing here is expensive, but nothing here was bounded either: issuing a
     // challenge is a database read and a map entry per request, and verifying
@@ -140,8 +147,14 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ error: 'unknown action' }, { status: 400 })
   } catch (e: any) {
+    if (e instanceof BodyTooLargeError) {
+      return NextResponse.json({ error: 'request body too large' }, { status: 413 })
+    }
+    // Whoever reaches this is anonymous, and the message is whatever threw —
+    // the XDR parser on a malformed envelope, or the database driver, which
+    // names its host. It goes to the log; the caller gets a reference.
     return NextResponse.json(
-      { error: 'auth failed', detail: e?.message ?? 'unknown' },
+      { error: 'auth failed', ref: errorRef('admin/auth', e) },
       { status: 500 }
     )
   }

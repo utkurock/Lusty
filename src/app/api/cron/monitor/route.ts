@@ -4,6 +4,7 @@ import { runMonitorChecks } from '@/lib/monitor/checks'
 import { sendAlert } from '@/lib/monitor/notify'
 import { applyAutoBreaker } from '@/lib/monitor/triggers'
 import { purgeOldIps } from '@/lib/db-queries'
+import { purgeOldAnalyticsEvents } from '@/lib/retention'
 import { sweepLapsedReservations } from '@/lib/quote-policy'
 import { getPositionsOf } from '@/lib/vault-contract'
 import { settleableUnderlying } from '@/lib/assets'
@@ -66,6 +67,13 @@ async function handle(req: Request) {
     console.error('monitor: ip retention purge failed', e)
     return null
   })
+  // Anonymous analytics events are kept for ANALYTICS_RETENTION_DAYS, in
+  // bounded batches, so the table cannot grow without limit in the database the
+  // replay ledger and quote reservations share.
+  const analyticsPurged = await purgeOldAnalyticsEvents().catch((e) => {
+    console.error('monitor: analytics retention purge failed', e)
+    return null
+  })
 
   // Lapsed quote reservations, for every wallet rather than only the ones
   // that come back to authorize: until it is settled against the chain a
@@ -98,6 +106,7 @@ async function handle(req: Request) {
     },
     alerts: alerts.map((a) => ({ severity: a.severity, title: a.title })),
     ...(purged ? { ipsPurged: purged } : {}),
+    ...(analyticsPurged ? { analyticsPurged } : {}),
     ...(reservations ? { reservationsSwept: reservations } : {}),
   })
 }

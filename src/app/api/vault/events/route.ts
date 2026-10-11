@@ -12,7 +12,7 @@ import {
   underlyingByVault,
 } from '@/lib/assets'
 import { getRecentDeposits } from '@/lib/db-queries'
-import { rateLimit } from '@/lib/rate-limit'
+import { clientRateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
 
 export const dynamic = 'force-dynamic'
@@ -48,7 +48,18 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: 'invalid address' }, { status: 400 })
     }
 
-    const rl = rateLimit(`vault-events:${address || 'all'}`, 60_000, 120)
+    // Keyed on the client, never on what it asks for. The vault-wide feed had
+    // one key for every caller, so one of them could spend it for all; the
+    // wallet feed had one per address, and a valid-looking address is free to
+    // mint, so each new one came with a fresh allowance of the owner-index and
+    // event scans below. The wallet feed costs more, and is limited apart.
+    const rl = clientRateLimit(
+      req,
+      address ? 'vault-events:wallet' : 'vault-events',
+      60_000,
+      30,
+      600
+    )
     if (!rl.ok) {
       return NextResponse.json(
         { error: `rate limited — retry after ${rl.retryAfter}s` },

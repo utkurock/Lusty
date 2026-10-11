@@ -79,16 +79,27 @@ export interface SweepReport {
 // wrong.
 const lowWater = new Map<UnderlyingSymbol, number>()
 
-/** Forget every book's low-water mark. Tests only. */
+// Per book, where the next sweep picks up. Not the same thing as the floor
+// above: a run that spends its budget stops partway, and restarting at the
+// floor would reread the same ids every time while anything beyond them —
+// expired, due, inside its oracle window — was never reached. One open
+// position low in the book was enough to pin every sweep to its first 2000
+// ids. So a run resumes where the last one stopped, and only wraps back to the
+// floor once it has reached the end.
+const resume = new Map<UnderlyingSymbol, number>()
+
+/** Forget every book's low-water mark and resume point. Tests only. */
 export function resetSweepMemory(): void {
   lowWater.clear()
+  resume.clear()
 }
 
 type BookScan = Omit<ScanResult, 'firstOpen'>
 
 /**
- * Walk one book from its low-water mark to `nextId`, a page at a time, up to
- * `budget` ids. A single page from id 0 — what this used to do — never reads a
+ * Walk one book toward `nextId`, a page at a time, up to `budget` ids, starting
+ * where the last run stopped (or at the low-water mark when it reached the
+ * end). A single page from id 0 — what this used to do — never reads a
  * position past the first page, however many are due behind it.
  */
 async function scanBook(
@@ -96,7 +107,8 @@ async function scanBook(
   pageSize: number,
   budget: number,
 ): Promise<BookScan> {
-  const start = lowWater.get(asset.symbol) ?? 0
+  const floor = lowWater.get(asset.symbol) ?? 0
+  const start = Math.max(floor, resume.get(asset.symbol) ?? floor)
   let cursor: number | null = start
   let scanned = 0
   let firstOpen: number | null = null
@@ -123,8 +135,17 @@ async function scanBook(
 
   const nextId = last?.nextId ?? 0
   const nextCursor = last?.nextCursor ?? null
-  // Advance only over ids read and found settled.
-  lowWater.set(asset.symbol, firstOpen ?? nextCursor ?? nextId)
+  // Advance only over ids read and found settled. A run that started above the
+  // floor did not read the ids below it, so it has nothing to say about them.
+  if (start === floor) lowWater.set(asset.symbol, firstOpen ?? nextCursor ?? nextId)
+  // Carry on past the budget next time; wrap to the floor once at the end.
+  resume.set(asset.symbol, nextCursor ?? lowWater.get(asset.symbol) ?? 0)
+  if (nextCursor !== null) {
+    console.warn(
+      `settlement-sweep: ${asset.symbol} scan stopped at ${nextCursor} of ${nextId} ` +
+        `(${nextId - nextCursor} ids unexamined); the next sweep resumes there`,
+    )
+  }
 
   return {
     underlying: asset.symbol,

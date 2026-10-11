@@ -211,6 +211,40 @@ describe('the sweep reaches the whole book', () => {
     expect(getPosition).not.toHaveBeenCalledWith(249, expect.anything())
   })
 
+  it('resumes past its budget instead of rereading the ids behind an open position', async () => {
+    // One open position low in the book pinned the low-water mark, and every
+    // run restarted there and read the same 2000 ids. Nothing beyond them was
+    // ever attempted, however long it had been due.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    chain({ XLM: 2400, BTC: 0 })
+    const open = { ...expired(0), expiry: new Date(Date.now() + 30 * DAY) }
+    getPosition.mockImplementation(async (id: number) =>
+      id === 0 ? open : { ...expired(id), settled: id !== 2300 },
+    )
+
+    const first = await sweep.sweepOnce({ runnerSecret: signer.secret() })
+    expect(first.books.find((b) => b.underlying === 'XLM')!.scan).toMatchObject({
+      cursor: 0,
+      scanned: 2000,
+      nextCursor: 2000,
+    })
+    expect(first.settled).toEqual([])
+
+    const second = await sweep.sweepOnce({ runnerSecret: signer.secret() })
+    expect(second.books.find((b) => b.underlying === 'XLM')!.scan).toMatchObject({
+      cursor: 2000,
+      scanned: 400,
+      nextCursor: null,
+    })
+    expect(second.settled.map((s) => `${s.underlying}#${s.id}`)).toEqual(['XLM#2300'])
+
+    // Having reached the end, the next run wraps to the lowest open id.
+    const third = await sweep.sweepOnce({ dryRun: true })
+    expect(third.books.find((b) => b.underlying === 'XLM')!.scan.cursor).toBe(0)
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/XLM scan stopped at 2000 of 2400/))
+    warn.mockRestore()
+  })
+
   it('scans one page from an explicit cursor, for a sweep run by hand', async () => {
     chain({ XLM: 450, BTC: 0 })
     const report = await sweep.sweepOnce({ dryRun: true, from: 100, scanLimit: 10 })

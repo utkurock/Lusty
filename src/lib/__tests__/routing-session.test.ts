@@ -28,6 +28,8 @@ import {
 } from '../routing/session'
 
 const WRITER = 'GBAIN6CHZJGBL365JNXSRQEKALXYTWKXANQZ3RBM7AGUEYYKLJJ6SNR6'
+/** The hash of the transaction prepare builds, which is what settle is held to. */
+const PREPARED_HASH = 'a'.repeat(64)
 const NOW = 1_800_000_000_000
 const ROUTE = cashRoute()
 
@@ -58,7 +60,7 @@ beforeEach(() => {
   resetRoutedSwaps()
   vi.mocked(quoteRoute).mockReset()
   vi.mocked(buildSwapTx).mockReset()
-  vi.mocked(buildSwapTx).mockResolvedValue('XDR')
+  vi.mocked(buildSwapTx).mockResolvedValue({ xdr: 'XDR', hash: PREPARED_HASH })
 })
 
 describe('a stablecoin route holds its price to par, not only to the quote', () => {
@@ -171,6 +173,96 @@ describe('settle believes the ledger, not the caller', () => {
   })
 })
 
+describe('settle accepts only the transaction prepare built', () => {
+  // The fill used to be matched by shape. Any successful path payment of the
+  // right ends and amount closed the swap and journaled what it cost, so a
+  // caller could name an old payment, an expensive one, or one payment for
+  // several ids, and the monitor read the slippage off whichever they chose.
+  async function prepared() {
+    vi.mocked(quoteRoute).mockResolvedValue(quote())
+    return prepareRoutedSwap({ address: WRITER, book: XLM, destAmount: 100, now: NOW })
+  }
+  const fills = () => recent(60_000, NOW).filter((e) => e.kind === 'filled')
+
+  it('refuses a different transaction hash without asking the ledger', async () => {
+    const { id } = await prepared()
+    const read = vi.fn(async () => ledgerOp())
+    const settled = await settleRoutedSwap({ id, txHash: 'b'.repeat(64), now: NOW, read })
+
+    expect(settled).toMatchObject({ filled: false, reason: expect.stringMatching(/not the transaction prepared/) })
+    expect(read).not.toHaveBeenCalled()
+    expect(fills()).toHaveLength(0)
+    expect(inFlight(XLM.symbol, NOW)).toBe(0)
+  })
+
+  it('takes the prepared hash in either case', async () => {
+    const { id } = await prepared()
+    const settled = await settleRoutedSwap({ id, txHash: 'A'.repeat(64), now: NOW, read: async () => ledgerOp() })
+    expect(settled.filled).toBe(true)
+  })
+
+  it('refuses a payment that spent more than the prepared bound', async () => {
+    const { id, sendMax } = await prepared()
+    const settled = await settleRoutedSwap({
+      id,
+      txHash: PREPARED_HASH,
+      now: NOW,
+      read: async () => ledgerOp({ source_amount: (sendMax + 0.0000001).toFixed(7) }),
+    })
+    expect(settled).toMatchObject({ filled: false, reason: expect.stringMatching(/above the .* bound/) })
+    expect(fills()).toHaveLength(0)
+  })
+
+  it('lets one transaction close one swap, settled one after the other', async () => {
+    // Two prepares for one account in one second build the same transaction,
+    // so they share a hash; the ledger holds one fill, not two.
+    const first = await prepared()
+    const second = await prepared()
+    const a = await settleRoutedSwap({ id: first.id, txHash: PREPARED_HASH, now: NOW, read: async () => ledgerOp() })
+    const b = await settleRoutedSwap({ id: second.id, txHash: PREPARED_HASH, now: NOW, read: async () => ledgerOp() })
+
+    expect(a.filled).toBe(true)
+    expect(b).toMatchObject({ filled: false, reason: expect.stringMatching(/already closed another swap/) })
+    expect(fills()).toHaveLength(1)
+    expect(inFlight(XLM.symbol, NOW)).toBe(0)
+  })
+
+  it('lets one transaction close one swap, settled concurrently', async () => {
+    const ids = await Promise.all([prepared(), prepared(), prepared()]).then((ps) => ps.map((p) => p.id))
+    // Every read is held until all three settles are waiting on it, so each
+    // one passes everything before the read with the others still in flight.
+    let open!: () => void
+    const gate = new Promise<void>((r) => (open = r))
+    const read = async () => {
+      await gate
+      return ledgerOp()
+    }
+    const settling = ids.map((id) => settleRoutedSwap({ id, txHash: PREPARED_HASH, now: NOW, read }))
+    open()
+    const results = await Promise.all(settling)
+
+    expect(results.filter((r) => r.filled)).toHaveLength(1)
+    expect(fills()).toHaveLength(1)
+    expect(inFlight(XLM.symbol, NOW)).toBe(0)
+  })
+
+  it('journals one outcome when the same id is settled twice at once', async () => {
+    const { id } = await prepared()
+    let open!: () => void
+    const gate = new Promise<void>((r) => (open = r))
+    const read = async () => {
+      await gate
+      return ledgerOp()
+    }
+    const settling = [1, 2].map(() => settleRoutedSwap({ id, txHash: PREPARED_HASH, now: NOW, read }))
+    open()
+    const results = await Promise.all(settling)
+
+    expect(results.filter((r) => r.filled)).toHaveLength(1)
+    expect(recent(60_000, NOW)).toHaveLength(1)
+  })
+})
+
 describe('settle with Horizon down', () => {
   async function prepared() {
     vi.mocked(quoteRoute).mockResolvedValue(quote())
@@ -224,6 +316,7 @@ describe('fillRefusal names what is wrong with a ledger operation', () => {
     ['another account', ledgerOp({ from: 'GBCMRD6NDL2RAJUOFQ25EHZVO3IRIGNESWE4QDRFB4AVFIP7IT5BRCJ6' }), /writer/],
     ['a lookalike USDC', ledgerOp({ source_asset_issuer: 'GBCMRD6NDL2RAJUOFQ25EHZVO3IRIGNESWE4QDRFB4AVFIP7IT5BRCJ6' }), /different asset/],
     ['a short delivery', ledgerOp({ amount: '99.0000000' }), /delivered 99/],
+    ['a cost past the send maximum', ledgerOp({ source_amount: '100.7100001' }), /above the 100.71 bound/],
   ])('refuses %s', (_label, op, why) => {
     expect(fillRefusal(swap, WRITER, op as any)).toMatch(why)
   })

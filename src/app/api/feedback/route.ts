@@ -4,6 +4,7 @@ import { insertFeedback, isDuplicateFeedback } from '@/lib/db-queries'
 import { durableRateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
 import { getClientIp, isJsonRequest, spamReason } from '@/lib/anti-spam'
+import { BodyTooLargeError, readJsonCapped } from '@/lib/request-body'
 
 const ALLOWED_CATEGORIES = new Set(['general', 'bug', 'feature', 'ux', 'praise'])
 
@@ -16,7 +17,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'expected application/json' }, { status: 415 })
   }
   try {
-    const body = await req.json().catch(() => null)
+    // Read under a cap: nothing below runs until the body is in, and an
+    // uncapped read buffered whatever arrived before any limiter saw it.
+    const body = await readJsonCapped(req)
     if (!body || typeof body.message !== 'string') {
       return NextResponse.json({ error: 'message required' }, { status: 400 })
     }
@@ -55,22 +58,23 @@ export async function POST(req: Request) {
     // ── Rate limiting ─────────────────────────────────────────────────
     // Layer 1 — per IP, the hardest identity to rotate. A short burst window
     // plus a daily cap. IP is the primary defense; address is secondary
-    // because a spammer can mint unlimited valid Stellar addresses.
-    if (ip) {
-      const burst = await durableRateLimit(`feedback:ip:${ip}`, 60_000, 3)
-      if (!burst.ok) {
-        return NextResponse.json(
-          { error: `rate limited — retry after ${burst.retryAfter}s` },
-          { status: 429 }
-        )
-      }
-      const daily = await durableRateLimit(`feedback:ip:daily:${ip}`, 86_400_000, 20)
-      if (!daily.ok) {
-        return NextResponse.json(
-          { error: 'daily feedback limit reached' },
-          { status: 429 }
-        )
-      }
+    // because a spammer can mint unlimited valid Stellar addresses. A request
+    // with no readable address shares one 'anon' bucket, as the security
+    // report does, rather than skipping this layer altogether.
+    const ipKey = ip ?? 'anon'
+    const burst = await durableRateLimit(`feedback:ip:${ipKey}`, 60_000, 3)
+    if (!burst.ok) {
+      return NextResponse.json(
+        { error: `rate limited — retry after ${burst.retryAfter}s` },
+        { status: 429 }
+      )
+    }
+    const daily = await durableRateLimit(`feedback:ip:daily:${ipKey}`, 86_400_000, 20)
+    if (!daily.ok) {
+      return NextResponse.json(
+        { error: 'daily feedback limit reached' },
+        { status: 429 }
+      )
     }
 
     // Layer 2 — per address (or shared anon bucket when no wallet connected).
@@ -102,6 +106,9 @@ export async function POST(req: Request) {
     await insertFeedback({ address, rating, category, message, path, ip })
     return NextResponse.json({ ok: true })
   } catch (e: any) {
+    if (e instanceof BodyTooLargeError) {
+      return NextResponse.json({ error: 'request body too large' }, { status: 413 })
+    }
     return NextResponse.json(
       { error: 'feedback failed', ref: errorRef('feedback', e) },
       { status: 500 }

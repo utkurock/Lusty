@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { errorRef } from '@/lib/api-error'
 import { getPositionsForAddress, type DbPosition } from '@/lib/db-queries'
 import { isValidStellarAddress } from '@/lib/utils'
-import { rateLimit } from '@/lib/rate-limit'
+import { clientRateLimit } from '@/lib/rate-limit'
 import {
   getPositionsOf,
   getExposure,
@@ -67,7 +67,10 @@ export async function GET(req: Request) {
 
     // Tighter than /positions: every call here also re-prices the book against
     // live market data, so it costs an upstream fetch as well as a chain read.
-    const rl = rateLimit(`portfolio:${address}`, 60_000, 20)
+    // Keyed on the client rather than the address it names: addresses are free
+    // to mint, so a per-address key handed each new one a fresh allowance, and
+    // it let anyone spend a stranger's.
+    const rl = clientRateLimit(req, 'portfolio', 60_000, 20, 300)
     if (!rl.ok) {
       return NextResponse.json(
         { error: `rate limited — retry after ${rl.retryAfter}s` },

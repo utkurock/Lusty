@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { errorRef } from '@/lib/api-error'
 import { Horizon } from '@stellar/stellar-sdk'
-import { rateLimit } from '@/lib/rate-limit'
+import { clientRateLimit } from '@/lib/rate-limit'
 import {
   computeOpenBuckets,
   callEpochCap,
@@ -37,7 +37,12 @@ export async function GET(req: Request) {
       )
     }
 
-    const rl = rateLimit(`vault-stats:${asset.symbol}`, 60_000, 120)
+    // Per client, under a ceiling for everyone. One key shared by every caller
+    // was a switch any one of them could flip: spend its 120 and the capacity
+    // bars went dark for every visitor until it refilled. A page polls each
+    // book every 30s from a few widgets, well inside the per-client allowance;
+    // the ceiling is what bounds the chain and Horizon reads behind this.
+    const rl = clientRateLimit(req, `vault-stats:${asset.symbol}`, 60_000, 30, 600)
     if (!rl.ok) {
       return NextResponse.json(
         { error: `rate limited — retry after ${rl.retryAfter}s` },

@@ -6,6 +6,7 @@ import { getClientIp, isJsonRequest } from '@/lib/anti-spam'
 import { sendAlert } from '@/lib/monitor/notify'
 import { parseSecurityReport, reportAlert } from '@/lib/security-report'
 import { reportRef } from '@/lib/adversarial'
+import { BodyTooLargeError, readJsonCapped } from '@/lib/request-body'
 
 // The adversarial window's on-site intake. Private: nothing submitted here is
 // shown to anyone without an admin session, so it is a fit channel for a
@@ -20,7 +21,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'expected application/json' }, { status: 415 })
   }
   try {
-    const body = await req.json().catch(() => null)
+    // Capped while it arrives; the field limits in parseSecurityReport only
+    // apply once the whole body has been read.
+    const body = await readJsonCapped(req)
 
     // Honeypot and timing trap, answered with a fake success so a bot does
     // not learn which one caught it. Nobody fills this form in five seconds.
@@ -65,6 +68,9 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true, ref: reportRef(id) })
   } catch (e: any) {
+    if (e instanceof BodyTooLargeError) {
+      return NextResponse.json({ error: 'request body too large' }, { status: 413 })
+    }
     return NextResponse.json(
       { error: 'report failed', ref: errorRef('security-report', e) },
       { status: 500 }

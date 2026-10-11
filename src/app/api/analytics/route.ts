@@ -4,6 +4,7 @@ import { rateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
 import { getClientIp } from '@/lib/anti-spam'
 import { cleanMetadata } from '@/lib/analytics-metadata'
+import { BodyTooLargeError, readTextCapped } from '@/lib/request-body'
 
 // Events the client is allowed to fire. Keeping a whitelist prevents the
 // public endpoint from being used to write arbitrary rows into the table.
@@ -26,13 +27,16 @@ const ALLOWED_EVENTS = new Set([
 const MAX_BODY_BYTES = 4096
 export async function POST(req: Request) {
   try {
-    const declared = Number(req.headers.get('content-length') ?? 0)
-    if (declared > MAX_BODY_BYTES) {
-      return NextResponse.json({ ok: false, error: 'too large' }, { status: 413 })
-    }
-    const text = await req.text()
-    if (text.length > MAX_BODY_BYTES) {
-      return NextResponse.json({ ok: false, error: 'too large' }, { status: 413 })
+    // Counted as it arrives, not after: a chunked body declares no length, and
+    // `req.text()` buffered all of it before the size was ever looked at.
+    let text: string
+    try {
+      text = await readTextCapped(req, MAX_BODY_BYTES)
+    } catch (e) {
+      if (e instanceof BodyTooLargeError) {
+        return NextResponse.json({ ok: false, error: 'too large' }, { status: 413 })
+      }
+      throw e
     }
     let body: any = null
     try {

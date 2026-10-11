@@ -28,6 +28,23 @@ describe('the client address', () => {
     expect(getClientIp(req({ 'x-real-ip': '192.0.2.1' }))).toBe('192.0.2.1')
     expect(getClientIp(req({}))).toBeNull()
   })
+
+  it('takes an IPv6 address as written', () => {
+    expect(getClientIp(req({ 'cf-connecting-ip': '2001:db8::7' }))).toBe('2001:db8::7')
+  })
+
+  // The value becomes a limiter key and a stored column. A header holding
+  // anything but an address would mint a bucket per value and be written down
+  // as it came.
+  it('reads a header that is not an address as no address', () => {
+    expect(getClientIp(req({ 'cf-connecting-ip': 'not-an-ip' }))).toBeNull()
+    expect(getClientIp(req({ 'x-forwarded-for': '1.1.1.1, <script>' }))).toBeNull()
+    expect(getClientIp(req({ 'x-real-ip': '999.1.1.1' }))).toBeNull()
+  })
+
+  it('refuses an overlong value without trying to parse it', () => {
+    expect(getClientIp(req({ 'cf-connecting-ip': '1'.repeat(4000) }))).toBeNull()
+  })
 })
 
 describe('a JSON body is declared, not assumed', () => {

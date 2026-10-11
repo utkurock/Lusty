@@ -38,8 +38,9 @@ export const DEFAULT_SETTLE_LIMIT = 25
 /**
  * How many ids one automatic sweep reads per book, across as many scan pages as
  * that takes. The page above bounds one read; this bounds the run. Reaching it
- * is reported, never silent: the next sweep resumes from the book's low-water
- * mark, which only moves past ids that have settled.
+ * is reported, never silent: the next sweep resumes where this one stopped, and
+ * wraps back to the book's low-water mark (which only moves past ids that have
+ * settled) once a run reaches the end of the book.
  */
 export const DEFAULT_SWEEP_SCAN_LIMIT = 2000
 

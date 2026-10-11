@@ -3,6 +3,8 @@
 // cannot read a client IP we fall back to a shared bucket rather than blocking
 // everyone. Content heuristics fail closed (spam-looking input is rejected).
 
+import { isIP } from 'net'
+
 /**
  * Best-effort client IP, from the one header a client cannot write.
  *
@@ -21,16 +23,31 @@
  */
 export function getClientIp(req: Request): string | null {
   const cf = req.headers.get('cf-connecting-ip')?.trim()
-  if (cf) return cf
+  if (cf) return ipLiteral(cf)
   const xff = req.headers.get('x-forwarded-for')
   if (xff) {
     const hops = xff.split(',').map((h) => h.trim()).filter(Boolean)
     const last = hops[hops.length - 1]
-    if (last) return last
+    if (last) return ipLiteral(last)
   }
   const real = req.headers.get('x-real-ip')?.trim()
-  if (real) return real
+  if (real) return ipLiteral(real)
   return null
+}
+
+/** Longest textual IPv6 form, an IPv4-mapped tail included. */
+const MAX_IP_LENGTH = 45
+
+/**
+ * The value only if it is an address. What comes back here becomes a rate-limit
+ * key and, on the intake forms, a stored column; a header that held anything
+ * else — a long string, a list, text that merely sits where an address should —
+ * would mint a fresh bucket per value and land in the database as written. Not
+ * an address reads as no address, which every caller already handles.
+ */
+function ipLiteral(value: string): string | null {
+  if (value.length > MAX_IP_LENGTH) return null
+  return isIP(value) ? value : null
 }
 
 /**

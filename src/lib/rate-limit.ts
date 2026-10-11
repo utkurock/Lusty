@@ -1,17 +1,26 @@
 import { getPool, ensureSchema } from './db'
 import { getClientIp } from './anti-spam'
 
-const hits = new Map<string, number[]>()
+// Each key remembers the window it is counted over, because the sweeper has to
+// know how long its timestamps still matter. It used to cut every key at ten
+// minutes, which emptied an hourly or daily bucket ten minutes after its first
+// hit: `connect:hour` allowed 30 per ten minutes, not per hour. A key's memory
+// stays bounded all the same — it never holds more than its own maxRequests
+// timestamps, since a refused call is not recorded, and the sweeper drops it
+// once its window has passed.
+const hits = new Map<string, { windowMs: number; ts: number[] }>()
+
+/** Drop what has aged out of each key's own window. Exported for tests. */
+export function sweepRateLimits(now: number = Date.now()): void {
+  for (const [key, entry] of hits) {
+    const ts = entry.ts.filter((t) => t > now - entry.windowMs)
+    if (ts.length === 0) hits.delete(key)
+    else entry.ts = ts
+  }
+}
 
 // Clean old entries every 5 minutes
-setInterval(() => {
-  const cutoff = Date.now() - 600_000
-  for (const [key, timestamps] of hits) {
-    const filtered = timestamps.filter((t) => t > cutoff)
-    if (filtered.length === 0) hits.delete(key)
-    else hits.set(key, filtered)
-  }
-}, 300_000)
+setInterval(() => sweepRateLimits(), 300_000)
 
 export type RateLimitResult = { ok: true } | { ok: false; retryAfter: number }
 
@@ -31,7 +40,8 @@ export function rateLimit(
 ): RateLimitResult {
   const now = Date.now()
   const cutoff = now - windowMs
-  const timestamps = (hits.get(key) ?? []).filter((t) => t > cutoff)
+  const prior = hits.get(key)
+  const timestamps = (prior?.ts ?? []).filter((t) => t > cutoff)
 
   if (timestamps.length >= maxRequests) {
     const oldest = timestamps[0]
@@ -40,7 +50,9 @@ export function rateLimit(
   }
 
   timestamps.push(now)
-  hits.set(key, timestamps)
+  // Two call sites sharing a key keep it for the longer of their windows, so
+  // neither's count is swept out from under it.
+  hits.set(key, { windowMs: Math.max(windowMs, prior?.windowMs ?? 0), ts: timestamps })
   return { ok: true }
 }
 
