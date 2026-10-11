@@ -374,6 +374,11 @@ async function createSchema(): Promise<void> {
       on quote_reservations (address, underlying, state);
     create index if not exists quote_reservations_strike_idx
       on quote_reservations (underlying, state, strike_price);
+    -- the monitor's lapsed-reservation sweep, and the open-time price lookup
+    create index if not exists quote_reservations_lapse_idx
+      on quote_reservations (state, valid_until);
+    create index if not exists quote_reservations_signed_idx
+      on quote_reservations (address, underlying, subtype, signed_at desc);
 
     -- Circuit breaker: a single-row kill-switch for new deposits (P1-8).
     -- When tripped, the deposit endpoint fails closed (503). Can be set

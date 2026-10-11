@@ -7,6 +7,7 @@ import {
 } from '@/lib/db-queries'
 import { isValidStellarAddress } from '@/lib/utils'
 import { rateLimit } from '@/lib/rate-limit'
+import { getClientIp } from '@/lib/anti-spam'
 import { expiryLabel } from '@/lib/expiries'
 import {
   getPositionsOf,
@@ -79,7 +80,10 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: 'invalid address' }, { status: 400 })
     }
 
-    const rl = rateLimit(`positions:${address}`, 60_000, 60)
+    // Keyed on the client, not on the address it asks about. Addresses are
+    // free to mint, so an address-only key gave every caller as many buckets
+    // as it cared to name, and each read here is a contract read per book.
+    const rl = rateLimit(`positions:ip:${getClientIp(req) ?? 'anon'}`, 60_000, 60)
     if (!rl.ok) {
       return NextResponse.json(
         { error: `rate limited — retry after ${rl.retryAfter}s` },
@@ -187,11 +191,18 @@ export async function GET(req: Request) {
     // depend on an outside feed being up. Fire and forget: the response is
     // already correct, and a database that will not take the note must not
     // cost the caller their positions.
+    //
+    // The APR only, against the position's own row: the close it was derived
+    // from is the indexing day's, so it is shown here and never stored as the
+    // price the position opened at.
     void Promise.all(
       positions
         .filter((p) => p.aprSource === 'derived' && p.apr !== null && p.depositHash)
         .map((p) =>
-          backfillPositionApr(p.depositHash, p.apr as number, p.spotAtOpen)
+          backfillPositionApr(
+            { address, underlying: p.underlying, positionId: p.positionId },
+            p.apr as number
+          )
         )
     ).catch((err) => console.warn('vault/positions: APR backfill failed', err))
 

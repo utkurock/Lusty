@@ -297,25 +297,32 @@ export async function getRecentDeposits(
  * So the first successful reconstruction is written down and the row stops
  * depending on the feed. Strictly additive: it only ever fills a hole, never
  * overwrites a rate that was measured at the time.
+ *
+ * The APR only, flagged as derived. The price it was derived from is not
+ * written back as `spotAtOpen`: it is the close on the day the row was
+ * indexed, which a writer chooses, and `spotAtOpen` is what the leaderboard
+ * values a call's collateral at. And the row is addressed by owner, book and
+ * position — not by its tx_hash, which other rows (a bridge funding, say) can
+ * share, and which would carry the note onto them too.
  */
 export async function backfillPositionApr(
-  txHash: string,
-  apr: number,
-  spotAtOpen: number | null
+  row: { address: string; underlying: string; positionId: number },
+  apr: number
 ): Promise<void> {
-  if (!txHash || !isFinite(apr) || apr < 0) return
+  if (!row.address || !row.underlying || !Number.isInteger(row.positionId)) return
+  if (!isFinite(apr) || apr < 0) return
   await ensureSchema()
   const pool = getPool()
-  const patch: Record<string, number | boolean> = { apr, aprDerived: true }
-  if (spotAtOpen != null && isFinite(spotAtOpen) && spotAtOpen > 0) {
-    patch.spotAtOpen = spotAtOpen
-  }
   await pool.query(
     `update transactions
-        set metadata = coalesce(metadata, '{}'::jsonb) || $2::jsonb
-      where tx_hash = $1
+        set metadata = coalesce(metadata, '{}'::jsonb) || $4::jsonb
+      where address = $1
+        and underlying = $2
+        and type = 'deposit'
+        and subtype in ('call', 'put')
+        and metadata->>'positionId' = $3
         and (metadata->>'apr') is null`,
-    [txHash, JSON.stringify(patch)]
+    [row.address, row.underlying, String(row.positionId), JSON.stringify({ apr, aprDerived: true })]
   )
 }
 

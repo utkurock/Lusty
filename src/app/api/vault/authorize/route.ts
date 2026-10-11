@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { errorRef } from '@/lib/api-error'
 import { Keypair, authorizeEntry, xdr } from '@stellar/stellar-sdk'
 import { durableRateLimit } from '@/lib/rate-limit'
+import { getClientIp } from '@/lib/anti-spam'
+import { readJsonCapped, BodyTooLargeError } from '@/lib/request-body'
 import { isValidStellarAddress } from '@/lib/utils'
 import { credentialAddress, describeMismatch } from '@/lib/vault-auth'
 import { quoteOptionLive } from '@/lib/pricing-server'
@@ -40,9 +42,34 @@ export const dynamic = 'force-dynamic'
 
 const QUOTER_SECRET = process.env.VAULT_QUOTER_SECRET ?? ''
 
-// How long a co-signature stays usable. Long enough for a wallet prompt,
-// short enough that an unused signature expires rather than lingering.
-const SIGNATURE_LEDGERS = 100 // ≈ 8 minutes at 5s ledgers
+// How long a co-signature stays usable: one wallet prompt, and no longer.
+//
+// The premium is fixed when this route signs, and nothing on chain reprices it
+// when `open` executes, so every ledger the signature stays valid is a ledger
+// in which the writer can watch spot and decide whether to use it. At 100
+// ledgers that was an eight-minute free option on the quote; a move of well
+// under a percent inside it paid more than the slippage allowance below. A
+// minute leaves the wallet room to prompt and spot little room to move.
+//
+// Not a bound on its own: the real fix is for the contract to check the spot
+// the quoter signed against its oracle at open, which needs a redeploy.
+const SIGNATURE_LEDGERS = 12 // ≈ 1 minute at 5s ledgers
+
+// How long the reservation for a signature outlives it. The reservation is
+// what the allowances count, and once it lapses it can be judged unused — so
+// it must never lapse while the signature can still open a position. Ledgers
+// are converted at a deliberately slow 10 s each, twice the usual close time,
+// with two minutes of clock slack on top.
+const SLOW_LEDGER_MS = 10_000
+const RESERVATION_SLACK_MS = 120_000
+
+// Per client, before anything is read or priced. The wallet budget below is
+// keyed on the address a request names, which nobody proves here; on its own
+// it let a stranger spend a writer's hour of quotes by naming them. Anonymous
+// callers spend their own allowance instead, and the wallet budget is spent
+// only from the client asking.
+const CLIENT_LIMIT_PER_HOUR = 60
+const WALLET_LIMIT_PER_HOUR = 30
 
 // The premium a caller may request, relative to the engine's own quote.
 //
@@ -54,10 +81,11 @@ const SIGNATURE_LEDGERS = 100 // ≈ 8 minutes at 5s ledgers
 // that is roughly every other attempt.
 //
 // So the bound is a slippage allowance, in basis points of the quote — the same
-// shape a swap uses, and for the same reason. It is also the protocol's
-// worst-case overpayment on one position, which is why it is stated in bps
-// rather than left implicit: 25 bps of the premium is a rounding error against
-// the contract's own `max_premium_bps` ceiling on the collateral behind it.
+// shape a swap uses, and for the same reason. It bounds the overpayment at the
+// moment of signing, and only then: the premium stays fixed for as long as the
+// signature is usable (SIGNATURE_LEDGERS), and spot moving against the quote in
+// that window costs the protocol more than this. That window, not this number,
+// is what decides the worst case — which is why it is kept to a wallet prompt.
 //
 // The absolute floor stays, because a dust premium's bps allowance rounds to
 // less than the stroop the transaction actually encodes.
@@ -104,7 +132,28 @@ interface AuthorizeBody {
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as AuthorizeBody
+    const ip = getClientIp(req) ?? 'anon'
+    const clientRl = await durableRateLimit(`authorize:ip:${ip}`, 3600_000, CLIENT_LIMIT_PER_HOUR)
+    if (!clientRl.ok) {
+      return NextResponse.json(
+        { error: `rate limited — retry after ${clientRl.retryAfter}s` },
+        { status: 429 },
+      )
+    }
+
+    let parsed: AuthorizeBody | null
+    try {
+      parsed = await readJsonCapped<AuthorizeBody>(req)
+    } catch (err) {
+      if (err instanceof BodyTooLargeError) {
+        return NextResponse.json({ error: 'request body too large' }, { status: 413 })
+      }
+      throw err
+    }
+    if (!parsed || typeof parsed !== 'object') {
+      return NextResponse.json({ error: 'invalid JSON body' }, { status: 400 })
+    }
+    const body = parsed
 
     if (!QUOTER_SECRET) {
       return NextResponse.json(
@@ -200,7 +249,11 @@ export async function POST(req: Request) {
       )
     }
 
-    const rl = await durableRateLimit(`authorize:${body.address}`, 3600_000, 30)
+    const rl = await durableRateLimit(
+      `authorize:${ip}:${body.address}`,
+      3600_000,
+      WALLET_LIMIT_PER_HOUR,
+    )
     if (!rl.ok) {
       return NextResponse.json(
         { error: `rate limited — retry after ${rl.retryAfter}s` },
@@ -386,7 +439,9 @@ export async function POST(req: Request) {
         notionalUsd,
         strikePrice: body.strikePrice,
         expiryIso,
-        validUntil: new Date(Date.now() + SIGNATURE_LEDGERS * 6_000 + 120_000),
+        validUntil: new Date(
+          Date.now() + SIGNATURE_LEDGERS * SLOW_LEDGER_MS + RESERVATION_SLACK_MS,
+        ),
       })
     } catch (reserveErr) {
       console.error('vault/authorize: quote not reserved, signature withheld', reserveErr)

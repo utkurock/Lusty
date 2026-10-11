@@ -1,6 +1,7 @@
 import type { UnderlyingAsset } from './assets'
 import { getPool, ensureSchema } from './db'
 import { upcomingExpiryDates, expiryLabel, expiryUtilization } from './expiries'
+import { getExposure } from './vault-contract'
 
 /**
  * Vault exposure, computed from the protocol's own record of open positions.
@@ -105,23 +106,81 @@ export interface ExpiryBucket {
   putUsd: number
 }
 
+// How long one read of the contract's per-expiry exposure is reused. Every
+// quote and every co-signature prices off these buckets, and each read is six
+// simulations; a few seconds of reuse keeps a busy ladder from becoming RPC
+// load without letting the book drift by more than a handful of opens.
+const CHAIN_EXPOSURE_TTL_MS = 5_000
+const chainExposure = new Map<
+  string,
+  { until: number; read: Promise<{ call: number; put: number }[]> }
+>()
+
+/** Test hook: forget cached exposure reads. */
+export function resetChainExposureCache(): void {
+  chainExposure.clear()
+}
+
+/**
+ * What the contract itself holds against each expiry — `exposure(kind,
+ * expiry)`, the same figure its ExpiryFull cap is checked against. A writer can
+ * decline to report a position to /api/vault/deposit; they cannot decline to
+ * have it counted here. Throws when the instance cannot be read.
+ */
+function readChainExposure(
+  dates: Date[],
+  asset: UnderlyingAsset
+): Promise<{ call: number; put: number }[]> {
+  const key = `${asset.symbol}|${dates.map((d) => d.getTime()).join(',')}`
+  const now = Date.now()
+  const hit = chainExposure.get(key)
+  if (hit && hit.until > now) return hit.read
+  const read = Promise.all(
+    dates.map(async (d) => {
+      const [call, put] = await Promise.all([
+        getExposure('call', d, asset),
+        getExposure('put', d, asset),
+      ])
+      return { call, put }
+    })
+  )
+  chainExposure.set(key, { until: now + CHAIN_EXPOSURE_TTL_MS, read })
+  // A failed read is not reused: the next caller asks again.
+  read.catch(() => {
+    if (chainExposure.get(key)?.read === read) chainExposure.delete(key)
+  })
+  return read
+}
+
 // The open expiry buckets (the book's own schedule) with amounts sold.
+//
+// Sold is the larger of two records of the same thing. The indexed deposit
+// rows exist only for positions whose writer's client reported them, so on
+// their own they understate the book by exactly what nobody reported — and an
+// understated book is a lower utilization haircut, a higher premium, and a
+// capacity alert that never fires. The contract's exposure is authoritative
+// for every position it opened. Neither is allowed to pull the other down: a
+// read error throws rather than counting as zero, and expiryUtilizationFor
+// answers that with its nearly-full fallback.
 export async function computeOpenBuckets(
   now = new Date(),
   asset: UnderlyingAsset
 ): Promise<ExpiryBucket[]> {
   const dates = upcomingExpiryDates(now, asset.expiry)
   const keys = dates.map((d) => expiryDateKey(d))
-  const sold = await computeExpirySold(keys, asset)
-  return dates.map((d) => {
+  const [sold, chain] = await Promise.all([
+    computeExpirySold(keys, asset),
+    readChainExposure(dates, asset),
+  ])
+  return dates.map((d, i) => {
     const dateKey = expiryDateKey(d)
     const s = sold.get(dateKey) ?? { callUnderlying: 0, putUsd: 0 }
     return {
       expiryIso: d.toISOString(),
       dateKey,
       label: expiryLabel(d),
-      callUnderlying: s.callUnderlying,
-      putUsd: s.putUsd,
+      callUnderlying: Math.max(s.callUnderlying, chain[i].call),
+      putUsd: Math.max(s.putUsd, chain[i].put),
     }
   })
 }
@@ -132,8 +191,9 @@ export async function computeOpenBuckets(
  * prices an option so a quote, its co-signature and the recorded position all
  * derive from the same number.
  *
- * Never throws. A DB blip assumes a nearly-full pool, which maximises the
- * haircut — erring towards paying too little rather than too much.
+ * Never throws. A DB blip or an unreadable instance assumes a nearly-full
+ * pool, which maximises the haircut — erring towards paying too little rather
+ * than too much.
  */
 export async function expiryUtilizationFor(
   side: 'call' | 'put',

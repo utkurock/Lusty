@@ -37,7 +37,8 @@ const query = vi.fn(async (_sql: string) => {
   if (down.db) throw new Error('connect ECONNREFUSED')
   return { rows: [], rowCount: 0 }
 })
-vi.mock('@/lib/db', () => ({
+vi.mock('@/lib/db', async (importOriginal) => ({
+  COLLATERAL_USD_SQL: (await importOriginal<typeof import('../db')>()).COLLATERAL_USD_SQL,
   ensureSchema: async () => {
     if (down.db) throw new Error('connect ECONNREFUSED')
   },
@@ -72,6 +73,9 @@ vi.mock('@/lib/vault-contract', async (importOriginal) => ({
     if (down.limitsRpc) throw new Error('soroban rpc: 503 Service Unavailable')
     return asset.onchainLimits
   },
+  // The instance's own per-expiry exposure, read alongside the indexed rows.
+  // Healthy and empty here: the outage under test is the database's.
+  getExposure: async () => 0,
 }))
 vi.mock('@/lib/rate-limit', () => ({
   rateLimit: () => ({ ok: true }),

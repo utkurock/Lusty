@@ -28,9 +28,16 @@ vi.mock('@/lib/db', () => ({
   }),
 }))
 
+// The contract's own exposure is read alongside; empty here, so the rows above
+// are the whole book and the scoping below is the database's.
+vi.mock('@/lib/vault-contract', () => ({
+  getExposure: async () => 0,
+}))
+
 const state = await import('../vault-state')
 
 beforeEach(() => {
+  state.resetChainExposureCache()
   queries.length = 0
   BOOKS.XLM = { call: 0, put: 0 }
   BOOKS.BTC = { call: 0, put: 0 }

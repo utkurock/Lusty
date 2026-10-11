@@ -1,16 +1,19 @@
 import { NextResponse } from 'next/server'
 import { errorRef } from '@/lib/api-error'
-import { durableRateLimit } from '@/lib/rate-limit'
+import { durableRateLimit, rateLimit } from '@/lib/rate-limit'
+import { getClientIp } from '@/lib/anti-spam'
+import { readJsonCapped, BodyTooLargeError } from '@/lib/request-body'
 import { isValidStellarAddress } from '@/lib/utils'
 import { reserveAction, releaseAction, confirmAction } from '@/lib/idempotency'
 import { logTransaction } from '@/lib/db-queries'
 import { getPosition } from '@/lib/vault-contract'
-import { getSpot } from '@/lib/spot'
+import { findOpenEvent } from '@/lib/contract-events'
 import { realizedApr } from '@/lib/apr'
 import { requestedUnderlying } from '@/lib/assets'
 import { USDC_CODE } from '@/lib/usdc'
 import { limitsRefusal } from '@/lib/vault-limits'
-import { markReservationIndexed } from '@/lib/quote-policy'
+import { pricingDaysFor } from '@/lib/quote-inputs'
+import { markReservationIndexed, reservedOpenPrice } from '@/lib/quote-policy'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,11 +33,18 @@ export const dynamic = 'force-dynamic'
 //
 // Everything it reports is read back from contract state. A caller who lies
 // about the amount, the strike or the side is contradicted by the ledger and
-// rejected; a caller who lies about the owner is rejected too.
+// rejected; a caller who lies about the owner is rejected too. The one thing
+// the caller supplies that the position does not carry — the transaction that
+// opened it — is checked against the ledger as well: it must be the
+// transaction that emitted this instance's `deposit` event for this id, or
+// nothing is recorded.
 
 interface DepositBody {
   address: string
-  /** Transaction that opened the position. */
+  /**
+   * Transaction that opened the position. Verified against the ledger's
+   * `deposit` event for this position before anything is recorded.
+   */
   txHash: string
   /**
    * Contract-assigned position id. Numbered per instance and starting at 0 in
@@ -46,7 +56,8 @@ interface DepositBody {
   type: 'call' | 'put'
   collateralAmount: number
   strikePrice: number
-  daysToExpiry: number
+  /** Ignored: derived from the position's on-chain expiry and open time. */
+  daysToExpiry?: number
   expiryIso?: string
   /**
    * The stablecoin the writer actually spent, when it was not the cash the
@@ -66,15 +77,30 @@ interface DepositBody {
 // sides round to stroops, so this only absorbs the last unit.
 const UNIT_EPSILON = 1e-6
 
+/** A Stellar transaction hash: 32 bytes, hex. */
+const TX_HASH = /^[0-9a-f]{64}$/i
+
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as DepositBody
+    let parsed: DepositBody | null
+    try {
+      parsed = await readJsonCapped<DepositBody>(req)
+    } catch (err) {
+      if (err instanceof BodyTooLargeError) {
+        return NextResponse.json({ error: 'request body too large' }, { status: 413 })
+      }
+      throw err
+    }
+    if (!parsed || typeof parsed !== 'object') {
+      return NextResponse.json({ error: 'invalid JSON body' }, { status: 400 })
+    }
+    const body = parsed
 
     if (!isValidStellarAddress(body.address)) {
       return NextResponse.json({ error: 'invalid address' }, { status: 400 })
     }
-    if (!body.txHash || typeof body.txHash !== 'string') {
-      return NextResponse.json({ error: 'missing txHash' }, { status: 400 })
+    if (typeof body.txHash !== 'string' || !TX_HASH.test(body.txHash)) {
+      return NextResponse.json({ error: 'invalid txHash' }, { status: 400 })
     }
     if (
       typeof body.positionId !== 'number' ||
@@ -113,10 +139,16 @@ export async function POST(req: Request) {
       )
     }
 
-    const rl = await durableRateLimit(`deposit:${body.address}`, 3600_000, 30)
-    if (!rl.ok) {
+    // Per client throughout. The address in the body is anybody's to name, so
+    // a budget keyed on it was one a stranger could spend for its owner — even
+    // with a position id that does not exist. The cheap in-process limit sheds
+    // a flood before it becomes contract reads; the durable one, after the
+    // read, is the client's hourly budget.
+    const ip = getClientIp(req) ?? 'anon'
+    const readRl = rateLimit(`deposit-read:ip:${ip}`, 60_000, 30)
+    if (!readRl.ok) {
       return NextResponse.json(
-        { error: `rate limited — retry after ${rl.retryAfter}s` },
+        { error: `rate limited — retry after ${readRl.retryAfter}s` },
         { status: 429 },
       )
     }
@@ -133,6 +165,14 @@ export async function POST(req: Request) {
           code: 'position_unreadable',
         },
         { status: 404 },
+      )
+    }
+
+    const rl = await durableRateLimit(`deposit:ip:${ip}`, 3600_000, 30)
+    if (!rl.ok) {
+      return NextResponse.json(
+        { error: `rate limited — retry after ${rl.retryAfter}s` },
+        { status: 429 },
       )
     }
 
@@ -162,24 +202,64 @@ export async function POST(req: Request) {
       )
     }
 
-    // ---- the rate this position paid
+    // ---- when it opened, and at what price
     //
-    // Recorded now because it can only be recorded now: the APR is measured
-    // against the underlying's value at open, and by tomorrow that price is
-    // history nobody kept. A feed outage costs the row its APR, not its
-    // existence — the deposit is indexed either way.
-    let spotAtOpen: number | null = null
+    // When it opened is the ledger's fact and what it was priced at is the
+    // quoter's; when this request arrives is the caller's choice and decides
+    // nothing. Both are settled before the replay key is reserved: a request
+    // that cannot name the open transaction indexes nothing, so a stranger who
+    // reaches an unindexed position first with a junk hash cannot freeze it
+    // under that hash, unpriced. An answer that cannot be had right now is a
+    // retry, never a guess.
+    let opened: { at: number } | null
     try {
-      spotAtOpen = (await getSpot(asset)).price
-    } catch (spotErr) {
-      console.warn('vault/deposit: spot unavailable, APR not recorded', spotErr)
+      opened = await findOpenEvent(asset.contracts.vault, position.id, body.txHash)
+    } catch (rpcErr) {
+      console.warn('vault/deposit: open not verifiable now', rpcErr)
+      return NextResponse.json(
+        { error: 'ledger unavailable — please retry', code: 'open_unverified' },
+        { status: 503 },
+      )
+    }
+    if (!opened) {
+      return NextResponse.json(
+        { error: 'txHash is not the transaction that opened this position', code: 'open_mismatch' },
+        { status: 409 },
+      )
+    }
+    const openedAt = opened.at
+    const txHash = body.txHash.toLowerCase()
+
+    // A call's collateral is valued at the spot the quoter signed against —
+    // the signature that could have opened it, live at `openedAt`. Not the
+    // feed now: that is the price on whatever day someone chose to index it.
+    // None live means none known, and the row says so; a put needs no price.
+    let spotAtOpen: number | null = null
+    if (position.side === 'call') {
+      try {
+        spotAtOpen = await reservedOpenPrice({
+          address: position.owner,
+          underlying: asset.symbol,
+          type: 'call',
+          collateral: position.collateral,
+          strike: position.strike,
+          expiry: position.expiry,
+          openedAt,
+        })
+      } catch (dbErr) {
+        console.warn('vault/deposit: reservations unreadable', dbErr)
+        return NextResponse.json(
+          { error: 'pricing unavailable — please retry', code: 'open_unpriced' },
+          { status: 503 },
+        )
+      }
     }
     const openApr =
       realizedApr({
         side: position.side,
         collateral: position.collateral,
         premium: position.premium,
-        openedAt: Date.now(),
+        openedAt,
         expiry: position.expiry.getTime(),
         spotAtOpen,
       }) ?? undefined
@@ -187,10 +267,9 @@ export async function POST(req: Request) {
     // ---- record it once
     //
     // Keyed on the position, which was just read off the ledger, and not on
-    // the caller's txHash, which nothing here verifies. The replay ledger's
-    // intake index is shared with the swap desk and the bridge, so a key the
-    // caller chose could be someone else's funding hash: indexing a dust
-    // position under it would refuse their payout as already processed.
+    // the txHash. That is verified now, but the replay ledger's intake index
+    // is shared with the swap desk and the bridge, and a position is one
+    // position whichever string names it.
     const replayKey = `${asset.symbol}:${position.id}`
     const reservation = await reserveAction('deposit', replayKey)
     if (reservation.alreadyProcessed) {
@@ -219,10 +298,10 @@ export async function POST(req: Request) {
         // separate question, and `underlying` is the only one that answers it.
         asset: position.side === 'call' ? asset.symbol : 'LUSD',
         underlying: asset.symbol,
-        txHash: body.txHash,
+        txHash,
         // Escrow and premium are one transaction now; there is no separate
         // payout to point at.
-        premiumHash: body.txHash,
+        premiumHash: txHash,
         premiumAmount: position.premium,
         metadata: {
           positionId: position.id,
@@ -230,13 +309,15 @@ export async function POST(req: Request) {
           collateralAmount: position.collateral,
           strikePrice: position.strike,
           expiryIso: position.expiry.toISOString(),
-          daysToExpiry: body.daysToExpiry,
+          // The tenor it was priced at, from its own expiry and open time
+          // rather than from the request.
+          daysToExpiry: pricingDaysFor(position.expiry.getTime(), openedAt, asset),
           // The rate this position paid, and the price it was measured
           // against. Neither has a home on chain, and the client is not asked
-          // for either: both are derived here from contract state and this
-          // server's own feed, so a writer cannot mint themselves a headline
-          // APR by posting one. Undefined when the feed was unreachable —
-          // recorded as unknown, never as zero.
+          // for either: both are derived here from the ledger and the quote
+          // that opened it, so a writer cannot mint themselves a headline APR
+          // by posting one. Undefined when no live quote matched — recorded as
+          // unknown, never as zero.
           apr: openApr,
           spotAtOpen: spotAtOpen ?? undefined,
           premium: position.premium,
@@ -253,9 +334,8 @@ export async function POST(req: Request) {
       await releaseAction('deposit', replayKey)
 
       // Already indexed, under some other hash. The replay ledger is keyed on
-      // the caller's txHash and nothing verifies that string on chain, so it
-      // cannot answer this; the unique index on (underlying, positionId) can,
-      // and does. A duplicate is not a failure — the position is recorded,
+      // the position, but a row may predate it; the unique index on
+      // (underlying, positionId) answers either way. A duplicate is not a failure — the position is recorded,
       // which is what the caller wanted — so it is reported the same way a
       // repeated hash is.
       if (dbErr?.code === '23505') {
@@ -277,22 +357,27 @@ export async function POST(req: Request) {
       )
     }
 
-    await confirmAction('deposit', replayKey, body.txHash)
+    await confirmAction('deposit', replayKey, txHash)
     // The deposit row now counts this position; the quote's reservation stops.
-    await markReservationIndexed({
-      address: position.owner,
-      underlying: asset.symbol,
-      type: position.side,
-      collateral: position.collateral,
-      strike: position.strike,
-      expiry: position.expiry,
-    })
+    // Only when the row can count it in dollars, which the allowances are
+    // stated in: an unpriced call adds nothing to a USD sum, so its
+    // reservation keeps counting rather than the handoff understating.
+    if (position.side === 'put' || spotAtOpen != null) {
+      await markReservationIndexed({
+        address: position.owner,
+        underlying: asset.symbol,
+        type: position.side,
+        collateral: position.collateral,
+        strike: position.strike,
+        expiry: position.expiry,
+      })
+    }
 
     return NextResponse.json({
       ok: true,
       indexed: true,
       positionId: position.id,
-      depositHash: body.txHash,
+      depositHash: txHash,
       premium: position.premium.toFixed(4),
       strike: position.strike,
       expiry: position.expiry.toISOString(),

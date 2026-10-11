@@ -6,7 +6,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const calls: { sql: string; params: any[] }[] = []
 let answer: (sql: string, params: any[]) => { rows: any[] } = () => ({ rows: [] })
 
-vi.mock('../db', () => ({
+vi.mock('../db', async (importOriginal) => ({
+  // The real valuation expression: the allowances sum it, in dollars.
+  COLLATERAL_USD_SQL: (await importOriginal<typeof import('../db')>()).COLLATERAL_USD_SQL,
   ensureSchema: async () => {},
   getPool: () => ({
     query: async (sql: string, params: any[] = []) => {

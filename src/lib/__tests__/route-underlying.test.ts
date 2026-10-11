@@ -32,6 +32,17 @@ vi.mock('@/lib/spot', () => ({
   getSpot: (...a: any[]) => getSpot(...a),
   fetchXlmUsd: async () => 0.25,
 }))
+// The open transaction is verified against the ledger's deposit event, and a
+// call is priced off the quote that opened it. Both answer healthily here:
+// what these tests ask is which book the routes operate on.
+vi.mock('@/lib/contract-events', () => ({
+  findOpenEvent: async () => ({ at: Date.now() - 60_000 }),
+}))
+vi.mock('@/lib/quote-policy', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../quote-policy')>()),
+  reservedOpenPrice: async () => 0.25,
+  markReservationIndexed: async () => {},
+}))
 vi.mock('@/lib/db-queries', () => ({
   logTransaction: (...a: any[]) => logTransaction(...a),
 }))
@@ -70,7 +81,7 @@ const post = (handler: any, body: unknown) =>
 
 const depositBody = (extra: object = {}) => ({
   address: WRITER,
-  txHash: 'abc123',
+  txHash: 'e'.repeat(64),
   positionId: 3,
   type: 'call',
   collateralAmount: 100,

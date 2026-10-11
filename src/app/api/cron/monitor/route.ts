@@ -4,6 +4,9 @@ import { runMonitorChecks } from '@/lib/monitor/checks'
 import { sendAlert } from '@/lib/monitor/notify'
 import { applyAutoBreaker } from '@/lib/monitor/triggers'
 import { purgeOldIps } from '@/lib/db-queries'
+import { sweepLapsedReservations } from '@/lib/quote-policy'
+import { getPositionsOf } from '@/lib/vault-contract'
+import { settleableUnderlying } from '@/lib/assets'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -64,6 +67,22 @@ async function handle(req: Request) {
     return null
   })
 
+  // Lapsed quote reservations, for every wallet rather than only the ones
+  // that come back to authorize: until it is settled against the chain a
+  // lapsed signature still holds shared strike inventory, so one made under an
+  // address nobody names again would hold it for the whole 14-day window. The
+  // same fail-closed rule as at authorize time — a wallet whose positions
+  // cannot be read keeps its reservations counting — and, like the purge
+  // above, never allowed to stop the risk sweep.
+  const reservations = await sweepLapsedReservations(async (address, underlying) => {
+    const asset = settleableUnderlying(underlying)
+    if (!asset) throw new Error(`no vault to read ${underlying} positions from`)
+    return getPositionsOf(address, 100, asset)
+  }).catch((e) => {
+    console.error('monitor: lapsed reservation sweep failed', e)
+    return null
+  })
+
   const deliveries = await Promise.all(toDeliver.map((a) => sendAlert(a)))
   const delivered = deliveries.filter((d) => d.delivered).length
 
@@ -79,6 +98,7 @@ async function handle(req: Request) {
     },
     alerts: alerts.map((a) => ({ severity: a.severity, title: a.title })),
     ...(purged ? { ipsPurged: purged } : {}),
+    ...(reservations ? { reservationsSwept: reservations } : {}),
   })
 }
 

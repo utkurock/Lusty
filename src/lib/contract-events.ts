@@ -232,6 +232,50 @@ export async function fetchVaultEvents(limit = 25): Promise<VaultEvent[]> {
   }
 }
 
+/**
+ * When a position opened, as the ledger recorded it: the `deposit` event its
+ * open emitted, in the transaction the caller names.
+ *
+ * Null when the hash is not that transaction — not a hash, not found, failed,
+ * or a transaction that did not open this instance's position — and when the
+ * transaction has aged past the RPC's retention. Throws when the RPC cannot be
+ * read, so the caller can tell "wrong" from "not now".
+ *
+ * One page from the transaction's own ledger is enough: the filter names the
+ * event and the position, and the event is in that ledger or nowhere.
+ */
+export async function findOpenEvent(
+  contractId: string,
+  positionId: number,
+  txHash: string
+): Promise<{ at: number } | null> {
+  if (!/^[0-9a-f]{64}$/i.test(txHash)) return null
+  const hash = txHash.toLowerCase()
+  const server = new sorobanRpc.Server(RPC_URL)
+  const tx = await server.getTransaction(hash)
+  if (tx.status !== sorobanRpc.Api.GetTransactionStatus.SUCCESS) return null
+
+  const topics = [
+    [
+      nativeToScVal('deposit', { type: 'symbol' }).toXDR('base64'),
+      nativeToScVal(BigInt(positionId), { type: 'u64' }).toXDR('base64'),
+    ],
+  ]
+  const { events } = await scanForward(server, { startLedger: tx.ledger }, topics, 1)
+  const hit = events
+    .map(parseEvent)
+    .find(
+      (e) =>
+        e?.kind === 'deposit' &&
+        e.contractId === contractId &&
+        e.id === String(positionId) &&
+        e.txHash?.toLowerCase() === hash
+    )
+  if (!hit) return null
+  const at = Date.parse(hit.at)
+  return Number.isFinite(at) ? { at } : null
+}
+
 /** One position's resolution, as the ledger recorded it. */
 export interface SettlementRecord {
   positionId: number

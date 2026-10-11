@@ -1,4 +1,4 @@
-import { getPool, ensureSchema } from './db'
+import { getPool, ensureSchema, COLLATERAL_USD_SQL } from './db'
 
 /**
  * Underwriting policy, checked before the quoter will sign.
@@ -99,6 +99,19 @@ function termsKey(side: string, collateral: number, strike: number, expiryMs: nu
  */
 async function resolveLapsed(input: PolicyInput): Promise<void> {
   if (!input.readPositions) return
+  await settleLapsed(input.address, input.underlying, input.readPositions)
+}
+
+/**
+ * One owner's lapsed reservations, settled against that owner's positions.
+ * Returns how many were settled, or null when the chain could not be read and
+ * every one of them was kept pending.
+ */
+async function settleLapsed(
+  address: string,
+  underlying: string,
+  readPositions: () => Promise<OnChainPosition[]>
+): Promise<{ opened: number; unused: number } | null> {
   const pool = getPool()
   const lapsed = await pool.query(
     `select id, subtype, collateral::float8 as collateral, strike_price, expiry_iso
@@ -106,16 +119,16 @@ async function resolveLapsed(input: PolicyInput): Promise<void> {
       where address = $1 and underlying = $2
         and state = 'pending' and valid_until < now()
       order by id`,
-    [input.address, input.underlying]
+    [address, underlying]
   )
-  if (!lapsed.rows?.length) return
+  if (!lapsed.rows?.length) return { opened: 0, unused: 0 }
 
   let positions: OnChainPosition[]
   try {
-    positions = await input.readPositions()
+    positions = await readPositions()
   } catch (err) {
     console.warn('quote-policy: positions unreadable, lapsed reservations kept', err)
-    return
+    return null
   }
 
   const available = new Map<string, number>()
@@ -127,7 +140,7 @@ async function resolveLapsed(input: PolicyInput): Promise<void> {
     `select subtype, collateral::float8 as collateral, strike_price, expiry_iso
        from quote_reservations
       where address = $1 and underlying = $2 and state in ('opened','indexed')`,
-    [input.address, input.underlying]
+    [address, underlying]
   )
   for (const r of claimed.rows ?? []) {
     const k = termsKey(r.subtype, Number(r.collateral), Number(r.strike_price), Date.parse(r.expiry_iso))
@@ -152,6 +165,57 @@ async function resolveLapsed(input: PolicyInput): Promise<void> {
       where id = any($2::bigint[]) and state = 'pending'`,
     [opened, [...opened, ...unused]]
   )
+  return { opened: opened.length, unused: unused.length }
+}
+
+/** Owners settled per sweep. Each costs one owner-index read on chain. */
+const SWEEP_MAX_OWNERS = Number(process.env.QUOTE_SWEEP_MAX_OWNERS ?? 50)
+
+/**
+ * Settle lapsed reservations for every owner, not just the one asking.
+ *
+ * `resolveLapsed` only runs for the wallet that comes back to authorize, and a
+ * reservation names whatever address its request did. One made under an
+ * address nobody names again would otherwise stay pending — and pending counts
+ * against the shared per-strike inventory — for the whole 14-day window, so a
+ * handful of throwaway addresses could close a strike to every writer. Run on
+ * the monitor's timer, this bounds that to one sweep interval.
+ *
+ * Same chain check, same fail-closed rule: an owner whose positions cannot be
+ * read keeps its reservations pending, and a lapsed signature that did open a
+ * position becomes 'opened' and keeps counting. Bounded per run, oldest lapse
+ * first, so a backlog drains over several sweeps rather than in one long one.
+ */
+export async function sweepLapsedReservations(
+  readPositions: (address: string, underlying: string) => Promise<OnChainPosition[]>,
+  maxOwners: number = SWEEP_MAX_OWNERS
+): Promise<{ owners: number; opened: number; unused: number; kept: number }> {
+  await ensureSchema()
+  const owners = await getPool().query(
+    `select address, underlying
+       from quote_reservations
+      where state = 'pending' and valid_until < now()
+      group by address, underlying
+      order by min(valid_until)
+      limit $1`,
+    [Math.max(1, Math.floor(maxOwners) || 1)]
+  )
+  const out = { owners: 0, opened: 0, unused: 0, kept: 0 }
+  // One owner at a time: each is a chain read, and the sweep has no one
+  // waiting on it that would be served by spending the RPC faster.
+  for (const o of owners.rows ?? []) {
+    out.owners++
+    const settled = await settleLapsed(o.address, o.underlying, () =>
+      readPositions(o.address, o.underlying)
+    )
+    if (!settled) {
+      out.kept++
+      continue
+    }
+    out.opened += settled.opened
+    out.unused += settled.unused
+  }
+  return out
 }
 
 /**
@@ -223,6 +287,53 @@ export async function markReservationIndexed(input: {
 }
 
 /**
+ * The spot the quoter signed at, for the signature that could have opened this
+ * position: same owner and terms, and still usable when it opened. That is the
+ * price the position was written against — fixed when it opened, and not up to
+ * whoever indexes it, or when.
+ *
+ * Selected by time, latest signed first, and never by state or id:
+ * `resolveLapsed` matches terms only, in id order, so it can credit an
+ * abandoned older quote as the one that opened and mark the one actually used
+ * 'unused'. The minute of slack on `signed_at` absorbs the ledger's close time
+ * running a little behind this server's clock.
+ *
+ * Null when no signature on those terms was live at `openedAt`; the position is
+ * then recorded unpriced rather than at a price nobody quoted. Throws when the
+ * reservations cannot be read, so the caller can tell 'none' from 'not now'.
+ */
+export async function reservedOpenPrice(input: {
+  address: string
+  underlying: string
+  type: 'call' | 'put'
+  collateral: number
+  strike: number
+  expiry: Date
+  openedAt: number
+}): Promise<number | null> {
+  await ensureSchema()
+  const opened = new Date(input.openedAt).toISOString()
+  const rows = await getPool().query(
+    `select collateral::float8 as collateral, notional_usd::float8 as notional_usd,
+            strike_price, expiry_iso
+       from quote_reservations
+      where address = $1 and underlying = $2 and subtype = $3
+        and signed_at <= $4::timestamptz + interval '1 minute'
+        and valid_until >= $4::timestamptz
+      order by signed_at desc, id desc`,
+    [input.address, input.underlying, input.type, opened]
+  )
+  const want = termsKey(input.type, input.collateral, input.strike, input.expiry.getTime())
+  const hit = (rows.rows ?? []).find(
+    (r: any) =>
+      termsKey(input.type, Number(r.collateral), Number(r.strike_price), Date.parse(r.expiry_iso)) === want
+  )
+  if (!hit || !(Number(hit.collateral) > 0)) return null
+  const spot = Number(hit.notional_usd) / Number(hit.collateral)
+  return isFinite(spot) && spot > 0 ? spot : null
+}
+
+/**
  * Throws `PolicyRejection` if the protocol should decline to quote. Any other
  * throw means the history could not be read — callers must fail closed, since
  * an allowance that cannot be checked has not been satisfied.
@@ -254,14 +365,20 @@ export async function assertQuoteAllowed(input: PolicyInput): Promise<void> {
   const reserved = reservedRes.rows?.[0] ?? {}
 
   // Per-wallet 30-day notional (USD), for this underlying's book.
+  //
+  // In USD, as the reservation it replaced was: a call row's `amount` is the
+  // underlying it escrows, which on BTC is a rounding error against a USD cap
+  // and on XLM is several times its dollar value. An unpriced call adds
+  // nothing here, which is why the deposit route keeps its reservation
+  // counting instead of handing it over.
   const userRes = await pool.query(
-    `select coalesce(sum(amount), 0)::float as sum
-       from transactions
-      where address = $1
-        and type = 'deposit'
-        and subtype in ('call', 'put')
-        and underlying = $2
-        and created_at > now() - interval '30 days'`,
+    `select coalesce(sum(${COLLATERAL_USD_SQL}), 0)::float as sum
+       from transactions t
+      where t.address = $1
+        and t.type = 'deposit'
+        and t.subtype in ('call', 'put')
+        and t.underlying = $2
+        and t.created_at > now() - interval '30 days'`,
     [input.address, input.underlying]
   )
   const userNotional =
@@ -311,15 +428,16 @@ export async function assertQuoteAllowed(input: PolicyInput): Promise<void> {
 
   // Per-strike 14-day inventory (USD), global across wallets. Stops the whole
   // book's short delta concentrating on one price point.
+  // Summed in USD for the same reason as the wallet's notional above.
   const strikeRes = await pool.query(
-    `select coalesce(sum(amount), 0)::float as sum
-       from transactions
-      where type = 'deposit'
-        and subtype in ('call', 'put')
-        and underlying = $3
-        and metadata ? 'strikePrice'
-        and (metadata->>'strikePrice')::float8 between $1 and $2
-        and created_at > now() - interval '14 days'`,
+    `select coalesce(sum(${COLLATERAL_USD_SQL}), 0)::float as sum
+       from transactions t
+      where t.type = 'deposit'
+        and t.subtype in ('call', 'put')
+        and t.underlying = $3
+        and t.metadata ? 'strikePrice'
+        and (t.metadata->>'strikePrice')::float8 between $1 and $2
+        and t.created_at > now() - interval '14 days'`,
     [lo, hi, input.underlying]
   )
   const strikeNotional =
