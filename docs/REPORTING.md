@@ -149,13 +149,29 @@ remediation deadline set before mainnet. Nothing is quietly carried.
 
 ---
 
+## XLM rewards
+
+A valid finding may earn a reward in XLM. Rewards are at our discretion and scale with
+the severity we assign, so there is no fixed table. To be considered, a finding has to:
+
+- be reported through one of the channels above while the window is open,
+- be the first report of that issue, and not already listed in
+  [`ADVERSARIAL.md` §6 or §7](./ADVERSARIAL.md),
+- come with a reproduction we can run,
+- stay inside the rules of engagement in [`ADVERSARIAL.md` §2](./ADVERSARIAL.md).
+
+We confirm whether a finding qualifies when we assign its severity, and pay once it is
+resolved. Tell us in the report which Stellar address to pay.
+
+---
+
 ## This is a testnet
 
 The collateral is unbacked test assets minted by this repository and testnet XLM from a
-faucet. **There is no bounty and no money at risk**, and we are not going to pretend
-otherwise to make the exercise sound bigger than it is.
+faucet. Nobody's money is at risk in the vault, and we are not going to pretend otherwise
+to make the exercise sound bigger than it is.
 
 What there is: a system that intends to hold real collateral later, published in full
 before it does, with every address, every script and every known weakness written down so
-that attacking it takes reading rather than guessing. If you find something, it gets fixed
-and you are credited for it.
+that attacking it takes reading rather than guessing. If you find something, it gets fixed,
+you are credited for it, and it may earn an XLM reward.

@@ -5,13 +5,15 @@
 // Moving the window means changing it here and in the doc together.
 
 export const WINDOW_OPENS = '2026-10-06T00:00:00Z'
-export const WINDOW_CLOSES = '2026-10-20T23:59:59Z'
+// The window runs until mainnet. It has no closing date yet; when mainnet is
+// scheduled, the last second before it goes here and in the doc.
+export const WINDOW_CLOSES: string | null = null
 
 export type WindowState = 'before' | 'open' | 'closed'
 
 export function windowState(now: number = Date.now()): WindowState {
   if (now < Date.parse(WINDOW_OPENS)) return 'before'
-  if (now > Date.parse(WINDOW_CLOSES)) return 'closed'
+  if (WINDOW_CLOSES !== null && now > Date.parse(WINDOW_CLOSES)) return 'closed'
   return 'open'
 }
 

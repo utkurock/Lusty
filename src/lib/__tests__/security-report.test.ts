@@ -165,14 +165,15 @@ describe('GET /api/admin/security-reports is admin only', () => {
 })
 
 describe('the window', () => {
-  it('is open from its first second to its last, and only then', async () => {
+  it('is open from its first second until mainnet, with no closing date yet', async () => {
     const { windowState, WINDOW_OPENS, WINDOW_CLOSES } = await import('@/lib/adversarial')
     const opens = Date.parse(WINDOW_OPENS)
-    const closes = Date.parse(WINDOW_CLOSES)
+    expect(WINDOW_CLOSES).toBeNull()
     expect(windowState(opens - 1)).toBe('before')
     expect(windowState(opens)).toBe('open')
-    expect(windowState(closes)).toBe('open')
-    expect(windowState(closes + 1000)).toBe('closed')
+    // Past the grant's fourteen-day minimum and well beyond it, still open.
+    expect(windowState(opens + 14 * 86_400_000)).toBe('open')
+    expect(windowState(opens + 365 * 86_400_000)).toBe('open')
   })
 
   it('names the same nineteen classes docs/ADVERSARIAL.md does', async () => {
@@ -189,6 +190,6 @@ describe('the window', () => {
   it('carries the same dates as docs/ADVERSARIAL.md', async () => {
     const { readFileSync } = await import('node:fs')
     const doc = readFileSync('docs/ADVERSARIAL.md', 'utf8')
-    expect(doc).toContain('open from 2026-10-06 00:00 UTC to 2026-10-20 23:59 UTC')
+    expect(doc).toContain('open from 2026-10-06 00:00 UTC until mainnet')
   })
 })

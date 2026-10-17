@@ -138,7 +138,7 @@ export function SecurityReportWidget() {
       <button
         onClick={openForm}
         className="press fixed bottom-[4.5rem] left-6 z-40 h-10 px-3 rounded-sm border border-line bg-card hover:bg-raised text-ink font-mono text-body flex items-center gap-2 shadow-sm transition"
-        title={`Report a vulnerability — adversarial window open until ${day(WINDOW_CLOSES)}`}
+        title={`Report a vulnerability — adversarial window open until ${WINDOW_CLOSES ? day(WINDOW_CLOSES) : 'mainnet'}`}
         aria-label="Report a vulnerability"
       >
         <span className="relative flex">
@@ -173,12 +173,13 @@ export function SecurityReportWidget() {
           <div className="space-y-5">
             <div className="rounded-sm border border-line bg-surface-2 px-4 py-3 font-mono text-caption text-ink-2 space-y-1">
               <p className="text-ink">
-                Adversarial testnet window open · {day(WINDOW_OPENS)} – {day(WINDOW_CLOSES)} (UTC)
+                Adversarial testnet window open · {day(WINDOW_OPENS)} –{' '}
+                {WINDOW_CLOSES ? `${day(WINDOW_CLOSES)} (UTC)` : 'mainnet'}
               </p>
               <p>
                 Reports here are private — only the maintainers read them, so this is the right
-                place for Critical and High too. Testnet only, no bounty; you are credited in the
-                final report.
+                place for Critical and High too. Testnet only. A valid finding may earn an XLM
+                reward, and you are credited in the final report.
               </p>
               <a href="/docs#adversarial" className="inline-flex items-center gap-1 text-brand hover:underline">
                 Scope, rules and the nineteen classes <ExternalLink size={11} />
