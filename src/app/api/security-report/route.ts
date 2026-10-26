@@ -15,6 +15,10 @@ import { BodyTooLargeError, readJsonCapped } from '@/lib/request-body'
 
 const MIN_FILL_MS = 5000
 const ALERTS_PER_HOUR = 20
+// The share of the Resend quota anonymous reports may spend in a day. The rest
+// is the monitor's: "deposits auto-halted" goes out on the same key, and a
+// report flood must not be what makes that email fail.
+const REPORT_EMAILS_PER_DAY = 10
 
 export async function POST(req: Request) {
   if (!isJsonRequest(req)) {
@@ -63,7 +67,12 @@ export async function POST(req: Request) {
     // are read.
     const alerts = await durableRateLimit('security-report:alerts', 3_600_000, ALERTS_PER_HOUR)
     if (alerts.ok) {
-      await sendAlert(reportAlert(id, parsed.report)).catch(() => undefined)
+      const email = await durableRateLimit(
+        'security-report:alert-emails',
+        86_400_000,
+        REPORT_EMAILS_PER_DAY
+      )
+      await sendAlert(reportAlert(id, parsed.report), { email: email.ok }).catch(() => undefined)
     }
 
     return NextResponse.json({ ok: true, ref: reportRef(id) })

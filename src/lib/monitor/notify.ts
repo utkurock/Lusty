@@ -127,9 +127,21 @@ async function sendEmail(a: Alert): Promise<ChannelResult> {
  * per-channel breakdown so callers (and the test endpoint) can see exactly
  * what was delivered, skipped, or failed. `delivered` is true if at least one
  * channel actually sent.
+ *
+ * `email: false` keeps the alert off email. Every email comes out of one
+ * Resend quota, and a caller fed by anonymous input passes it once its own
+ * share is spent, so the monitor's alerts still have quota left to use.
  */
-export async function sendAlert(alert: Alert): Promise<DeliveryResult> {
-  const results = await Promise.all([sendSlack(alert), sendEmail(alert)])
+export async function sendAlert(
+  alert: Alert,
+  { email = true }: { email?: boolean } = {},
+): Promise<DeliveryResult> {
+  const results = await Promise.all([
+    sendSlack(alert),
+    email
+      ? sendEmail(alert)
+      : Promise.resolve<ChannelResult>({ channel: 'email', status: 'skipped', reason: 'email budget spent' }),
+  ])
   return {
     delivered: results.some((r) => r.status === 'sent'),
     results,

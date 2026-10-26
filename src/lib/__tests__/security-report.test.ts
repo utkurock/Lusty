@@ -7,6 +7,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const inserted = vi.hoisted(() => [] as unknown[])
 const alerts = vi.hoisted(() => [] as any[])
+const alertOpts = vi.hoisted(() => [] as any[])
+const spent = vi.hoisted(() => new Set<string>())
 const alertFails = vi.hoisted(() => ({ value: false }))
 const limited = vi.hoisted(() => ({ value: false }))
 
@@ -20,12 +22,14 @@ vi.mock('@/lib/db-queries', () => ({
 }))
 
 vi.mock('@/lib/rate-limit', () => ({
-  durableRateLimit: async () => (limited.value ? { ok: false, retryAfter: 60 } : { ok: true }),
+  durableRateLimit: async (key: string) =>
+    limited.value || spent.has(key) ? { ok: false, retryAfter: 60 } : { ok: true },
 }))
 
 vi.mock('@/lib/monitor/notify', () => ({
-  sendAlert: async (a: unknown) => {
+  sendAlert: async (a: unknown, opts?: unknown) => {
     alerts.push(a)
+    alertOpts.push(opts)
     if (alertFails.value) throw new Error('slack down')
     return { delivered: true, results: [] }
   },
@@ -37,6 +41,8 @@ vi.mock('@/lib/admin-sessions', () => ({ validateSession: validate, revokeSessio
 beforeEach(() => {
   inserted.length = 0
   alerts.length = 0
+  alertOpts.length = 0
+  spent.clear()
   alertFails.value = false
   limited.value = false
   validate.mockReset()
@@ -89,6 +95,23 @@ describe('POST /api/security-report', () => {
     expect(alerts[0].title).toContain('LSR-007')
     // The reproduction stays in the database, out of the notification.
     expect(JSON.stringify(alerts[0])).not.toContain('settle again')
+  })
+
+  it('emails the alert while the day\'s email share lasts', async () => {
+    await post(REPORT)
+    expect(alertOpts[0]).toEqual({ email: true })
+  })
+
+  it('keeps alerts off email once the day\'s share is spent, so the monitor keeps its quota', async () => {
+    // Finding 57: report alerts and the monitor's critical alerts share one
+    // Resend key. Past REPORT_EMAILS_PER_DAY a report still pages Slack and
+    // is still stored, but sends no email.
+    spent.add('security-report:alert-emails')
+    const res = await post({ ...REPORT, severity: 'critical' })
+    expect(res.status).toBe(200)
+    expect(inserted).toHaveLength(1)
+    expect(alerts).toHaveLength(1)
+    expect(alertOpts[0]).toEqual({ email: false })
   })
 
   it('pages a Low as info', async () => {
