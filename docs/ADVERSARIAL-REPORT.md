@@ -10,16 +10,14 @@ here.
 | | Critical | High | Medium | Low | Total |
 |---|---|---|---|---|---|
 | Found | 1 | 8 | 9 | 40 | 58 |
-| Fixed and live | 1 | 8 | 7 | 37 | 53 |
-| Fixed, deploys next | 0 | 0 | 0 | 2 | 2 |
+| Fixed and live | 1 | 8 | 7 | 39 | 55 |
 | Open | 0 | 0 | 2 | 1 | 3 |
 
 Every Critical and High finding is fixed and running on `lusty.finance`. We retested them
-against the live site on 2026-10-25, apart from the few that need a signed, funded
-transaction or a Horizon outage. Our regression tests cover those.
+against the live site on 2026-10-25 and 2026-10-26, apart from the few that need a signed,
+funded transaction or a Horizon outage. Our regression tests cover those.
 
-Two Low findings (56 and 57) are fixed in code with regression tests and go live with the
-next deploy. Three findings are still open. Two are Medium. Both sit in the settlement path
+Three findings are still open. Two are Medium. Both sit in the settlement path
 of the live v4 contract and are fixed by deploying v5, which is due by 2026-11-20 (see "Open
 findings"). The third is Low and fails closed.
 
@@ -36,15 +34,17 @@ test in the same commit, redeployed, and the original scenario retried.
 | | |
 |---|---|
 | Application | `https://lusty.finance`, Stellar testnet |
-| Deployed commit | [`2e4dffb`](https://github.com/utkurock/Lusty/commit/2e4dffb), head of `main` |
+| Deployed commit | [`b7b672e`](https://github.com/utkurock/Lusty/commit/b7b672e), deployed 2026-10-26 |
 | XLM book | `CBJZGTCF2PJVHX2BNFTFZ2L2LX6DWD5JMTLHNCVYTSOD3BLVSXZRUCJZ` (vault v4) |
 | BTC book | `CBQEACXAOZMCU3YOUWDC3MWXDSQBWKNGKBA6XMRPY5D5JQRNP2HLMVEU` (vault v4) |
 | Admin | `GBDNJQDP4HJQH6WCJCYVYGTKDRYKZXQQSVEC4FOE24CVG4VRQU26IKEC` (2-of-3 multisig) |
 | Quoter | `GC7Z4LVQCUOU7FMRBX4WOGANARQGM4SZTACKMSQSMGIOO4KEAASHLOTX` |
 
-We checked that the site runs `2e4dffb` in three ways: the docs page shows text added in that
-commit, the CSP no longer allows `'unsafe-eval'` (`5435f35`), and `/api/swap` returns the
-canonical-hash error added in `93ca969`. Other addresses are in
+The site served `2e4dffb` during the retests of 2026-10-25 and was redeployed at `b7b672e` on
+2026-10-26 with the fixes for 56 and 57. We checked each version from the outside: the docs
+page shows the text that commit added (this report, for `b7b672e`), the CSP no longer allows
+`'unsafe-eval'` (`5435f35`), and `/api/swap` returns the canonical-hash error added in
+`93ca969`. Other addresses are in
 [`DEPLOYMENTS.md`](./DEPLOYMENTS.md).
 
 All fixes in this report are off-chain, in the API and the operator scripts, so none needed a
@@ -94,7 +94,7 @@ the live site; "test" means a regression test covers it.
 | 54 | If Reflector has no record for the exact expiry period, v4 falls back to `lastprice` and the first settler picks the price. | v5 | open, due 2026-11-20 |
 | 55 | On v4, a position not settled within about a day of oracle history is locked for good. | v5 | open, due 2026-11-20 |
 
-### Low: 37 fixed and live, two deploying next, one open
+### Low: 39 fixed, one open
 
 | # | Finding | Fix | Status |
 |---|---|---|---|
@@ -135,7 +135,7 @@ the live site; "test" means a regression test covers it.
 | 51 | Public chain reads were rate-limited by the caller's chosen address. | `f63d12c` | fixed |
 | 52 | Bridge crossings could earn deposit points through the APR backfill. | `b855903` | fixed |
 | 53 | One client could use up the faucet's global daily cap. | `93ca969` | fixed |
-| 56 | `hasTrustline` read a Horizon outage as "no trustline" and told writers to open one they already had. Only a 404 now means no trustline, and the co-signature answers an outage with `503 trustline_check_unavailable`. | `f57d560` | fixed, test |
+| 56 | `hasTrustline` read a Horizon outage as "no trustline" and told writers to open one they already had. Only a 404 now means no trustline, and the co-signature answers an outage with `503 trustline_check_unavailable`. | `f57d560` | fixed, retested |
 | 57 | Report alerts shared an email quota with the risk monitor's critical alerts. Reports now get at most 10 emails a day; past that they still reach Slack and the admin panel. | `1d7d734` | fixed, test |
 | 58 | A position can't be indexed once its opening transaction is past the RPC's event retention. | not a code fix | open |
 
@@ -144,8 +144,8 @@ regression test.
 
 ## Retests
 
-On 2026-10-25 we replayed each of these against `https://lusty.finance` at `2e4dffb`. Every
-request was refused with the error the fix introduced.
+We replayed each of these against `https://lusty.finance`, at `2e4dffb` on 2026-10-25 and at
+`b7b672e` on 2026-10-26 for 56. Every request got the answer the fix introduced.
 
 | # | Attack | Result |
 |---|---|---|
@@ -157,15 +157,18 @@ request was refused with the error the fix introduced.
 | 30 | `POST /api/swap` with a real 50 LUSD payment from 2026-09-19 | `400 funding_stale` |
 | 31 | `POST /api/vault/deposit` for XLM position #28 from another address | `403 owner_mismatch` |
 | 26 | `POST /api/vault/deposit` for position #28 with position #27's `txHash` | `409 open_mismatch` |
+| 56 | `POST /api/vault/authorize` on the BTC book from an account Horizon has never seen | `400 trustline_required` (the 404 branch) |
+| 56 | The same, from an account that holds the LBTC trustline | passes the check, stops at the placeholder entry |
 
 `node scripts/adversarial/refuse.mjs` simulates contract attacks on both live books without
 submitting anything. Each attempt failed with the expected error: `AlreadySettled`,
 `PositionNotFound`, `LastQuoter`, `InvalidLimit`, or a required admin signature for
 `set_limits` and quoter changes.
 
-`npx vitest run` at `2e4dffb` passes all 812 tests in 82 files. With the fixes for 56 and 57
-it passes 821 tests in 83 files; `trustline-check`, `security-report` and `notify-escape` cover
-those two, and each new test fails on the code before the fix. Findings 2, 4, 7, 27 and 28
+`npx vitest run` at `b7b672e` passes all 821 tests in 83 files. `trustline-check`,
+`security-report` and `notify-escape` cover 56 and 57, and each of their new tests fails on
+the code before the fix. A Horizon outage (56's other branch) and an alert flood (57) can't be
+staged against the live site without causing the problem, so those tests are the retest. Findings 2, 4, 7, 27 and 28
 can't be replayed live without a signed, funded transaction or a Horizon outage, so their
 tests are the retest: `swap-proof`, `anchor-bridge-proof`, `deposit-dedupe`, `payout-submit`
 and `quote-reservations`. `outage-fail-closed` takes each dependency down in turn and checks
@@ -212,7 +215,7 @@ ceiling and caps.
 ## Reproducing
 
 ```bash
-git checkout 2e4dffb && npm ci
+git checkout b7b672e && npm ci
 npx vitest run
 node scripts/adversarial/refuse.mjs
 ```
