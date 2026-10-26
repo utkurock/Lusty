@@ -1,8 +1,7 @@
 # Reproducing every protocol flow
 
-Runnable, from a clean checkout, against the deployed testnet instances. This is what to
-start from before reporting anything — a finding expressed as a diff against one of these
-is a finding that can be triaged in an hour instead of a week.
+Every flow below runs from a clean checkout against the deployed testnet instances. A
+finding written as a diff against one of them is the quickest to triage.
 
 Scope and severity: [`ADVERSARIAL.md`](./ADVERSARIAL.md). Addresses:
 [`DEPLOYMENTS.md`](./DEPLOYMENTS.md). How to report: [`REPORTING.md`](./REPORTING.md).
@@ -11,7 +10,7 @@ Scope and severity: [`ADVERSARIAL.md`](./ADVERSARIAL.md). Addresses:
 git clone https://github.com/utkurock/Lusty && cd Lusty && npm install
 ```
 
-Nothing below needs a `.env.local`. The published addresses are the defaults.
+Nothing below needs a `.env.local`; the published addresses are the defaults.
 
 ---
 
@@ -23,11 +22,9 @@ node scripts/reproduce/read.mjs BTC
 node scripts/reproduce/read.mjs BTC 3        # and position #3
 ```
 
-Prints `config()`, `quoters()`, `limits()`, `stats()`, the solvency invariant computed
-from the contract's own figures, and `exposure(kind, expiry)` for every open date.
-
-Everything is simulated, never submitted. The one account named is a probe that simulation
-requires to exist.
+Prints `config()`, `quoters()`, `limits()`, `stats()`, the solvency invariant and
+`exposure(kind, expiry)` for every open date. All of it is simulated; the one named account
+is a probe that simulation needs.
 
 **What to check first.** The solvency lines are the contract's own invariant:
 
@@ -35,20 +32,17 @@ requires to exist.
 balance(payout) − escrowed(opposite) ≥ owed(kind)
 ```
 
-A call pays cash and a put escrows cash, so the two legs share the cash balance; a put pays
-the underlying and a call escrows it. Neither leg may dip into what the other is holding
-for somebody else. If either line prints `*** BROKEN ***`, that is Critical on its own and
-needs no further exploit — report it with the output.
-
-The same output is how you check the published manifest rather than believing it: run it
-and compare against [`DEPLOYMENTS.md`](./DEPLOYMENTS.md) line by line.
+Cash pays calls and escrows puts; the underlying pays puts and escrows calls. Neither leg
+may dip into the other's escrow. `*** BROKEN ***` on either line is Critical on its own, so
+report it with the output. The same output lets you check
+[`DEPLOYMENTS.md`](./DEPLOYMENTS.md) line by line.
 
 ---
 
 ## 1. Quote
 
-The public quote endpoint is the single source of truth for what the vault will pay. It
-takes no key and is rate limited per IP.
+The public quote endpoint is the source of truth for what the vault pays. No key; rate
+limited per IP.
 
 ```sh
 BASE=https://lusty.finance
@@ -63,31 +57,23 @@ curl -s "$BASE/api/vault/quote?asset=BTC&side=call&expiry=2026-10-09T08:00:00.00
 curl -s "$BASE/api/vault/quote?asset=XLM&side=put&days=7&strike=0.21&util=0.4" | jq
 ```
 
-**Prefer `expiry` over `days`.** With a date, the tenor *and* the pool utilization are
-derived server-side by the same function the co-signature calls — so the quote you are
-shown was priced from the inputs the premium will actually be priced from. A
-caller-supplied `util` is a display convenience for exploring the curve; it cannot raise
-what the vault pays, because the authorize step reprices from the expiry regardless.
-
-Spot is fetched server-side, so a caller cannot bias a quote with a stale or inflated
-price. Attacking that claim is class 1 in [`ADVERSARIAL.md` §3](./ADVERSARIAL.md).
-
-The response carries the full derivation — realized σ, the σ sold at, the forward, the
-haircut, the ladder normalization — so "where does this APR come from" has an arithmetic
-answer rather than an assurance.
+**Prefer `expiry` over `days`.** With a date, the server derives tenor and utilization
+exactly as the co-signature does, so the quote matches the premium. A caller's `util` only
+explores the curve; authorize reprices from the expiry. Spot is fetched server-side
+(attacking that is class 1 in [`ADVERSARIAL.md` §3](./ADVERSARIAL.md)), and the response
+shows the full derivation: realized σ, σ sold at, forward, haircut, ladder normalization.
 
 **Things worth trying here:** an off-ladder strike nearer the money than any rung; a strike
 from one book against another book's `asset`; a tenor shorter than the book's declared
-minimum; an expiry that is not one the schedule keeps open; a `util` outside 0..1.
+minimum; an expiry the schedule does not keep open; a `util` outside 0..1.
 
 ---
 
 ## 2. Open a position — the co-signed write
 
-`open` requires authorization from **two** parties: the writer, who escrows the collateral,
-and the quoter, who attests the premium. Only one of them can be the transaction source, so
-the quoter's entry is signed on its own and merged in. The Stellar CLI cannot do this,
-which is why there is a script.
+`open` needs the writer's authorization (escrowing collateral) and the quoter's (attesting
+the premium). Only one can source the transaction, so the quoter's entry is signed
+separately and merged in, which the Stellar CLI cannot do.
 
 With the quoter's key (maintainers):
 
@@ -97,8 +83,8 @@ node scripts/verify-lifecycle.mjs BTC open            # 4 positions, prints ids
 node scripts/verify-lifecycle.mjs BTC stats           # pools, escrow, solvency
 ```
 
-Without it — which is the position an attacker is in — the quoter's signature comes from
-the public endpoint, exactly as the browser gets it:
+Without the key, as an attacker, get the quoter's signature from the public endpoint like
+the browser does:
 
 1. Build the `open` invocation against the book's instance and **simulate** it. The
    simulation returns the authorization entries the call needs.
@@ -117,17 +103,16 @@ the public endpoint, exactly as the browser gets it:
    }
    ```
 
-   The route reprices the premium from the engine rather than trusting `premium`, and
-   matches the authorization entry against that quote **byte for byte** — contract,
-   function, every argument, and everything nested beneath the call. A mismatch is
-   described rather than merely refused, so the response tells you which argument differed.
+   The route reprices instead of trusting `premium` and matches the entry against its own
+   quote byte for byte, down to every nested argument. A mismatch response names the
+   argument that differed.
 
-3. Rebuild the transaction carrying the returned quoter entry, sign as the writer, submit.
+3. Rebuild the transaction with the returned quoter entry, sign as the writer, submit.
 4. `POST /api/vault/deposit` with the `txHash` and the contract-assigned `positionId` to
-   index it. The route reads the position **off the ledger**, so it cannot be lied to about
-   what the position is — only about whether to record it.
+   index it. The route reads the position from the ledger; the caller only decides whether
+   it is recorded.
 
-`asset` absent means XLM, which is the Tranche 1 default and still honoured.
+No `asset` means XLM (the Tranche 1 default).
 
 **Things worth trying here:** an entry whose root matches and whose sub-invocations do not;
 a premium above the repriced quote; a strike outside the ladder; the same `positionId`
@@ -139,9 +124,8 @@ per-wallet epoch allowance. Classes 1, 2, 4, 5, 10 and 15.
 
 ## 3. Expiry and settlement — permissionless
 
-`settle` checks **no caller identity**. It prices the outcome from the oracle's reading at
-the position's own expiry and pays the position's owner. Anyone can settle anyone's
-position; the settler pays a fee and receives nothing.
+`settle` checks no caller identity: it prices from the oracle at the position's expiry and
+pays the owner. Anyone can settle; the settler pays the fee and gets nothing.
 
 ```sh
 node scripts/reproduce/read.mjs BTC 3     # is it expired? still open?
@@ -157,14 +141,12 @@ stellar contract invoke \
   -- settle --id 3
 ```
 
-The recorded lifecycle's six settlements were submitted exactly this way, from an account
-with no relationship to the writer, the quoter, the admin or the treasury — see
-[`TESTNET-EVIDENCE.md`](./TESTNET-EVIDENCE.md).
+The six settlements in [`TESTNET-EVIDENCE.md`](./TESTNET-EVIDENCE.md) were sent this way by
+an account unrelated to the writer, quoter, admin and treasury.
 
-**The deadline.** Reflector keeps about 24 hours of history. A position whose expiry has
-rolled out of that window can no longer be priced at its expiry, and the contract refuses
-rather than settling it against a price it was not written against. `read.mjs` shows the
-expiry; the sweep reports such positions as stranded.
+**The deadline.** Reflector keeps about 24 hours of history; after that a position cannot
+be priced at its expiry and will not settle. `read.mjs` shows the expiry, and the sweep
+reports such positions as stranded.
 
 **Things worth trying here:** settling before expiry; settling twice; settling a position
 whose expiry is outside the oracle window; settling with a price record from a neighbouring
@@ -175,13 +157,12 @@ position that is expired and inside the window refuse to settle. Classes 6 to 10
 
 ## 4. Claim
 
-There is nothing to claim. The contract pays at settlement, straight to the writer's
-wallet, in the same transaction that closes the position. A kept call returns its
-collateral; an assigned call pays the strike in cash and sends the collateral to the
-treasury; a kept put returns its cash; an assigned put delivers the underlying bought at
-the strike.
+Nothing to claim: settlement pays the writer's wallet in the closing transaction. A kept
+call returns its collateral; an assigned call pays the strike in cash and sends the
+collateral to the treasury; a kept put returns its cash; an assigned put delivers the
+underlying bought at the strike.
 
-Verify by reading the balances either side of a `settle`:
+Compare the balances either side of a `settle`:
 
 ```sh
 node scripts/reproduce/read.mjs BTC          # before
@@ -189,49 +170,38 @@ node scripts/verify-lifecycle.mjs BTC settle <id>
 node scripts/reproduce/read.mjs BTC          # after
 ```
 
-The arithmetic for one full run — four branches, one settlement price, every balance
-reconciled against the rule that produced it — is written out in
-[`TESTNET-EVIDENCE.md`](./TESTNET-EVIDENCE.md).
-
-A payout the writer cannot receive is a real failure mode: an assignment pays in a token
-that needs a trustline. `node scripts/deploy-vault.mjs BTC --check` reports whether the
-treasury can receive what an assignment would send it.
+[`TESTNET-EVIDENCE.md`](./TESTNET-EVIDENCE.md) reconciles one full run. Assignment payouts
+need a trustline; `node scripts/deploy-vault.mjs BTC --check` reports whether the treasury
+can receive them.
 
 ---
 
 ## 5. Fund the pools
 
-A book with empty pools refuses to write, correctly: a premium it cannot pay and an
-assignment it cannot deliver are the two promises a vault must never make.
+Empty pools refuse to write: they could not pay premiums or deliver assignments.
 
 ```sh
 node scripts/verify-lifecycle.mjs BTC fund 5000 0.5    # 5,000 cash, 0.5 underlying
 ```
 
-Funding is one-way. There is no withdrawal entrypoint, which is why
-`scripts/reproduce/read.mjs` prints the pool balances beside what is escrowed and owed
-against them — the only thing that can happen to funded capital is that it pays somebody.
-
-`fund` publishes a `fund` event naming which pool, so the indexer shows top-ups alongside
-deposits and settlements.
+Funding is one-way (no withdrawal entrypoint), so funded capital leaves only by paying
+someone; `scripts/reproduce/read.mjs` prints pool balances beside what is escrowed and
+owed. Each `fund` emits an event naming the pool for the indexer.
 
 ---
 
 ## 6. Admin
 
-Two entrypoints, both behind the admin: `set_limits` and the quoter set. The admin account
-is a **2-of-3 multisig** and cannot source a single-signature transaction at all.
-
-Read what is currently in force — no key needed:
+`set_limits` and the quoter set sit behind the admin, a 2-of-3 multisig that cannot source
+a single-signature transaction. Read what is in force:
 
 ```sh
 node scripts/reproduce/read.mjs XLM     # limits() and quoters(), off the chain
 ```
 
-The admin cannot take custody. It cannot move collateral, settle a position, or alter one
-after the fact. The quoter cannot either: its only power is to decline to co-sign. That
-separation is the point, and
-[`SECURITY.md`](./SECURITY.md) documents why the two accounts must be different.
+Neither admin nor quoter can take custody, move collateral, or settle or alter a position;
+the quoter can only decline to co-sign. [`SECURITY.md`](./SECURITY.md) explains why they
+must be different accounts.
 
 **Things worth trying here:** any admin action without the multisig; adding yourself to the
 quoter set; obtaining an admin session on the HTTP API without an allowlisted key; keeping
@@ -241,8 +211,8 @@ a session past a revocation; replaying a challenge or reusing a nonce. Classes 1
 
 ## 7. Protocol rails — faucet, swap, anchor
 
-These spend protocol funds rather than user collateral, and one of them has already been
-drained once (finding 1 in [`ADVERSARIAL.md` §6](./ADVERSARIAL.md)).
+These spend protocol funds; one was drained once (finding 1 in
+[`ADVERSARIAL.md` §6](./ADVERSARIAL.md)).
 
 ```sh
 BASE=https://lusty.finance
@@ -251,14 +221,11 @@ curl -s -X POST "$BASE/api/faucet/lusd" -d '{"address":"G…"}' -H 'content-type
 curl -s -X POST "$BASE/api/faucet/lbtc" -d '{"address":"G…"}' -H 'content-type: application/json'
 ```
 
-One claim per address per asset per day, with a per-address lifetime cap and a global daily
-cap behind it. Those caps and the rate limiter in front of them are all durable, so
-neither resets on a deploy.
+One claim per address per asset per day, under a per-address lifetime cap and a global
+daily cap; caps and rate limiter survive deploys.
 
-The swap desk pays out against a payment you claim to have made. It now requires a
-**successful** transaction, from the address claiming it, to the distributor, in the asset
-the direction names, and in the amount claimed — and it sizes the payout from the ledger's
-number, never the caller's.
+The swap desk pays only against a successful payment from the claiming address to the
+distributor, in the asset and amount claimed, sized from the ledger rather than the caller.
 
 **Things worth trying here:** proof that is forged, replayed, failed, partial, in the wrong
 asset, or from a different account; the same hash twice; a payment to a lookalike issuer's
@@ -281,9 +248,6 @@ curl -s -X POST https://lusty.finance/api/faucet/lbtc -d '{"address":"G…"}' -H
 
 ### What that reaches, and what it does not
 
-Worth stating as arithmetic rather than leaving you to discover it after a week of daily
-claims.
-
 | | faucet drip | lifetime, one address | global, one day |
 |---|---|---|---|
 | XLM | 10,000 (friendbot, once per account) | 10,000 | 1,000,000 |
@@ -299,18 +263,13 @@ Against the caps the contracts enforce:
 | `max_expiry_call` | 500,000 | **no** — 50 funded accounts | 5 | **no** — 100 addresses, 5 days |
 | `max_expiry_put` | 500,000 | no — 50 addresses, a day | 150,000 | no — 15 addresses, a day |
 
-So **every position cap is reachable by one tester and no expiry cap is**. Class 4 (limit
-evasion) is therefore only half testable from the faucet alone, and that is a gap in this
-program rather than a property worth defending.
+One tester can reach every position cap but no expiry cap, so class 4 (limit evasion) is
+only half testable from the faucet.
 
 **If a bound is what you are trying to test, ask.** Email the address in
-[`REPORTING.md`](./REPORTING.md) saying which cap and how much you need, and we will fund
-the accounts directly. LBTC is the constrained one — its whole supply was minted once and
-the vault's own pool comes out of it — so the answer there may be "we will raise the
-instance's cap for a day instead", which tests the same class.
-
-Being unable to reach a bound is itself worth reporting. We would rather raise it than have
-the class go untested and call the window complete.
+[`REPORTING.md`](./REPORTING.md) with the cap and amount, and we will fund accounts
+directly. For LBTC, whose supply was minted once and funds the vault's pool, we may raise
+the instance's cap for a day instead. An unreachable bound is worth reporting too.
 
 ---
 
@@ -321,33 +280,25 @@ node scripts/adversarial/refuse.mjs          # every book
 node scripts/adversarial/refuse.mjs BTC      # one
 ```
 
-One scripted attempt per class the chain can answer, run against the live instances,
-asserting that the vault refuses **and that it refuses for the right reason**. Nothing is
-submitted; it needs no key, no funded account and no permission, and it exits non-zero if
-anything gets through.
+One scripted attempt per class the chain can answer, against the live instances, asserting
+that the vault refuses for the right reason. It submits nothing, needs no key, funding or
+permission, and exits non-zero if anything gets through. Two details keep it honest:
 
-Two things it is careful about, because both are ways a harness like this lies:
+- **`require_auth` cannot be tested by expecting an error.** Simulation records the
+  signatures a call needs instead of rejecting, so `set_limits` from a stranger simulates
+  cleanly. The check is that the call demanded the admin's signature.
+- **An error code belongs to whichever contract raised it.** A token contract's error read
+  as the vault's names the wrong rule, so codes are interpreted only when the error names
+  the vault.
 
-- **`require_auth` cannot be tested by expecting an error.** Simulation *records* the
-  signatures a call would need rather than rejecting for their absence, so `set_limits`
-  from a stranger simulates cleanly and fails at submission. The assertion is therefore
-  "it demanded the admin's signature", which is the same guarantee and is checkable for
-  free.
-- **An error code belongs to whichever contract raised it.** A call that reaches a token
-  contract fails with the *token's* enum, and reading that against the vault's names the
-  wrong rule with total confidence. Codes are only interpreted when the error names the
-  vault.
-
-The classes it cannot reach are printed at the end of every run rather than omitted. A
-harness that reports "all clear" over a class it never ran is worse than one that reports
-nothing.
+Each run ends by listing the classes it cannot reach.
 
 ---
 
 ## What is not scripted yet
 
-The unprivileged open path in §2 is documented step by step but has no script of its own;
-today it is exercised through the browser or through `verify-lifecycle.mjs`, which needs
-the quoter's key. A script that walks it using only `/api/vault/authorize` — the same way
-an outside attacker would — is the missing piece, and it is what the scripted attack
-harness is built on top of.
+The unprivileged open path in §2 has no script; today it runs through the browser or
+`verify-lifecycle.mjs`, which needs the quoter's key. The scripted attack harness builds on
+the missing piece: a script that walks it using only `/api/vault/authorize`, as an outside
+attacker would.
+

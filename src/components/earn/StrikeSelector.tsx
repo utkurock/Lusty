@@ -34,7 +34,7 @@ import { ChevronDown, TrendingUp, TrendingDown } from 'lucide-react'
 const PROGRESS = {
   simulating: 'Preparing the position…',
   quoting: 'Getting the protocol signature…',
-  signing: 'Opening position — confirm in wallet',
+  signing: 'Opening position: confirm in wallet',
   submitting: 'Submitting to the network…',
 } as const
 
@@ -361,11 +361,11 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
     // unknown (positions read still pending or failed). Retry the read so a
     // second press can succeed once it recovers.
     if (checkingAllowance) {
-      setError('Checking your per-expiry allowance — try again in a moment.')
+      setError('Still checking your per-expiry allowance. Try again in a moment.')
       return
     }
     if (!allowanceVerified) {
-      setError("Couldn't verify your per-expiry allowance — deposits are paused until we can read it. Press again to retry.")
+      setError("Couldn't verify your per-expiry allowance, so deposits are paused until we can read it. Press again to retry.")
       loadWalletDeposits()
       return
     }
@@ -413,7 +413,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
     // never let the user lock funds in a deposit the server will 409.
     if (allowanceExceeded) {
       setError(
-        `You've used ${fmtAllowance(usedThisExpiry)} of ${fmtAllowance(walletAllowance)} ${allowanceUnit} for this expiry — ${fmtAllowance(remainingAllowance)} ${allowanceUnit} left. Lower the amount or pick another expiry.`
+        `You've used ${fmtAllowance(usedThisExpiry)} of ${fmtAllowance(walletAllowance)} ${allowanceUnit} for this expiry (${fmtAllowance(remainingAllowance)} ${allowanceUnit} left). Lower the amount or pick another expiry.`
       )
       return
     }
@@ -435,7 +435,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
         setSuccess(null)
         setError(
           `Your wallet is on a different account now (${live.slice(0, 4)}…${live.slice(-4)}). ` +
-            `Nothing was sent. The page has switched to it — check the amount and press again.`
+            `Nothing was sent. The page has switched to it, so check the amount and press again.`
         )
         return
       }
@@ -454,7 +454,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
       for (const needed of trustlinesRequired(asset)) {
         if (await hasTrustline(address, needed)) continue
         const code = needed.kind === 'issued' ? needed.code : 'XLM'
-        setSuccess(`Opening ${code} trustline — confirm in wallet`)
+        setSuccess(`Opening ${code} trustline: confirm in wallet`)
         const trustXdr = await buildTrustlineTx(address, needed)
         const signedTrust = await signTransaction(trustXdr)
         const trustTx = TransactionBuilder.fromXDR(signedTrust, Networks.TESTNET)
@@ -497,8 +497,8 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
         setSuccess(null)
         setError(
           `The quote moved while you were deciding: ${formatUsdc(premium)} → ` +
-            `${formatUsdc(paidPremium)} upfront. Nothing was sent — the strikes ` +
-            `above have been repriced, press again to take the new quote.`
+            `${formatUsdc(paidPremium)} upfront. Nothing was sent. The strikes ` +
+            `above have been repriced; press again to take the new quote.`
         )
         return
       }
@@ -698,7 +698,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
           <span className="text-ink font-semibold">{assetSymbol}</span>
         </div>
         <div className="flex items-center px-4 border-r border-line text-ink">
-          {type === 'call' ? 'Covered call' : 'Cash secured put'}
+          {type === 'call' ? 'Covered call' : 'Cash-secured put'}
         </div>
         <div className="relative border-r border-line-light" ref={dropdownRef}>
           <button
@@ -882,7 +882,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
       {vaultFull && (
         <div className="notice notice-error text-ink">
           This expiry&apos;s {type === 'call' ? 'covered-call' : 'cash-secured-put'} epoch is
-          full — pick a different expiry above with open capacity. Depositing here
+          full. Pick an expiry above that still has capacity; a deposit here
           would be rejected, so the button is disabled.
         </div>
       )}
@@ -905,7 +905,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
               You&apos;ve used your full{' '}
               {walletAllowance.toLocaleString()} {allowanceUnit} allowance for this
               expiry. Depositing more here would be rejected server-side (collateral
-              locked, no upfront) — pick another expiry, each has a fresh allowance.
+              locked, no upfront). Pick another expiry; each one has its own allowance.
             </>
           ) : (
             <>
@@ -916,7 +916,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
               <span className="text-ink font-semibold">
                 {fmtAllowance(remainingAllowance)} {allowanceUnit} left
               </span>
-              {allowanceExceeded && ' — lower the amount to stay within it.'}
+              {allowanceExceeded && '. Lower the amount to stay within it.'}
             </>
           )}
         </div>
@@ -927,7 +927,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
       {allowanceUnknown && (
         <div className="notice notice-warn">
           Couldn&apos;t verify your per-expiry allowance right now, so deposits are
-          paused — we never let collateral in without confirming you have room.
+          paused. Collateral is only accepted once we can confirm you have room.
           Press the button to retry.
         </div>
       )}

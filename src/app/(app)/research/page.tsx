@@ -124,7 +124,7 @@ export default function ResearchPage() {
       <PageHeader
         path="~/research"
         title="XLM research desk"
-        subtitle="The live tape, an hourly note on what it means for premium sellers, and the Stellar headlines behind it."
+        subtitle="The live chart, an hourly note on what it means for premium sellers, and recent Stellar headlines."
         action={
           <Link href="/earn" className="btn btn-primary press">
             Earn upfront
@@ -190,7 +190,7 @@ export default function ResearchPage() {
                 {commentary.source && commentary.source !== 'gemini' && (
                   <span
                     className="font-mono text-micro uppercase tracking-wider px-2 py-0.5 rounded-sm border border-line text-ink-2"
-                    title="Written from the market data by a fixed rule, not by the model — the model was unreachable."
+                    title="Written from the market data by a fixed rule because the model was unreachable."
                   >
                     rule-based
                   </span>
@@ -243,7 +243,7 @@ export default function ResearchPage() {
           <EmptyState
             icon={Newspaper}
             title="No headlines right now."
-            hint="The feed is polled every two minutes; anything new lands here on its own."
+            hint="The feed is checked every two minutes and new headlines appear here on their own."
           />
         ) : (
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">

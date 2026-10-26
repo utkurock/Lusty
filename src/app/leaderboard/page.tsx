@@ -38,6 +38,10 @@ type SortKey = 'rank' | 'points' | 'totalDeposited' | 'totalPremium'
 export default function LeaderboardPage() {
   const { connected, address } = useWalletContext()
   const [sortKey, setSortKey] = useState<SortKey>('rank')
+  // A phone has room for one figure beside the wallet: the one the table is
+  // sorted by, or points when it is sorted by rank. sm and up show all three.
+  const mobileMetric: SortKey = sortKey === 'rank' ? 'points' : sortKey
+  const metricCell = (k: SortKey) => (k === mobileMetric ? '' : 'hidden sm:block')
   const PAGE_SIZE = 10
   const [page, setPage] = useState(0)
   const [rows, setRows] = useState<LeaderRow[]>([])
@@ -254,14 +258,14 @@ export default function LeaderboardPage() {
           </div>
         </div>
 
-        <div className="scroll-slim overflow-x-auto">
-          <div className="min-w-[600px] space-y-2">
-          <div className="label grid grid-cols-[56px_1fr_120px_140px_140px] px-5">
+        <div className="scroll-slim sm:overflow-x-auto">
+          <div className="sm:min-w-[600px] space-y-2">
+          <div className="label grid grid-cols-[40px_1fr_auto] sm:grid-cols-[56px_1fr_120px_140px_140px] px-3 sm:px-5">
             <div>#</div>
             <div>wallet</div>
-            <div className="text-right">points</div>
-            <div className="text-right">volume</div>
-            <div className="text-right">upfront</div>
+            <div className={'text-right ' + metricCell('points')}>points</div>
+            <div className={'text-right ' + metricCell('totalDeposited')}>volume</div>
+            <div className={'text-right ' + metricCell('totalPremium')}>upfront</div>
           </div>
 
           {/* The pinned row is for when your own row is somewhere you cannot see
@@ -271,19 +275,19 @@ export default function LeaderboardPage() {
             !sorted
               .slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE)
               .some((r) => r.address === yourRow.address) && (
-            <div className="grid grid-cols-[56px_1fr_120px_140px_140px] items-center px-5 h-row rounded-sm border border-brand bg-brand/10 shadow-button">
+            <div className="grid grid-cols-[40px_1fr_auto] sm:grid-cols-[56px_1fr_120px_140px_140px] items-center gap-x-2 px-3 sm:px-5 h-row rounded-sm border border-brand bg-brand/10 shadow-button">
               <div className="font-mono text-caption text-brand font-bold">YOU</div>
               <div className="font-mono text-caption text-ink truncate flex items-center gap-2">
                 <span className="num text-ink-2">#{yourRow.rank}</span>
                 <span className="font-semibold">{formatAddress(yourRow.address)}</span>
               </div>
-              <div className="text-right num text-body text-ink font-bold">
+              <div className={'text-right num text-body text-ink font-bold ' + metricCell('points')}>
                 {yourRow.points.toLocaleString()}
               </div>
-              <div className="text-right num text-caption text-ink-2">
+              <div className={'text-right num text-caption text-ink-2 ' + metricCell('totalDeposited')}>
                 ${yourRow.totalDeposited.toLocaleString()}
               </div>
-              <div className="text-right num text-caption text-accent-green">
+              <div className={'text-right num text-caption text-accent-green ' + metricCell('totalPremium')}>
                 ${yourRow.totalPremium.toLocaleString()}
               </div>
             </div>
@@ -307,7 +311,7 @@ export default function LeaderboardPage() {
               <EmptyState
                 icon={Trophy}
                 title="No participants yet."
-                hint="Be the first to deposit — every covered call and every cash-secured put earns points the moment the upfront lands."
+                hint="Be the first to deposit. Every covered call and cash-secured put earns points as soon as its upfront is paid."
               />
             </div>
           )}
@@ -317,7 +321,7 @@ export default function LeaderboardPage() {
             <div
               key={row.address}
               className={
-                'card-interactive grid grid-cols-[56px_1fr_120px_140px_140px] items-center px-5 h-row ' +
+                'card-interactive grid grid-cols-[40px_1fr_auto] sm:grid-cols-[56px_1fr_120px_140px_140px] items-center gap-x-2 px-3 sm:px-5 h-row ' +
                 (isYou
                   /* Your own row, marked where it belongs rather than lifted
                      out of the order — the rank beside it is the point. */
@@ -334,13 +338,13 @@ export default function LeaderboardPage() {
                   </span>
                 )}
               </div>
-              <div className="text-right num text-body text-ink font-semibold">
+              <div className={'text-right num text-body text-ink font-semibold ' + metricCell('points')}>
                 {row.points.toLocaleString()}
               </div>
-              <div className="text-right num text-caption text-ink-2">
+              <div className={'text-right num text-caption text-ink-2 ' + metricCell('totalDeposited')}>
                 ${row.totalDeposited.toLocaleString()}
               </div>
-              <div className="text-right num text-caption text-accent-green">
+              <div className={'text-right num text-caption text-accent-green ' + metricCell('totalPremium')}>
                 ${row.totalPremium.toLocaleString()}
               </div>
             </div>

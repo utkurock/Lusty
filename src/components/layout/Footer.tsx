@@ -7,7 +7,8 @@ export function Footer() {
     return null
   return (
     <footer className="w-full border-t border-line-light bg-surface mt-16">
-      <div className="max-w-content mx-auto px-6 py-8 flex flex-col md:flex-row justify-between items-center gap-4">
+      {/* Bottom padding clears the feedback and report buttons fixed to the corners. */}
+      <div className="max-w-content mx-auto px-6 pt-8 pb-24 flex flex-col md:flex-row justify-between items-center gap-4">
         <div className="font-mono text-caption text-ink-2">
           lusty_ // earn yield upfront on stellar
         </div>

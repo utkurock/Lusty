@@ -126,7 +126,7 @@ export function SecurityReportWidget() {
       track('security_report_submit', { severity, attackClass }, address)
     } catch {
       setStatus('error')
-      setError('Network error. Try again — nothing you typed is lost.')
+      setError('Network error. Try again; nothing you typed is lost.')
     }
   }
 
@@ -134,16 +134,16 @@ export function SecurityReportWidget() {
 
   return (
     <>
-      {/* Sits directly above the feedback button (bottom-6, h-10). */}
+      {/* Bottom-right, across from the feedback button. The admin trigger sits above it. */}
       <button
         onClick={openForm}
-        className="press fixed bottom-[4.5rem] left-6 z-40 h-10 px-3 rounded-sm border border-line bg-card hover:bg-raised text-ink font-mono text-body flex items-center gap-2 shadow-sm transition"
-        title={`Report a vulnerability — adversarial window open until ${WINDOW_CLOSES ? day(WINDOW_CLOSES) : 'mainnet'}`}
+        className="press fixed bottom-6 right-6 z-40 h-10 px-3 rounded-sm border border-line bg-card hover:bg-raised text-ink font-mono text-body flex items-center gap-2 shadow-sm transition"
+        title={`Report a vulnerability (adversarial window open until ${WINDOW_CLOSES ? day(WINDOW_CLOSES) : 'mainnet'})`}
         aria-label="Report a vulnerability"
       >
         <span className="relative flex">
           <ShieldAlert size={14} />
-          <span className="absolute -top-1 -right-1 w-1.5 h-1.5 rounded-full bg-accent-red animate-pulse" />
+          <span className="absolute -top-1 -right-1 w-1.5 h-1.5 rounded-full bg-accent-red" />
         </span>
         <span className="hidden sm:inline">report vulnerability</span>
       </button>
@@ -154,7 +154,7 @@ export function SecurityReportWidget() {
             <div className="w-12 h-12 rounded-full bg-accent-green/15 flex items-center justify-center">
               <Check size={24} className="text-accent-green" />
             </div>
-            <p className="font-mono text-body text-ink">Report received{ref ? ` — ${ref}` : ''}</p>
+            <p className="font-mono text-body text-ink">Report received{ref ? `: ${ref}` : ''}</p>
             <p className="font-mono text-caption text-ink-2 max-w-sm">
               {urgent
                 ? 'Critical and High are acknowledged the same day.'
@@ -177,8 +177,8 @@ export function SecurityReportWidget() {
                 {WINDOW_CLOSES ? `${day(WINDOW_CLOSES)} (UTC)` : 'mainnet'}
               </p>
               <p>
-                Reports here are private — only the maintainers read them, so this is the right
-                place for Critical and High too. Testnet only. A valid finding may earn an XLM
+                Only the maintainers read reports sent here, so this is the right place for
+                Critical and High findings too. Testnet only. A valid finding may earn an XLM
                 reward, and you are credited in the final report.
               </p>
               <a href="/docs#adversarial" className="inline-flex items-center gap-1 text-brand hover:underline">
@@ -312,7 +312,7 @@ export function SecurityReportWidget() {
                   value={fields.credit}
                   onChange={set('credit')}
                   maxLength={100}
-                  placeholder="Name or handle — blank for anonymous"
+                  placeholder="Name or handle, or leave blank to stay anonymous"
                   className={inputClass}
                 />
               </div>
@@ -348,7 +348,7 @@ export function SecurityReportWidget() {
             </button>
 
             <p className="font-mono text-tiny text-ink-2 text-center">
-              Prefer email or GitHub? Both still work —{' '}
+              Prefer email or GitHub? Both still work; see{' '}
               <a
                 href="https://github.com/utkurock/Lusty/blob/main/docs/REPORTING.md"
                 target="_blank"

@@ -30,7 +30,7 @@ export function PositionCard({
           <div>
             <div className="font-mono font-semibold text-ink">{asset}</div>
             <div className="font-mono text-caption text-ink-2">
-              {type === 'call' ? 'Covered Call' : 'Cash Secured Put'}
+              {type === 'call' ? 'Covered call' : 'Cash-secured put'}
             </div>
           </div>
         </div>

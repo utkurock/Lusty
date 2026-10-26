@@ -136,8 +136,8 @@ export function OnChainActivity({ address }: { address?: string | null }) {
         {!loading && events.length === 0 && (
           <div className="p-5 font-mono text-caption text-ink-2">
             {mine
-              ? 'Nothing yet — this wallet has written no positions the ledger or our record still holds.'
-              : 'Nothing yet — no ledger events in the lookback window and no deposits on record.'}
+              ? 'Nothing yet. Neither the ledger nor our record still holds a position from this wallet.'
+              : 'Nothing yet: no ledger events in the lookback window and no deposits on record.'}
           </div>
         )}
 
@@ -152,7 +152,7 @@ export function OnChainActivity({ address }: { address?: string | null }) {
                 className={`shrink-0 uppercase tracking-wider text-micro ${l.tone}`}
                 title={
                   e.source === 'mirror'
-                    ? 'Older than the RPC\u2019s event window — read from this app\u2019s record of the deposit.'
+                    ? 'Older than the RPC\u2019s event window, so it is read from this app\u2019s record of the deposit.'
                     : 'Read from the ledger.'
                 }
               >

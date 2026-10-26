@@ -51,7 +51,7 @@ const Next = ({ children }: { children: React.ReactNode }) => (
 
 export const ARCHITECTURE_TOC: [string, string][] = [
   ['summary', '1. Summary'],
-  ['rails', '2. Two rails, one engine'],
+  ['rails', '2. How the pieces fit'],
   ['building-blocks', '3. Stellar building blocks'],
   ['contract', '4. The Soroban vault'],
   ['oracle', '5. Reflector oracle integration'],
@@ -66,11 +66,10 @@ export function ArchitectureBody() {
   return (
     <>
         <p className="text-lg text-ink-2 leading-relaxed">
-          An on-chain options-yield protocol: sell covered calls and
-          cash-secured puts on XLM, receive the premium up front, and settle at
-          expiry against the Reflector oracle. This document describes the
-          system that exists today and the Stellar integration this grant
-          completes.
+          An options-yield protocol on Stellar testnet: write covered calls and
+          cash-secured puts on XLM or BTC, take the premium up front, and settle
+          at expiry against the Reflector oracle. This is the system as it runs
+          today and what the grant still covers.
         </p>
 
         <div className="mt-8 rounded-lg overflow-hidden border border-line bg-inverse text-cream aspect-[16/6] flex flex-col items-center justify-center font-mono">
@@ -83,351 +82,277 @@ export function ArchitectureBody() {
         {/* 1 */}
         <H2 id="summary">1. Summary</H2>
         <P>
-          Lusty lets an XLM holder earn yield by writing options. You pick a
-          strike and an expiry, deposit collateral, and the premium lands in
-          your wallet immediately. At expiry the position settles against an
-          on-chain price: your collateral comes back, or you are assigned at the
-          strike you chose. Either way the premium is yours.
-        </P>
-        <P>
-          The protocol runs on two rails that share one pricing engine and one
-          oracle. The <strong>server rail</strong> on Stellar Classic is the
-          production testnet app. The <strong>Soroban rail</strong> is the
-          trust-minimized version: a deployed contract that escrows collateral,
-          pays the premium atomically, and settles permissionlessly against
-          Reflector. Both rails settle a given position at the same number,
-          because both read the same Reflector feed pinned to the same expiry
-          timestamp.
+          A writer picks a strike and expiry and deposits collateral. One
+          Soroban transaction escrows it in the vault contract and pays the
+          premium. At expiry anyone can call <Code>settle(id)</Code>, which
+          prices the position at Reflector&apos;s expiry reading and returns the
+          collateral or assigns it at the strike. The server only prices: its
+          quoter key co-signs premiums under an on-chain ceiling and cannot
+          touch collateral or settlement. The contract is the source of truth;
+          the database mirrors it.
         </P>
         <Today>
-          The Soroban vault is deployed on testnet and has settled real ITM and
-          OTM positions end to end against the live Reflector feed. The server
-          rail is the user-facing app at lusty.finance. Pricing and settlement
-          already run on-chain; custody is the one trust assumption still on the
-          server rail.
+          Two vault v4 instances run from one wasm hash, an XLM book and a BTC
+          book with LBTC collateral. Positions on both have settled end to end
+          against the live Reflector feed, four of them from an unrelated
+          account. The pre-custody operational book was settled in full and its
+          payout route deleted, so no request path can move user collateral.
         </Today>
 
         {/* 2 */}
-        <H2 id="rails">2. Two rails, one engine</H2>
+        <H2 id="rails">2. How the pieces fit</H2>
         <P>
-          Splitting the system this way is deliberate. The server rail let us
-          ship a complete, hardened product and a real pricing engine without
-          waiting on contract work; the Soroban rail removes the custody and
-          settlement trust assumptions one at a time. The migration is a matter
-          of moving each responsibility from the server to the contract, not a
-          rewrite.
+          Pricing needs market data, so it runs off chain. Custody and
+          settlement move money, so they run on chain. The server can shape a
+          position&apos;s terms before it exists, never its outcome.
         </P>
-        <Pre>{`                          ┌──────────────────────────┐
-        user wallet ──────►│   Pricing engine (shared)│
-   (Freighter / xBull /    │  Black-76 + vol + forward│
-    Albedo / Lobstr)       └────────────┬─────────────┘
-                                        │ same quote
-                  ┌─────────────────────┴─────────────────────┐
-                  ▼                                            ▼
-       ┌──────────────────────┐                  ┌────────────────────────┐
-       │   SERVER RAIL        │                  │   SOROBAN RAIL         │
-       │  Stellar Classic     │                  │  smart contract        │
-       │                      │                  │                        │
-       │ • distributor holds  │                  │ • contract escrows     │
-       │   collateral         │                  │   collateral (SAC)     │
-       │ • server pays premium│                  │ • premium paid atomic  │
-       │ • DB position ledger │                  │   in deposit()         │
-       └──────────┬───────────┘                  └───────────┬────────────┘
-                  │                                          │
-                  └──────────────┬───────────────────────────┘
-                                 ▼
-                  ┌──────────────────────────────┐
-                  │  Reflector oracle (Soroban)  │
-                  │  XLM/USD, price @ expiry      │
-                  └──────────────────────────────┘`}</Pre>
+        <Pre>{`  vol.ts ─┐
+forward.ts├─► smile.ts ─► pricing.ts ─► pricing-server.ts   quote engine
+          ┘                                    │
+                                               ▼
+      browser ──► /api/vault/quote ──────► displayed APR
+         │
+         │  writer picks a strike, wallet builds open()
+         ▼
+      /api/vault/authorize ──► quoter co-signs ONE auth entry
+         │
+         ▼
+      vault contract: escrow + premium, one atomic transaction
+         │
+         ▼
+      settle(id) ──► Reflector price AT EXPIRY ──► owner is paid`}</Pre>
 
         {/* 3 */}
         <H2 id="building-blocks">3. Stellar building blocks</H2>
         <P>
-          Lusty is built from Stellar primitives end to end. Nothing in the
-          settlement path is off-chain except the realized-volatility history
-          used as a pricing input.
+          The settlement path is entirely on chain. Only quote inputs come from
+          off chain.
         </P>
 
         <H3>Soroban smart contracts</H3>
         <P>
-          The vault is a Rust/Soroban contract (<Code>contracts/vault</Code>).
-          It escrows collateral, pays premiums from a cash pool, and settles
-          positions. It is deployed on testnet and its WASM is reproducible from
-          source. See section 4 below.
+          The vault (<Code>contracts/vault</Code>, Rust) escrows collateral,
+          pays premiums from a cash pool and settles. Each underlying has its
+          own instance, so books never share a pool.
         </P>
 
         <H3>Reflector oracle (the integration target)</H3>
         <P>
-          Settlement price comes from <strong>Reflector</strong>, the Stellar
-          ecosystem oracle. On the Soroban rail the vault makes a
-          cross-contract call to Reflector&apos;s{' '}
-          <Code>price(asset, timestamp)</Code>; on the server rail the same feed
-          is read through Soroban RPC simulation. This is the building block the
-          grant integrates against, and the integration is live, not planned.
-          See section 5 below.
+          The vault calls Reflector&apos;s <Code>price(asset, timestamp)</Code>{' '}
+          on its book&apos;s feed; the server reads the same feed through
+          Soroban RPC for spot and monitoring. The integration is live.
         </P>
 
         <H3>Stellar Asset Contract (SAC)</H3>
         <P>
-          Collateral and cash move as SAC tokens. The vault holds native XLM
-          through its SAC (<Code>CDLZ…CYSC</Code>) and pays premiums in a cash
-          SAC. The contract is cash-token agnostic: a constructor parameter
-          selects the cash asset, so the same WASM runs with LUSD on testnet and
-          Circle&apos;s native USDC on mainnet.
+          XLM (<Code>CDLZ…CYSC</Code>) and LBTC move as SAC collateral, LUSD as
+          SAC cash. The cash token is a constructor parameter, so the same wasm
+          runs on Circle&apos;s native USDC on mainnet.
         </P>
 
         <H3>Stellar Classic: multisig, trustlines, payments</H3>
         <List>
           <li>
-            <strong>Multisig.</strong> The LUSD issuer requires 2-of-3
-            signatures for every operation, including minting. The distributor
-            keeps payments hot (bounded by the deposit caps) and requires 2-of-3
-            for any signer or threshold change.
+            The vault admin is a 2-of-3 multisig, verified on testnet by a
+            transaction rejected with one signature and accepted with two. The
+            LUSD issuer needs 2 of 3 for every operation, minting included.
           </li>
           <li>
-            <strong>Trustlines.</strong> The server rail verifies a recipient
-            holds the required trustline before any payout, and rejects
-            otherwise instead of failing on-chain.
+            The quoter refuses a BTC position whose writer lacks the LBTC
+            trustline an assigned put would pay into.
           </li>
           <li>
-            <strong>Payments &amp; Horizon.</strong> Deposits are verified
-            against Horizon: the server confirms the source account, destination
-            and amount of the on-chain payment before recording a position.
+            The swap desk and USDC bridge verify each funding payment on Horizon
+            before paying out.
           </li>
         </List>
 
         <H3>Soroban RPC</H3>
         <P>
-          The server rail reads Reflector through Soroban RPC{' '}
-          <Code>simulateTransaction</Code> — a free, read-only simulation that
-          signs nothing and touches no key. This is what lets both rails share
-          one oracle source code path.
+          Reads use <Code>simulateTransaction</Code>, which signs nothing. The
+          earn flow also simulates <Code>open</Code> to find the auth entry the
+          quoter must sign.
         </P>
 
         {/* 4 */}
         <H2 id="contract">4. The Soroban vault</H2>
         <P>
-          The contract closes the full money loop: escrow, premium, settlement.
+          Calls and puts share escrow, premium and settlement, and differ only
+          in which token is escrowed and which side of the strike assigns.
         </P>
-        <Pre>{`fund(from, amount)
-    permissionless top-up of the cash pool
-
-deposit(owner, amount, strike, expiry, premium) -> id
+        <Pre>{`open(owner, kind, amount, strike, expiry, premium, quoter) -> id
     • require_auth(owner)   writer signs the collateral transfer
-    • require_auth(quoter)  the pricing engine co-signs the premium (RFQ)
-    • escrow collateral (SAC) + pay premium from the pool — one atomic tx
+    • require_auth(quoter)  a member of the quoter set co-signs the premium
+    • refuses a position over its limits, a premium over max_premium_bps
+      of the collateral at the oracle price, or one the pools cannot cover
+    • escrow collateral + pay premium from the cash pool, one atomic tx
 
 settle(id) -> "kept" | "assigned"
-    • permissionless; outcome is deterministic from the oracle
-    • price@expiry  > strike -> assigned: collateral to treasury,
-                                strike value paid to writer in cash
-    • price@expiry <= strike -> kept: collateral returned whole`}</Pre>
+    • permissionless; the outcome follows from the oracle price at expiry
+    • call, price > strike -> collateral to treasury, strike value to writer
+    • put,  price < strike -> cash to treasury, underlying at strike to writer
+    • otherwise kept       -> collateral returned whole
+
+fund / fund_underlying                  permissionless pool top-ups
+set_limits, add_quoter, remove_quoter   admin only`}</Pre>
         <P>
-          Two design choices matter for trust. First, <strong>deposit is
-          dual-authorized</strong>: the writer and the protocol&apos;s quoter
-          key both sign, so neither can set the premium unilaterally — the
-          on-chain equivalent of an RFQ quote. Custody and settlement never
-          depend on the quoter. Second, <strong>settle is permissionless</strong>:
-          anyone can trigger it because the outcome is fully determined by the
-          oracle price at expiry, so a writer never depends on the protocol
-          being online to get paid.
+          Opening needs both the writer and a quoter, so neither sets the
+          premium alone, an on-chain RFQ. The quoter prices inside{' '}
+          <Code>max_premium_bps</Code> (2,000, so 20% of collateral), which only
+          the admin can widen, so the two are separate accounts. Settlement never
+          consults a quoter, so writers get paid without the protocol online.
+          There is no upgrade entrypoint: the code under an open position cannot
+          change, and a fix means redeploying.
         </P>
 
         {/* 5 */}
         <H2 id="oracle">5. Reflector oracle integration</H2>
         <P>
-          Settlement is pinned to the oracle price <strong>at the expiry
-          timestamp</strong>, normalized to the feed&apos;s 300-second
-          resolution. This is the core economic invariant: when the writer
-          chooses to claim cannot change the outcome. Without it, a covered-call
-          writer could wait for a post-expiry dip and always claim &quot;kept&quot;,
-          dodging assignment and leaving the vault structurally unhedged.
+          Settlement uses the price <strong>at the expiry timestamp</strong>,
+          normalized to the feed&apos;s 300-second resolution, so settling later
+          changes nothing. Otherwise a call writer could wait for a post-expiry
+          dip and always claim &quot;kept&quot;.
         </P>
         <H3>Fail-closed price sourcing</H3>
-        <P>
-          Reflector retains roughly 24 hours of history. The price resolution is
-          ordered so it is always expiry-pinned and never silently degrades to a
-          live price:
-        </P>
         <List>
           <li>
-            <strong>Primary:</strong> Reflector{' '}
-            <Code>price(XLM, expiry_period)</Code> — the historical record at
-            the expiry minute.
+            First, <Code>price(asset, expiry_period)</Code>, the expiry record.
+            Reflector keeps about 24 hours of history.
           </li>
           <li>
-            <strong>Prompt-claim fallback:</strong> the live{' '}
-            <Code>lastprice</Code>, accepted only when the claim happens within
-            the staleness window of expiry (before the period record is
-            queryable). A late claim cannot use it.
+            Before that record is queryable, <Code>lastprice</Code>, only if at
+            most an hour old.
           </li>
-          <li>
-            <strong>Durable fallback (server rail):</strong> the Binance 1-minute
-            kline at the expiry minute — also expiry-pinned, retained
-            effectively forever.
-          </li>
-          <li>
-            <strong>Otherwise:</strong> the settlement is refused. The contract
-            reverts; the server returns an error. No expired position is ever
-            settled at a live price.
-          </li>
+          <li>Otherwise the call reverts. No expired position settles at a live price.</li>
         </List>
         <P>
-          A stale or empty feed therefore blocks settlement rather than settling
-          at a wrong price — the same fail-closed rule the contract and the
-          server enforce identically.
+          Opening a call follows the same rule, since its premium ceiling needs a
+          price; puts, collateralized in cash, keep trading through an outage.
+          The undeployed v5 stores each expiry price on chain at first
+          settlement and releases an unpriced position as kept after 30 days.
         </P>
 
         {/* 6 */}
         <H2 id="flows">6. End-to-end flows</H2>
-        <H3>Deposit (Soroban rail)</H3>
-        <Pre>{`writer ──build tx──► deposit(owner, amount, strike, expiry, premium)
-        │
-        ├─ require_auth(owner)   + require_auth(quoter)
-        ├─ token(collateral).transfer(owner -> contract)   [escrow]
-        ├─ token(cash).transfer(contract -> owner, premium) [atomic payout]
-        └─ store Position{open}, emit "deposit"
+        <H3>Deposit</H3>
+        <Pre>{`browser ──► /api/vault/quote        price the ladder, commit to nothing
+writer picks a strike ──► simulate open() for its auth entries
+        ──► /api/vault/authorize    re-price, check every argument,
+                                    quoter signs one entry
+wallet signs ──► open(owner, kind, amount, strike, expiry, premium, quoter)
+        ├─ require_auth(owner) + require_auth(quoter)
+        ├─ collateral: owner -> contract          [escrow]
+        ├─ cash: contract -> owner, premium       [atomic payout]
+        └─ store Position, emit event
                                    ▼
                  premium is in the writer's wallet in the same ledger`}</Pre>
+        <P>
+          The server re-prices and refuses more than 25 bps over a fresh quote,
+          then checks the contract, function and all seven arguments byte for
+          byte before signing. The signature lasts about eight minutes and
+          Soroban&apos;s nonce stops replay. Collateral moves only on the
+          writer&apos;s signature.
+        </P>
         <H3>Settlement</H3>
         <Pre>{`anyone ──► settle(id)            (contract entrypoint, permissionless)
    │
    ├─ load Position; require expiry in the past; require not settled
-   ├─ price = Reflector.price(XLM, expiry)          [expiry-pinned]
-   │     └─ missing or stale -> revert               [fail-closed]
-   ├─ assigned (price > strike): collateral -> treasury,
-   │                             strike value -> writer (cash)
-   ├─ kept     (price <= strike): collateral -> writer
+   ├─ price = Reflector.price(feed, expiry)        [expiry-pinned]
+   │     └─ missing or stale -> revert              [fail-closed]
+   ├─ assigned: collateral -> treasury,
+   │            other leg at the strike -> writer
+   ├─ kept:     collateral -> writer
    └─ mark settled, emit "settle"`}</Pre>
         <P>
-          No server takes part. The caller pays the transaction fee and receives
-          nothing for it, which was demonstrated on chain by settling four
-          positions from an unrelated account. A scheduled runner
-          (<Code>/api/cron/settle</Code>) closes expired positions so writers do
-          not have to send the transaction themselves, but it holds no privilege
-          the caller above does not — anyone can close the same positions on the
-          same terms.
-        </P>
-        <P>
-          Settlement does expire, though. The price the contract needs is the
-          oracle&apos;s reading for the expiry period, and Reflector keeps about
-          a day of history; once that reading is pruned the contract fails
-          closed and the collateral stays escrowed, since there is no admin
-          override and no upgrade entrypoint. Permission to settle is
-          universal — the obligation to do it in time is not optional.
-        </P>
-        <P>
-          There is no server-side payout path any more. The route that settled
-          positions on the old distributor rail could move user collateral,
-          which is the assumption contract custody exists to remove; its book
-          was settled in full and the route was deleted rather than left
-          disabled.
+          No server takes part; the caller pays the fee and gains nothing. A
+          runner (<Code>/api/cron/settle</Code>, every two hours) closes expired
+          positions with no privilege anyone else lacks. It has a deadline: once
+          Reflector prunes the expiry reading, about a day later, v4 fails
+          closed and the collateral stays escrowed with no admin override, so
+          the runner reports each position&apos;s deadline. The old server
+          payout route, which could move user collateral, was deleted after its
+          book was settled.
         </P>
 
         {/* 7 */}
         <H2 id="pricing">7. Pricing engine</H2>
         <P>
-          One engine (<Code>src/lib/pricing-server.ts</Code>) prices everything
-          the UI shows and everything the vault pays. There is no second
-          adjustment layer, so the quoted number is the paid number.
+          One engine (<Code>src/lib/pricing-server.ts</Code>) prices what the UI
+          shows and the vault pays, with no second adjustment layer.
         </P>
-        <Pre>{`σ_realized  ← XLM price history (EWMA, RiskMetrics λ=0.94)
-σ_offered   = σ_realized × 1.10 + 0.03      vol risk premium, capped 100%
-F           ← forward from perp funding      (≈ spot for weeklies)
-P_fair      = Black-76(side, F, K, T, σ_offered)
-APR ladder  : nearest strike pinned to a time-scaled ceiling,
-              farther strikes fall on the Black-76 gradient
-× taper     : offered APR falls linearly with pool utilization
-− fee       : 10% of the upfront, taken from the premium (not collateral)`}</Pre>
+        <Pre>{`σ_realized ← price history (EWMA, RiskMetrics λ=0.94)
+σ_atm      = min(σ_realized × 1.10 + 0.03, 1.00)
+σ_strike   = σ_atm × ψ(z),  z = ln(K/F) / (σ_atm·√T)    smile shape
+F          ← forward from perp funding                    (≈ spot for weeklies)
+P_fair     = Black-76(side, F, K, T, σ_strike)
+APR ladder : nearest strike pinned to 120% × min(1, days / ref),
+             farther strikes scaled by their Black-76 ratio to it
+× taper    : offered APR falls linearly with pool utilization, −50% at full
+− fee      : 10% of the upfront, taken from the premium (never collateral)`}</Pre>
         <P>
-          Two invariants are unit-tested: the user is never paid above the
-          haircut fair value (the protocol keeps at least a 20% edge against its
-          own Black-76 estimate), and no strike — including an off-ladder one a
-          client might submit — can quote above the displayed ceiling. The
-          forward carries cost-of-carry from perp funding rather than an assumed
-          risk-free rate, and there is no fabricated volatility smile, because
-          XLM has no listed options surface to read one from.
+          Black-76 sets the ladder&apos;s shape and policy its level. Tests hold
+          two invariants: a writer is never paid above 80% of fair value, and
+          no strike, even off-ladder, quotes above the displayed ceiling. The
+          smile ψ is borrowed from Derive&apos;s BTC and ETH surfaces, since XLM
+          has no options market. At current XLM volatility the 100% cap on σ_atm
+          binds, so realized vol does not move the quote;{' '}
+          <Code>docs/ARCHITECTURE.md</Code> lists this among known limits.
         </P>
 
         {/* 8 */}
         <H2 id="security">8. Security architecture</H2>
-        <P>
-          The money paths are server-canonical and fail-closed. Every item here
-          is in source and most are covered by tests.
-        </P>
         <List>
           <li>
-            <strong>Server-recomputed premiums.</strong> The premium is computed
-            from the quote engine; any premium or APR field a client sends is
-            ignored.
+            Premiums are recomputed server side; client premiums are ignored,
+            and the quoter signs only an entry matching what it priced.
+          </li>
+          <li>Settlement terms come from contract state, never the caller.</li>
+          <li>
+            The contract caps position size, per-expiry exposure, solvency and
+            premium, even against a compromised server. Concentration policy
+            (per wallet over 30 days, per wallet per expiry, per strike) needs
+            off-chain history, so the quoter enforces it by declining to sign;
+            racing requests can overshoot it by one position.
+          </li>
+          <li>A unique-constraint ledger blocks replayed deposit and swap proofs.</li>
+          <li>An unavailable or stale feed, database, breaker or oracle refuses the operation.</li>
+          <li>
+            A circuit breaker halts deposits on a volatility spike (3× the 24h
+            baseline), oracle stress (a 10% one-minute move or a dead feed) or a
+            per-epoch loss cap. A manual trip clears only by hand.
           </li>
           <li>
-            <strong>Server-canonical settlement.</strong> Strike, expiry, type
-            and collateral at claim come from the recorded position, never from
-            the claimant.
+            The admin and LUSD issuer are 2-of-3; admin, quoter and treasury are
+            separate accounts.
           </li>
           <li>
-            <strong>Replay protection.</strong> A unique-constraint ledger
-            covers deposit, claim and swap, including cross-endpoint reuse.
-          </li>
-          <li>
-            <strong>Two tiers of caps.</strong> Position size, per-expiry
-            exposure, pool solvency and the premium ceiling are enforced by the
-            contract and hold even if this server is compromised. Concentration
-            policy (per-user 30-day, per-user per-expiry, per-strike) depends on
-            off-chain history the contract cannot see, so the quoter enforces it
-            by declining to sign; those checks reserve nothing, so racing
-            requests can overshoot one by at most a single position, still
-            bounded by the contract caps.
-          </li>
-          <li>
-            <strong>Fail-closed everywhere.</strong> If the price feed, the
-            database, the breaker state or the oracle is unavailable or stale,
-            the operation is refused.
-          </li>
-          <li>
-            <strong>Circuit breaker.</strong> Deposits halt automatically on a
-            volatility spike (3× the daily baseline), on oracle stress (a 10%
-            one-minute move or an unreachable feed), and on a per-epoch loss
-            cap. A manual trip clears only by a human.
-          </li>
-          <li>
-            <strong>Multisig.</strong> 2-of-3 on the issuer for every operation;
-            2-of-3 on distributor signer/threshold changes.
-          </li>
-          <li>
-            <strong>Tests.</strong> 48 unit tests on the pricing path (which
-            caught a real CDF scaling bug) and 18 on the contract, including a
-            mock Reflector oracle and a late-claim settlement-discretion test.
+            Unit tests cover pricing, the smile, expiries and the contract
+            client (they caught a real CDF bug). The contract&apos;s Rust suite
+            uses a mock Reflector and tests a late claim on pruned history.
           </li>
         </List>
 
         {/* 9 */}
         <H2 id="plan">9. Integration plan &amp; tranches</H2>
+        <Next>
+          <strong>Tranche 1, security and risk (complete).</strong>{' '}
+          Server-recomputed premiums, canonical settlement terms, replay
+          protection, fail-closed caps, the circuit breaker and multisig, all in
+          the commit history with tests.
+        </Next>
+        <Next>
+          <strong>Tranche 2, custody on chain (live on testnet).</strong> The
+          contract escrows calls and puts; the premium ceiling and a rotatable
+          quoter set bound the pricing key; the admin is 2-of-3; a runner
+          settles. Milestone 1 added the BTC book, milestone 2 routes testnet
+          USDC into LUSD for puts, and the adversarial window has been open
+          since 2026-10-06 and stays open until mainnet. An independent audit
+          precedes any mainnet path, where USDC replaces LUSD as cash.
+        </Next>
         <P>
-          Scope is narrowed to what one engineer can ship safely: the security
-          rewrite, the Soroban migration, the Reflector integration, multisig,
-          and a hardened testnet that can stand up to adversarial review. BTC
-          multi-asset and Aquarius integration are out of this cycle.
+          Tranche 3: upgrade governance, position tokens, automated pool
+          solvency, and recording which quoter priced each position.
         </P>
-        <Next>
-          <strong>Tranche 1 — security &amp; risk (complete in code).</strong>{' '}
-          Server-recomputed premiums, server-canonical settlement, replay
-          protection on claim and swap, fail-closed caps, the circuit breaker,
-          and multisig. All verifiable in the commit history and covered by
-          tests.
-        </Next>
-        <Next>
-          <strong>Tranche 2 — custody on-chain.</strong> Point the web app&apos;s
-          deposit flow at the deployed vault contract so collateral is escrowed
-          by the contract rather than the distributor; add an in-contract
-          premium ceiling and a multisig quoter to remove the pool-drain trust
-          assumption; bring cash-secured puts into the contract; and run an
-          independent audit before any mainnet path. On mainnet the cash asset
-          is Circle&apos;s native USDC; LUSD is a testnet convenience token with
-          no mainnet path.
-        </Next>
 
         {/* 10 */}
         <H2 id="addresses">10. Deployed addresses (testnet)</H2>
@@ -440,21 +365,14 @@ LUSD SAC (cash)            CDTMNV7F7P3LUH6LLBTXY4EQYBUYGVGYRC7P73HMFV5PXLO5NE6A7
 LUSD issuer (2-of-3)       GBCMRD6NDL2RAJUOFQ25EHZVO3IRIGNESWE4QDRFB4AVFIP7IT5BRCJ6
 LUSD distributor           GBAIN6CHZJGBL365JNXSRQEKALXYTWKXANQZ3RBM7AGUEYYKLJJ6SNR6`}</Pre>
         <P>
-          One underlying, one instance: the second book is a second deployment of
-          the same wasm, so what differs between them is the feed, the collateral
-          and the limits, and nothing else. The full manifest — treasury, admin,
-          quoter set, the limits each instance enforces, and how to read them back
-          off the chain yourself — is on the{' '}
+          Both books run the same wasm and differ only in feed, collateral and
+          limits. Treasury, admin, quoter, limits and how to read them off the
+          chain are under{' '}
           <a href="/docs#deployments" className="text-brand hover:underline">
             deployed addresses
           </a>
-          .
-        </P>
-        <P>
-          Source, contract, and tests live in the project repository. The
-          contract README documents the deploy command, the unit-test suite, and
-          the end-to-end testnet settlement that has already run against the live
-          Reflector feed.
+          ; the contract README covers deployment, tests and the testnet
+          settlements.
         </P>
 
     </>

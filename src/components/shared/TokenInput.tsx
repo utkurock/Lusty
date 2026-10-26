@@ -122,13 +122,13 @@ export function TokenInput({
           value={value}
           onChange={handleChange}
           placeholder="0.00"
-          className="flex-1 bg-transparent outline-none focus-visible:outline-none focus-visible:shadow-none font-mono text-head-md text-ink placeholder-ink-faint/50"
+          className="flex-1 min-w-0 w-full bg-transparent outline-none focus-visible:outline-none focus-visible:shadow-none font-mono text-head-md text-ink placeholder-ink-faint/50"
         />
         {maxFillable !== undefined && (
           <button
             type="button"
             onClick={() => fill(0.5)}
-            className="press font-mono text-caption px-2 py-1 border border-line rounded-sm hover:bg-raised"
+            className="press shrink-0 font-mono text-caption px-2 py-1 border border-line rounded-sm hover:bg-raised"
           >
             50%
           </button>
@@ -140,13 +140,13 @@ export function TokenInput({
               if (onMax) onMax()
               else fill(1)
             }}
-            className="press font-mono text-caption px-2 py-1 border border-line rounded-sm hover:bg-raised"
+            className="press shrink-0 font-mono text-caption px-2 py-1 border border-line rounded-sm hover:bg-raised"
           >
             max
           </button>
         )}
         {symbolSlot ?? (
-          <div className="font-mono text-body font-semibold text-ink">{symbol}</div>
+          <div className="shrink-0 font-mono text-body font-semibold text-ink">{symbol}</div>
         )}
       </div>
 

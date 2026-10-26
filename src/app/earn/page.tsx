@@ -34,7 +34,7 @@ export default function EarnPage() {
               Earn yield<br />upfront.
             </h1>
             <p className="mt-5 font-mono text-body text-cream/70 max-w-md">
-              Choose an asset. Pick your strike. Receive upfront now.
+              Pick an asset and a strike. The upfront is paid to you when you deposit.
             </p>
           </div>
 

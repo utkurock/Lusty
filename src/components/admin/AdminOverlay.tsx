@@ -372,11 +372,11 @@ export function AdminOverlay() {
 
   return (
     <>
-      {/* Floating trigger — subtle shield icon, bottom-right */}
+      {/* Floating trigger — subtle shield icon, bottom-right above the report button (bottom-6, h-10) */}
       {!open && (
         <button
           onClick={() => setOpen(true)}
-          className="press fixed bottom-6 right-6 z-50 w-10 h-10 rounded-full bg-inverse text-brand flex items-center justify-center shadow-lg hover:scale-110 transition opacity-60 hover:opacity-100"
+          className="press fixed bottom-[4.5rem] right-6 z-50 w-10 h-10 rounded-full bg-inverse text-brand flex items-center justify-center shadow-lg hover:scale-110 transition opacity-60 hover:opacity-100"
           title="Admin panel"
         >
           <Shield size={18} />
@@ -399,7 +399,7 @@ export function AdminOverlay() {
               <div className="flex items-center gap-3">
                 <Shield size={20} className="text-brand" />
                 <span className="font-mono text-body text-cream font-semibold">
-                  Admin Panel
+                  Admin panel
                 </span>
               </div>
               <button

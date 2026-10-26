@@ -1,18 +1,13 @@
 # Testnet evidence — the BTC book
 
-Tranche 2, Milestone 1. Every claim below is a transaction on Stellar testnet, and every
-hash can be read back at
-`https://stellar.expert/explorer/testnet/tx/<hash>`.
-
-What this records is one thing: that a covered call and a cash-secured put on BTC go the
-whole way — deposit, premium, expiry, oracle-priced settlement, distribution — in a vault
-instance of their own, with XLM's book untouched beside them.
+Tranche 2, Milestone 1. Every hash below is a Stellar testnet transaction, readable at
+`https://stellar.expert/explorer/testnet/tx/<hash>`. A covered call and a cash-secured put
+on BTC go through deposit, premium, expiry, oracle-priced settlement and distribution in
+their own vault instance, beside an untouched XLM book.
 
 ## The book
 
-One underlying, one instance. The BTC vault is a second deployment of the same contract
-the XLM vault runs, from the same wasm hash, so the two provably run the same code: what
-differs between them is the feed, the collateral and the limits, and nothing else.
+Same contract and wasm hash as the XLM vault; only the feed, collateral and limits differ.
 
 | What | Address |
 | --- | --- |
@@ -28,9 +23,9 @@ differs between them is the feed, the collateral and the limits, and nothing els
 | Treasury | `GCXVANOIFHM7IAAZTDEEOYW7WUDO7ETVJYVEO74LA23JSXQJP4TAJVUX` |
 | Admin (2-of-3 multisig) | `GBDNJQDP4HJQH6WCJCYVYGTKDRYKZXQQSVEC4FOE24CVG4VRQU26IKEC` |
 
-Limits, read back off the deployed instance: 0.05 BTC per call position and 5 BTC across
-one expiry; 1,500 LUSD per put position and 150,000 across one expiry; premium ceiling
-2,000 bps of the collateral, valued at the oracle price.
+Limits on the deployed instance: 0.05 BTC per call position and 5 BTC across one expiry;
+1,500 LUSD per put position and 150,000 across one expiry; premium ceiling 2,000 bps of
+the collateral, valued at the oracle price.
 
 | Step | Transaction |
 | --- | --- |
@@ -39,13 +34,9 @@ one expiry; 1,500 LUSD per put position and 150,000 across one expiry; premium c
 ## The collateral
 
 **LBTC is a test asset, issued by this repository.** No anchor issues wrapped BTC on
-testnet — the asset code is unreserved there, and nobody offers redemption for a coin that
-has no reserve behind it on a network whose XLM comes from a faucet. So the underlying is
-minted here, exactly as LUSD is: no reserve, no redemption, no custody claim.
-
-It changes nothing about what is being demonstrated. Settlement reads the Reflector
-BTC/USD feed, never the issuer, so a mainnet anchor replaces one configuration key
-(`NEXT_PUBLIC_BTC_ANCHOR_ISSUER`) and the rest of this page stays true.
+testnet, so it is minted here like LUSD: no reserve, no redemption, no custody claim.
+Settlement reads the Reflector BTC/USD feed, not the issuer, so mainnet only changes
+`NEXT_PUBLIC_BTC_ANCHOR_ISSUER`.
 
 | What | Address / transaction |
 | --- | --- |
@@ -58,8 +49,8 @@ BTC/USD feed, never the issuer, so a mainnet anchor replaces one configuration k
 
 ## Before either leg could settle
 
-Three things, all of which fail late rather than at deposit — at settlement, from inside a
-token contract, for a position already holding the writer's collateral.
+Without these, settlement fails late, inside a token contract, with the writer's
+collateral already escrowed.
 
 | Step | Why | Transaction |
 | --- | --- | --- |
@@ -68,17 +59,15 @@ token contract, for a position already holding the writer's collateral.
 | Fund the cash pool, 5,000 LUSD | Premiums, and what an assigned call pays the writer. | `b0ec2fffded5802e7bcb8a5358cf1a02b3d5f106917cbae76a9d9e2e2d3a819f` |
 | Fund the underlying pool, 0.5 LBTC | What an assigned put delivers. | `5ec3ffff7bc7009d0b528f06c9e44c6de80114305fbf90f44ea2632a5bcff367` |
 
-Both pools are one-way in: `fund` and `fund_underlying` never pay back, and collateral
-leaves only through `settle`.
+Both pools are one-way: `fund` and `fund_underlying` never pay back, and collateral leaves
+only through `settle`.
 
 ## The run
 
-Six positions, one expiry, both legs on both sides of the strike — so each of the four
-settlement branches happens once and none of them is argued from the others.
-
-Strikes were placed ±2% around the price the oracle was publishing when the positions were
-written (**$77,305.02**), not around a number chosen in advance. Expiry `1789321200`
-(2026-09-13 08:20:00 UTC), on the feed's own 300-second grid.
+Six positions on one expiry, calls and puts on both sides of the strike, so all four
+settlement branches happen on chain. Strikes sit ±2% around the oracle price when the
+positions were written (**$77,305.02**). Expiry `1789321200` (2026-09-13 08:20:00 UTC), on
+the feed's 300-second grid.
 
 | # | Leg | Collateral | Strike | Premium paid | Opened |
 | --- | --- | --- | --- | --- | --- |
@@ -89,16 +78,15 @@ written (**$77,305.02**), not around a number chosen in advance. Expiry `1789321
 | 4 | put | 500 LUSD | $75,758.92 | 5 LUSD | `b81acd96b2e3dc29c071bfac8a3f9ba45ecb05090e99257a95a24b8ad2d51388` |
 | 5 | put | 500 LUSD | $78,851.12 | 7.5 LUSD | `eee32e498c040152c609e020c711544eb23a1bd887fd1264e94d01dd72ebe7aa` |
 
-Escrow and premium are one transaction. The writer signs it, the quoter co-signs the
-premium and nothing else, and no server-held account touches the collateral at any point —
-which is why the premium column has no second hash beside it.
+Escrow and premium share one transaction: the writer signs, the quoter co-signs only the
+premium, and no server account touches the collateral. Hence no separate premium hash.
 
 ## Settlement
 
-Priced at the expiry, not at the moment somebody got around to settling:
+Priced at the expiry, not at the time of settling:
 
-**`Other("BTC")` at `1789321200` = $77,251.76** — the oracle record whose own timestamp is
-the expiry, read back from `CCYOZJCO…KOMJRN63`.
+**`Other("BTC")` at `1789321200` = $77,251.76**, the oracle record at the expiry, read back
+from `CCYOZJCO…KOMJRN63`.
 
 | # | Leg | Strike vs $77,251.76 | Outcome | Transaction |
 | --- | --- | --- | --- | --- |
@@ -109,14 +97,10 @@ the expiry, read back from `CCYOZJCO…KOMJRN63`.
 | 4 | put | strike below | kept | `304b4eb908b628ea50768f3f8e30face5cccaa6c408e2fb0bb7fb16e8b076877` |
 | 5 | put | strike above | assigned | `537cc2a530559c05df31411c6a405ddfc1e5d00d9262f5c534b07fe2bd647ed5` |
 
-Settlement is permissionless: these six calls carry no admin or quoter signature. Anyone
-can settle any expired position, and the outcome is the same whoever sends it, because the
-price is pinned to the expiry rather than to the moment of the call.
+No admin or quoter signed these six calls. Anyone can settle an expired position with the
+same result, since the price is pinned to the expiry.
 
 ## What moved, and whether it adds up
-
-The point of writing the balances down is that they can be checked against the rules rather
-than taken on trust.
 
 **The writer** ends with **0.496341 LBTC** and **4,167.18 LUSD**, from 0.46 LBTC and
 2,152.00 LUSD before settlement:
@@ -124,13 +108,12 @@ than taken on trust.
 - kept calls (#0, #2) returned their collateral whole: **+0.02 LBTC**
 - assigned calls (#1, #3) sold at the strike: 2 × 0.01 × $75,758.92 = **+1,515.18 LUSD**
 - the kept put (#4) returned its cash collateral: **+500.00 LUSD**
-- the assigned put (#5) bought BTC at the strike, as agreed: 500 ÷ $78,851.12 =
+- the assigned put (#5) bought BTC at the strike: 500 ÷ $78,851.12 =
   **+0.006341 LBTC**
-- and a 0.01 LBTC faucet drip landed in between, which is the remaining difference
+- a 0.01 LBTC faucet drip in between accounts for the rest
 
-**The treasury** holds **0.02 LBTC** — exactly the collateral of the two assigned calls,
-and nothing else. That is the covered-call economics the contract implements: the writer is
-paid the strike in cash, the asset goes to the treasury.
+**The treasury** holds **0.02 LBTC**, the collateral of the two assigned calls: the writer
+gets the strike in cash and the treasury gets the asset.
 
 **The vault** ends solvent on both legs with nothing escrowed and nothing owed:
 
@@ -141,16 +124,14 @@ paid the strike in cash, the asset goes to the treasury.
 | Escrowed | — | none |
 | Owed if assigned | — | none |
 
-The cash pool is down by the 1,515.18 it paid the two assigned calls and the 500 it returned
-to the kept put, less the 32.5 of premiums it took in. The underlying pool is down by the
-0.006341 it delivered on the assigned put. Everything else that left the contract went back
-to the writer or to the treasury.
+The cash pool fell by the 1,515.18 paid to the assigned calls and the 500 returned to the
+kept put, less 32.5 of premiums taken in; the underlying pool fell by the 0.006341
+delivered on the assigned put. Everything else went to the writer or the treasury.
 
 ## XLM, beside it, untouched
 
-The XLM instance was not redeployed, not upgraded and not configured during any of this.
-Separate escrow, separate exposure, separate limits and a separate solvency guard are not a
-claim about the code here — they are what a second instance *is*.
+The XLM instance was not redeployed, upgraded or reconfigured. As a separate instance it
+keeps its own escrow, exposure, limits and solvency guard.
 
 ## Reproducing it
 
@@ -162,31 +143,29 @@ node scripts/verify-lifecycle.mjs BTC settle <ids>   # after the expiry passes
 node scripts/verify-lifecycle.mjs BTC stats
 ```
 
-Strikes are placed around whatever the oracle is publishing at the time, so a rerun
-exercises the same four branches at a different price rather than repeating these numbers.
+Strikes follow the oracle's current price, so a rerun hits the same four branches at
+different numbers.
 
 ---
 
 # Testnet evidence — liquidity routing
 
-Tranche 2, Milestone 2. A cash-secured put funded in USDC, with the cash delivered by a
-routed swap through Stellar's own liquidity rather than by the distributor's bridge, and
-the guardrails that refuse a route, each fired on testnet. Run 2026-10-03 against the XLM
-book (`CBJZGTCF2PJVHX2BNFTFZ2L2LX6DWD5JMTLHNCVYTSOD3BLVSXZRUCJZ`), writer
+Tranche 2, Milestone 2. A cash-secured put funded in USDC through a routed swap on
+Stellar's own liquidity instead of the distributor's bridge, plus the route guardrails,
+each fired on testnet. Run 2026-10-03 against the XLM book
+(`CBJZGTCF2PJVHX2BNFTFZ2L2LX6DWD5JMTLHNCVYTSOD3BLVSXZRUCJZ`), writer
 `GDXUHMT3QELEW6YBKSYXJBBXINUWA2MFR26RIS6C332N25EYU3D6CJ4V`.
 
-The swap went through the application's own route, `POST /api/routing/swap` on a local
-`next start` of the same commit: allowlist, par bound, quote, in-flight reservation, send
-maximum, and a settle that reads the fill back from Horizon. The writer's key signed where
-a wallet would.
+The swap used the app's `POST /api/routing/swap` on a local `next start` of the same
+commit (allowlist, par bound, quote, in-flight reservation, send maximum, and a settle that
+reads the fill from Horizon), with the writer's key signing in place of a wallet.
 
 ## The book it routes through
 
-Nothing on testnet traded LUSD against USDC directly. The path finder's only answer ran
-through XLM, at 33.65 USDC for 10 LUSD — 3.37 per unit — and the direct-only route
-refused it. So the distributor sells LUSD for USDC at exactly 1 on the direct book
-(`scripts/seed-route-liquidity.mjs`), one direction only, because an offer selling USDC
-for faucet LUSD would be a drain.
+No testnet book traded LUSD against USDC directly. The only path went through XLM at 33.65
+USDC for 10 LUSD (3.37 per unit), which the direct-only route refused. So the distributor
+sells LUSD for USDC at exactly 1 on the direct book (`scripts/seed-route-liquidity.mjs`),
+one way only, since selling USDC for faucet LUSD would be a drain.
 
 | Step | Transaction |
 | --- | --- |
@@ -202,9 +181,9 @@ for faucet LUSD would be a drain.
 | Open | put #26, escrows the 20 LUSD, strike $0.210724, premium 0.08 | `4664dabe89e41d7449d178a607257f427d7399999d728fd1d816fb5af1ce18d6` |
 | Settle | Reflector `XLM` at expiry `1791036300`: $0.215564 → **kept**, 20 LUSD back | `4c837cb9e01c108f720c65fc37e457a1eae833dd59e77d9a823f942ae61630a7` |
 
-The settle call answered `{"filled":true,"destAmount":20,"spent":20,"quoted":20}`: the
-server found a successful strict-receive path payment from and to this writer, USDC in and
-LUSD out at the prepared amount, and journaled it with zero realised slippage.
+The settle call answered `{"filled":true,"destAmount":20,"spent":20,"quoted":20}`: a
+successful strict-receive path payment from and to this writer, USDC in and LUSD out at the
+prepared amount, journaled with zero realised slippage.
 
 | Writer | USDC | LUSD |
 | --- | --- | --- |
@@ -213,10 +192,9 @@ LUSD out at the prepared amount, and journaled it with zero realised slippage.
 | After the open | 10.0000000 | 4,167.2584384 |
 | After settlement | 10.0000000 | 4,187.2584384 |
 
-Twenty USDC became twenty LUSD, the twenty LUSD became the put's escrow, and settlement
-returned it with the 0.08 premium on top. The vault's escrowed put cash went 50 → 70 → 50
-and its cash pool 19,753.1577 → 19,773.0777 → 19,753.0777: in by the escrow, out by the
-premium, the escrow paid back.
+Twenty USDC became the put's twenty LUSD of escrow, returned at settlement with the 0.08
+premium. The vault's escrowed put cash went 50 → 70 → 50 and its cash pool 19,753.1577 →
+19,773.0777 → 19,753.0777: in by the escrow, out by the premium, then the escrow paid back.
 
 ## The guardrails, fired
 
@@ -227,9 +205,8 @@ premium, the escrow paid back.
 | Approved routes only | prepare 10 LUSD with the direct offer withdrawn (`cffdf7d47f90fca1c6d2b0aea32cc00da58ac3691c1aba91fbb0154ea7c137ff`) | `409 path_not_allowed`: "usdc->lusd is direct only, and this path goes through 1 other asset(s)". Offer restored: `2ddc3ab22425c7257a91ad6cb4ae56a033723c18d60debfd7c4bcaadb33a2124` |
 
 The par bound (`off_par`) and the in-flight cap (`routing_cap`) are covered by
-`src/lib/__tests__/routing-session.test.ts` rather than fired here: the first needs a
-direct book priced off par, which would mean seeding a bad price on purpose, and the second
-needs 50,000 of concurrent swaps.
+`src/lib/__tests__/routing-session.test.ts` instead: firing them would need a deliberately
+mispriced direct book and 50,000 of concurrent swaps.
 
 ## Reproducing it
 

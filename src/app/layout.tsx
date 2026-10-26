@@ -16,8 +16,11 @@ export const metadata: Metadata = {
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  // The theme script below and the wallet kit both write to <html> before
+  // React hydrates, so its attributes differ from the server render on
+  // purpose. suppressHydrationWarning silences that one element, not its children.
   return (
-    <html lang="en" className="dark">
+    <html lang="en" className="dark" suppressHydrationWarning>
       <head>
         {/* Dark ships on the element itself, so the first paint is already the
             default theme. This only has to undo it for the wallets that chose

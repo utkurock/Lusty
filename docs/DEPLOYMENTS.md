@@ -1,28 +1,21 @@
 # Testnet deployment manifest
 
-Everything Lusty runs on Stellar testnet, in one place, so an attacker does not have to
-guess what is in scope and an auditor does not have to take a screenshot's word for it.
+Everything Lusty runs on Stellar testnet, each checkable on the network:
 
-Every address here is readable:
+- contracts: `https://stellar.expert/explorer/testnet/contract/<id>`
+- accounts: `https://stellar.expert/explorer/testnet/account/<id>`
+- transactions: `https://stellar.expert/explorer/testnet/tx/<hash>`
 
-- contracts — `https://stellar.expert/explorer/testnet/contract/<id>`
-- accounts — `https://stellar.expert/explorer/testnet/account/<id>`
-- transactions — `https://stellar.expert/explorer/testnet/tx/<hash>`
-
-**Network:** Stellar testnet (`Test SDF Network ; September 2015`). No mainnet deployment
-exists. Nothing here holds real value, and nothing here is insured by anyone.
-
-Last read back off the network: **2026-09-15** (the limits and the wasm hash), **2026-09-13**
-(the lifecycle balances in [`TESTNET-EVIDENCE.md`](./TESTNET-EVIDENCE.md)).
-
----
+Network: Stellar testnet (`Test SDF Network ; September 2015`). No mainnet
+deployment exists; nothing here holds real value or is insured. Last read back:
+2026-09-15 (limits, wasm hash) and 2026-09-13 (lifecycle balances in
+[`TESTNET-EVIDENCE.md`](./TESTNET-EVIDENCE.md)).
 
 ## 1. Vault instances
 
-One underlying, one instance. A second book is a second deployment of the same wasm — the
-hash is read off the reference instance and redeployed rather than rebuilt, so the two
-provably run the same code. What differs between them is the feed, the collateral and the
-limits, and nothing else.
+One instance per underlying, each redeployed from the reference instance's wasm
+hash rather than rebuilt, so they provably run the same code and differ only in
+feed, collateral and limits.
 
 | Book | Contract | Feed | Status |
 |---|---|---|---|
@@ -30,19 +23,18 @@ limits, and nothing else.
 | BTC | `CBQEACXAOZMCU3YOUWDC3MWXDSQBWKNGKBA6XMRPY5D5JQRNP2HLMVEU` | `Other("BTC")` | live |
 | ETH | — | `Other("ETH")` | declared, not deployed ([MULTI-ASSET.md §7](./MULTI-ASSET.md)) |
 
-**Wasm hash, both instances:** `ceb612f26516d5fcf6ac027dd0428aa471037694fa850dc697dcef6ac0b6b35b`
+Wasm hash, both instances: `ceb612f26516d5fcf6ac027dd0428aa471037694fa850dc697dcef6ac0b6b35b`
 
-Superseded instances are not listed as scope. They are still streamed by the event
-indexer (`NEXT_PUBLIC_VAULT_CONTRACTS`) so old positions keep their history, and their
-position ids restart at zero like every other instance's — which is why anything that
-remembers a position keys on the pair, never the number.
+Superseded instances are out of scope but still streamed by the event indexer
+(`NEXT_PUBLIC_VAULT_CONTRACTS`) to keep old positions' history. Position ids
+restart at zero on every instance, so positions are keyed on instance and id
+together.
 
 ### Limits, as the instances enforce them
 
-Read back off each instance on 2026-09-15. Call figures are in the underlying, put figures
-in cash. These are the contract's own bounds, enforced on every write; the desk quotes
-inside them and the two records are reconciled before any book is served
-([MULTI-ASSET.md §3](./MULTI-ASSET.md)).
+Read back on 2026-09-15; calls in the underlying, puts in cash. The contract
+enforces these on every write, the desk quotes inside them, and the two are
+reconciled before a book is served ([MULTI-ASSET.md §3](./MULTI-ASSET.md)).
 
 | | XLM | BTC |
 |---|---|---|
@@ -52,10 +44,8 @@ inside them and the two records are reconciled before any book is served
 | `max_expiry_put` | 500,000 | 150,000 |
 | `max_premium_bps` | 2,000 | 2,000 |
 
-`max_premium_bps` is applied to collateral **valued at the oracle price**, so it needs no
-asset-specific handling.
-
----
+`max_premium_bps` applies to collateral valued at the oracle price, so it needs
+no asset-specific handling.
 
 ## 2. Oracle
 
@@ -66,14 +56,10 @@ asset-specific handling.
 | Resolution | 300 s |
 | History retained | ~24 hours |
 
-Settlement reads this contract and nothing else. Not the issuer, not Binance, not the
-app's own spot endpoint — those price the *quote*; the oracle prices the *settlement*.
-
-The ~24 hour retention is the reason settlement has a deadline: a position whose expiry
-falls out of the window can no longer be priced at its expiry, and the sweep reports it as
-stranded rather than settling it at a price it was not written against.
-
----
+Settlement reads only this contract; the issuer, Binance and the app's spot
+endpoint price the quote. The ~24 hour history gives settlement a deadline: a
+position whose expiry leaves the window cannot be priced at expiry, and the
+sweep reports it as stranded rather than settle it at another price.
 
 ## 3. Stellar Asset Contracts
 
@@ -82,8 +68,6 @@ stranded rather than settling it at a price it was not written against.
 | XLM (native) | `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC` | collateral, XLM calls |
 | LBTC | `CDLI2GIDMYZQHK2K3TIGV5O2HQQRT36C5MV3IQWO6LX22YFTF43X74LU` | collateral, BTC calls |
 | LUSD | `CDTMNV7F7P3LUH6LLBTXY4EQYBUYGVGYRC7P73HMFV5PXLO5NE6A74QB` | cash — premiums, and what a put escrows |
-
----
 
 ## 4. Accounts
 
@@ -97,34 +81,23 @@ stranded rather than settling it at a price it was not written against.
 | LBTC issuer | `GB6274FEMTPWDEZ47P2YCXQ6JZCPRTHB5NMSFVPIUFB6MK5RXNBWZ2E2` | mints the test underlying |
 | LBTC distributor | `GDJMUSNML5ATJGJVGABBXHQSYL3PXRBGHBCZ37H4RWSUIACORAHHMWNL` | faucet payouts |
 
-The admin is behind a 2-of-3 multisig and **cannot source a single-signature transaction
-at all**, which is why the deploy script uses a separate deployer key and passes the admin
-in as a constructor argument.
-
-**Settlement is permissionless.** It carries no admin and no quoter signature — anyone can
-settle any expired position, and the recorded lifecycle's six settlements were submitted
+The multisig admin cannot source a single-signature transaction, so the deploy
+script uses a separate deployer key and passes the admin as a constructor
+argument. Settlement needs no admin or quoter signature: anyone can settle any
+expired position, and the recorded lifecycle's six settlements were submitted
 that way.
-
----
 
 ## 5. Test assets, and what they are not
 
-**LBTC and LUSD are minted by this repository.** No reserve, no redemption, no custody
-claim, and no anchor behind either. They exist because nobody anchors wrapped BTC or a
-dollar to a network whose XLM comes from a faucet.
+This repository mints LBTC and LUSD, with no reserve, redemption, custody claim
+or anchor, because nobody anchors wrapped BTC or a dollar on a faucet-funded
+network. Settlement reads Reflector, never the issuer, so mainnet changes one
+configuration key per asset (`NEXT_PUBLIC_BTC_ANCHOR_ISSUER`). "The issuer can
+mint more LBTC" describes a test asset, not a vulnerability.
 
-This changes nothing about what the vault demonstrates: settlement reads the Reflector
-feed, never the issuer, so mainnet replaces one configuration key per asset
-(`NEXT_PUBLIC_BTC_ANCHOR_ISSUER`) and everything else here stays true.
-
-It does change what a finding about them means. "The issuer can mint more LBTC" is a fact
-about a test asset, not a vulnerability.
-
-The USDC a put can be funded with is the testnet circle-style asset pinned at
-`GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5`. It is not the vault's cash: the
-bridge swaps it one for one into LUSD before the position opens.
-
----
+A put can be funded with the testnet circle-style USDC pinned at
+`GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5`; the bridge swaps it
+one for one into LUSD, the vault's cash, before the position opens.
 
 ## 6. Endpoints
 
@@ -133,11 +106,9 @@ bridge swaps it one for one into LUSD before the position opens.
 | Soroban RPC | `https://soroban-testnet.stellar.org` |
 | Horizon | `https://horizon-testnet.stellar.org` |
 
----
-
 ## 7. Reading it back yourself
 
-Nothing above has to be trusted. Every line is a read anyone can make:
+Anyone can verify every line above:
 
 ```sh
 # The config each instance was constructed with — oracle, feed, token, cash,
@@ -148,7 +119,6 @@ node scripts/deploy-vault.mjs BTC --check
 node scripts/verify-lifecycle.mjs BTC stats
 ```
 
-Both are read-only: they simulate, they never submit, and they need no key. The `--check`
-form additionally reports whether the treasury can actually receive what an assignment
-would pay it, which is a fact about trustlines that only settlement would otherwise
-discover.
+Both only simulate and need no key. `--check` also reports whether the treasury
+has the trustline to receive an assignment, which otherwise only settlement
+would reveal.

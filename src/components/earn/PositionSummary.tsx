@@ -97,14 +97,14 @@ export function PositionSummary({
                 direction="below"
                 strike={strikePrice}
                 headline={`Get ${units(underlyingAmount)} back`}
-                consequence={`not called — you keep the ${assetSymbol}`}
+                consequence={`not called: you keep the ${assetSymbol}`}
               />
               <Outcome
                 asset={assetSymbol}
                 direction="above"
                 strike={strikePrice}
                 headline={`Receive ${formatUsdc(usdcIfCalled)}`}
-                consequence={`called — your ${assetSymbol} sells at the strike`}
+                consequence={`called: your ${assetSymbol} sells at the strike`}
               />
             </>
           ) : (
@@ -114,14 +114,14 @@ export function PositionSummary({
                 direction="above"
                 strike={strikePrice}
                 headline={`Get ${formatUsdc(usdcAmount ?? 0)} back`}
-                consequence="not assigned — you keep the collateral"
+                consequence="not assigned: you keep the collateral"
               />
               <Outcome
                 asset={assetSymbol}
                 direction="below"
                 strike={strikePrice}
                 headline={`Receive ${units(underlyingIfPut)}`}
-                consequence={`assigned — you buy ${assetSymbol} at the strike`}
+                consequence={`assigned: you buy ${assetSymbol} at the strike`}
               />
             </>
           )}

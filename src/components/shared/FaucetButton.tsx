@@ -84,7 +84,7 @@ export function FaucetButton() {
       //    it, and a refusal after the wallet prompt is a worse way to learn.
       if (asset.trustline && !(await hasTrustline(address, asset.trustline))) {
         const code = asset.trustline.kind === 'issued' ? asset.trustline.code : asset.symbol
-        showToast('ok', `Opening ${code} trustline — confirm in wallet`)
+        showToast('ok', `Opening ${code} trustline: confirm in wallet`)
         const xdr = await buildTrustlineTx(address, asset.trustline)
         const signed = await signTransaction(xdr)
         const tx = TransactionBuilder.fromXDR(signed, Networks.TESTNET)

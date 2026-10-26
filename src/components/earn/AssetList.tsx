@@ -101,7 +101,7 @@ function AssetBook({ asset, tab }: { asset: UnderlyingAsset; tab: Tab }) {
         symbol={asset.symbol}
         name={asset.name}
         logo={asset.logo}
-        type={isCalls ? 'Covered Call' : 'Cash Secured Put'}
+        type={isCalls ? 'Covered call' : 'Cash-secured put'}
         maxAPR={apr?.max}
         minAPR={apr?.min}
         quoted={answered}
@@ -141,7 +141,7 @@ export function AssetList({ tab, onTabChange }: AssetListProps) {
         >
           {([
             ['calls', 'covered calls'],
-            ['puts', 'cash secured puts'],
+            ['puts', 'cash-secured puts'],
           ] as const).map(([value, label]) => (
             <button
               key={value}

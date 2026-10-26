@@ -1,12 +1,11 @@
 'use client'
 
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { Copy, ChevronRight, ChevronLeft } from 'lucide-react'
+import { Copy, ChevronRight, ChevronLeft, ChevronDown } from 'lucide-react'
 import { useScrollFade } from '@/components/shared/useScrollFade'
 
 interface Section {
   id: string
-  icon?: string
   title: string
   eyebrow: string
   tagline?: string
@@ -49,6 +48,7 @@ function withReference(groups: Group[], ref: ReferenceSections): Group[] {
     label: 'SECURITY & TESTNET',
     items: [
       doc('adversarial', 'SECURITY & TESTNET'),
+      doc('adversarial-report', 'SECURITY & TESTNET'),
       doc('reporting', 'SECURITY & TESTNET'),
       doc('deployments', 'SECURITY & TESTNET'),
       doc('reproduce', 'SECURITY & TESTNET'),
@@ -79,7 +79,6 @@ function withReference(groups: Group[], ref: ReferenceSections): Group[] {
 interface Group {
   id: string
   label: string
-  icon?: string
   items: Section[]
 }
 
@@ -118,27 +117,16 @@ const Today = ({ children }: { children: React.ReactNode }) => (
   </div>
 )
 
-const Roadmap = ({ children }: { children: React.ReactNode }) => (
-  <div className="my-4 rounded-lg border-l-4 border-brand bg-card p-4 text-body leading-relaxed">
-    <div className="font-mono text-tiny uppercase tracking-wider text-brand font-bold mb-1.5">
-      Roadmap — T2 / T3
-    </div>
-    {children}
-  </div>
-)
-
 const GROUPS: Group[] = [
   {
     id: 'getting-started',
     label: 'GETTING STARTED',
-    icon: '🌟',
     items: [
       {
         id: 'welcome',
-        icon: '🛣️',
         title: 'Welcome to Lusty',
         eyebrow: 'GETTING STARTED',
-        tagline: 'Lusty is the options yield layer of Stellar.',
+        tagline: 'Covered calls and cash-secured puts on Stellar, premium paid up front.',
         body: (
           <>
             <div className="my-6 rounded-lg overflow-hidden border border-line bg-inverse text-cream aspect-[16/7] flex flex-col items-center justify-center font-mono">
@@ -148,180 +136,117 @@ const GROUPS: Group[] = [
               </div>
             </div>
             <P>
-              Lusty is a <strong>DeFi options yield venue</strong> on Stellar
-              for <strong>covered calls</strong> and{' '}
-              <strong>cash-secured puts</strong>, giving depositors a simple way
-              to earn yield by monetizing the volatility of XLM and USDC.
+              Lusty lets you write covered calls and cash-secured puts on XLM
+              and BTC. You pick a strike you would be happy to trade at and a
+              weekly expiry, deposit collateral, and receive the premium in
+              LUSD in the same transaction. You never manage greeks, margin or
+              hedges.
             </P>
             <Today>
-              Lusty today runs as a <strong>server-operated venue on Stellar
-              Classic</strong>. Collateral is held by a protocol-operated
-              distributor account and positions are recorded in a database.
-              Settlement already reads the on-chain{' '}
-              <strong>Reflector oracle</strong>, pinned to expiry; Binance only
-              feeds the quote inputs (volatility, forward). It is{' '}
-              <strong>custodial and pre-audit (testnet only)</strong> — the
-              deployed Soroban vault that also takes custody on-chain is the
-              T2 migration, not yet the default rail.
+              Lusty runs on Stellar testnet. The Soroban vault contract (v4)
+              escrows every position, in one instance for an XLM book and one
+              for a BTC book with LBTC collateral. At expiry anyone can call{' '}
+              <Code>settle(id)</Code>, which pays the owner at the Reflector
+              oracle&apos;s expiry price. The server only prices and co-signs
+              premiums under on-chain caps; it holds no user collateral. LUSD
+              and LBTC are unbacked test assets, and an{' '}
+              <a href="/docs#adversarial" className="underline hover:text-ink">
+                adversarial testnet window
+              </a>{' '}
+              is open until mainnet.
             </Today>
-            <P>
-              Lusty makes <strong>option strategies accessible</strong> to anyone
-              with a Stellar wallet. You don&apos;t need to understand greeks, manage
-              margin, or run delta-hedging bots — you only pick a{' '}
-              <strong>strike you&apos;d be happy to sell at</strong> (for calls) or{' '}
-              <strong>buy at</strong> (for puts). The protocol quotes a fair
-              upfront yield, locks your collateral until your chosen weekly
-              expiry and pays the upfront in LUSD the moment you deposit.
-            </P>
-            <H>Why Lusty exists</H>
-            <P>
-              In traditional finance, selling options is one of the oldest and
-              most reliable sources of structured yield — the{' '}
-              <em>volatility risk premium</em>. On Stellar, that yield has
-              historically been inaccessible to retail users because there has
-              been no native options venue: no AMM, no order book, no vaults. The
-              yield that was being harvested off-chain by market makers simply
-              never flowed back to XLM and USDC holders.
-            </P>
-            <P>
-              Lusty closes that gap. The depositor always picks the trade and
-              always sees the math behind the quote — no off-chain market
-              makers, no opaque OTC pricing.
-            </P>
-            <Roadmap>
-              The end-state goal is that every position, strike, quote and
-              settlement is on-chain and independently verifiable, with no
-              custodian and no counterparty credit risk. That requires the
-              Soroban vault contracts and Reflector settlement on the roadmap.
-              Until then, settlement is performed server-side by the protocol
-              operator.
-            </Roadmap>
             <H>What you can do on Lusty</H>
             <List>
               <li>
-                <strong>Earn upfront LUSD</strong> on your XLM by selling
-                covered calls at one of four strike multipliers.
+                Write covered calls on XLM or LBTC, or cash-secured puts with
+                LUSD, at one of four strikes, and take the premium in LUSD.
               </li>
               <li>
-                <strong>Earn upfront LUSD</strong> on your LUSD by
-                selling cash-secured puts against XLM.
+                Follow positions on <Code>/dashboard</Code> and the market on{' '}
+                <Code>/research</Code>.
               </li>
               <li>
-                Track live APRs, utilization, open interest and settlement
-                history on the <Code>/dashboard</Code> and <Code>/research</Code>{' '}
-                pages.
-              </li>
-              <li>
-                Compete on the points and leaderboard programs for early
-                depositors.
+                Collect Season 0 points on <Code>/leaderboard</Code>.
               </li>
             </List>
             <H>Five-second mental model</H>
             <P>
-              You are a seller of insurance on XLM. Someone on the other side
-              pays you a fixed upfront every week for the right to hand you
-              XLM at a low price (puts) or take your XLM away at a high price
-              (calls). If the market stays inside your band, you simply keep the
-              upfront. If it doesn&apos;t, you get assigned — but you knew the price
-              going in and you still keep the upfront.
+              You are selling insurance on XLM or BTC. The buyer pays you a
+              fixed premium for the right to take your collateral at a higher
+              price (a call) or hand you the underlying at a lower one (a put).
+              If the expiry price stays on your side of the strike, your
+              collateral comes back; if it crosses, you are assigned at the
+              strike you chose. The premium is yours either way.
             </P>
           </>
         ),
       },
       {
         id: 'problem',
-        icon: '🐷',
         title: 'Problem',
         eyebrow: 'GETTING STARTED',
-        tagline: 'Volatility yield exists on Stellar — but nobody can access it.',
+        tagline: 'Stellar has had no native way to sell options.',
         body: (
           <>
             <P>
-              Yield on Stellar today is dominated by two primitives: lending
-              markets and AMM liquidity provision. Both are good products, but
-              both have hard ceilings on the yield they can produce for
-              depositors, and both leave a huge category of structured yield
-              completely untapped.
+              Yield on Stellar comes mostly from lending and AMM liquidity, and
+              neither lets a holder sell volatility.
             </P>
             <H>Lending caps out at borrow demand</H>
             <P>
-              Lending APR is a function of utilization. When nobody wants to
-              borrow, APR collapses — and on Stellar, borrow demand for XLM and
-              USDC is structurally low compared to leverage-heavy chains. That
-              makes lending a <em>spot-beta + small spread</em> product. Safe,
-              but not competitive.
+              Lending APR follows utilization. When few people borrow, the rate
+              falls.
             </P>
             <H>LP positions bleed to impermanent loss</H>
             <P>
-              AMM LPing looks attractive on paper but the fees are a thin layer
-              on top of a much larger exposure to IL. In volatile markets, LPs
-              routinely underperform simply holding the two assets — the yield
-              is real, but so is the unrecognized cost.
+              LP fees sit on top of impermanent loss, and in volatile markets
+              LPs can do worse than holding both assets.
             </P>
             <H>Volatility yield is missing entirely</H>
             <P>
-              On chains with a mature options infrastructure,{' '}
-              <strong>selling volatility</strong> is the largest single source of
-              structured yield for retail — covered calls, cash-secured puts,
-              iron condors and theta vaults collectively manage billions of
-              dollars. None of that is available natively to XLM holders. The
-              volatility premium is being harvested off-chain, by off-chain
-              actors, with off-chain counterparties.
+              On chains with options markets, covered calls and cash-secured
+              puts are a standard source of yield. Stellar has had no native
+              options venue, so XLM holders could not collect that premium on
+              chain.
             </P>
             <H>Retail is forced into black-box vaults</H>
             <P>
-              Even where options-flavoured vaults exist in DeFi, they tend to
-              abstract everything away: users deposit, a manager picks strikes
-              off-chain, an OTC market maker quotes a premium, and settlement
-              depends on a webhook. The depositor cannot see <em>why</em> the
-              APR is what it is, cannot pick their own strike, and cannot verify
-              that the premium they were paid was fair.
-            </P>
-            <P>
-              Lusty is a direct response to all four of these problems: a
-              four-strikes-per-vault, Black-Scholes priced options venue where
-              the depositor always picks the trade and always sees the math —
-              server-settled today, with an on-chain, non-custodial rebuild on
-              the roadmap.
+              Option vaults elsewhere usually hide the trade: a manager picks
+              the strike, a market maker quotes off chain, and the depositor
+              cannot check the premium. On Lusty you pick the strike, the quote
+              shows its inputs, and the contract settles against a public
+              oracle price.
             </P>
           </>
         ),
       },
       {
         id: 'solution',
-        icon: '🦺',
         title: 'Solution: Lusty V1',
         eyebrow: 'GETTING STARTED',
-        tagline: 'Two vaults, four strikes, rolling weekly expiries, upfront LUSD.',
+        tagline: 'Two books, four strikes a side, rolling Friday expiries, premium up front.',
         body: (
           <>
             <P>
-              Lusty V1 ships two product vaults on Stellar and a dynamic
-              pricing engine that quotes them in real time. The interface is
-              intentionally minimal — the goal is that any user can go from
-              wallet-connect to earning premium in under a minute. Today the
-              vaults are operated as server-settled Stellar Classic payments;
-              the Soroban contract implementation is roadmap work.
+              Lusty lists an XLM book and a BTC book. Each is its own deployment
+              of the same vault contract, so collateral, limits and pools never
+              mix.
             </P>
-            <H>The two vaults</H>
+            <H>Calls and puts</H>
             <List>
               <li>
-                <strong>Covered call vault (XLM → LUSD premium):</strong>{' '}
-                deposit XLM, choose an upside strike, receive LUSD premium
-                instantly.
+                Covered call: deposit XLM (or LBTC), choose a strike above spot,
+                receive the premium in LUSD.
               </li>
               <li>
-                <strong>Cash-secured put vault (LUSD → LUSD premium):</strong>{' '}
-                deposit LUSD, choose a downside strike, receive LUSD premium
-                instantly.
+                Cash-secured put: deposit LUSD, choose a strike below spot,
+                receive the premium in LUSD.
               </li>
             </List>
-            <H>Four strikes per vault</H>
+            <H>Four strikes per side</H>
             <P>
-              At all times each vault exposes exactly four strike multipliers.
-              This is a deliberate constraint: it gives users a real choice over
-              risk/reward without fragmenting liquidity across dozens of thin
-              strikes. The strike grids are:
+              Four strikes, as multiples of spot, give a real choice of risk
+              without spreading liquidity over many thin strikes.
             </P>
             <Pre>
 {`covered call     :  1.02x · 1.06x · 1.12x · 1.20x   (above spot)
@@ -329,48 +254,34 @@ cash-secured put :  0.98x · 0.94x · 0.88x · 0.80x   (below spot)`}
             </Pre>
             <H>Rolling weekly expiries</H>
             <P>
-              Lusty keeps several weekly expiries open at once — the next few{' '}
-              <strong>Friday 08:00 UTC</strong> dates. When you deposit you pick
-              the expiry that matches your view (roughly one, two or three weeks
-              out). Each expiry is its own independent capacity bucket and
-              settles on its own Friday: the settlement spot is snapshotted,
-              every position in that expiry is compared to its strike, and
-              collateral is either returned or converted to the other side. A
-              full expiry blocks only itself, so there is almost always another
-              with open room, and you can roll a settled position straight into
-              a later one.
+              Three expiries are open at a time, on the next Fridays at{' '}
+              <strong>08:00 UTC</strong>, about one, two and three weeks out.
+              Nothing can be written within two days of an expiry. Each expiry
+              has its own capacity, so when one fills another usually has room.
+              Settlement uses the Reflector price for the expiry timestamp, so
+              when someone settles cannot change the outcome.
             </P>
-            <Today>
-              Settlement reads the <strong>Reflector</strong> oracle price
-              pinned to your expiry timestamp, so when you claim cannot change
-              the outcome. The server submits the payout today; the deployed
-              Soroban vault performs the same settlement permissionlessly
-              on-chain, which is the T2 migration.
-            </Today>
             <H>Pricing you can verify</H>
             <P>
-              Premiums are quoted by a Black-Scholes engine with a volatility
-              smile, then scaled by a transparent dynamic-APR layer that
-              accounts for vault utilization and time-to-expiry. The engine runs
-              server-side today (moving on-chain with the Soroban migration),
-              and — crucially — the upfront you are actually paid is computed
-              against the <em>same</em> adjusted APR you see quoted, so the
-              number on the earn page is the number that lands in your wallet.
+              The engine prices each strike with Black-76 and a volatility
+              smile under a policy ceiling. One computation produces both the
+              APR on the earn page and the premium the vault pays.
             </P>
             <H>Quickstart</H>
             <List>
-              <li>Connect a Stellar wallet — Freighter, xBull, Albedo or Lobstr.</li>
+              <li>Connect a Stellar wallet: Freighter, xBull, Albedo or Lobstr.</li>
               <li>
-                Go to <Code>/earn</Code>, pick a vault, pick a strike.
+                On <Code>/earn</Code>, pick a book, side, strike and expiry.
               </li>
               <li>
-                Deposit between <Code>100 XLM</Code> and <Code>10,000 XLM</Code>{' '}
-                worth of collateral.
+                Enter an amount (a call takes <Code>100</Code> to{' '}
+                <Code>10,000 XLM</Code>, or <Code>0.001</Code> to{' '}
+                <Code>0.05 LBTC</Code>) and sign. One transaction escrows the
+                collateral and pays the premium.
               </li>
-              <li>Receive the LUSD upfront in your wallet once the deposit confirms.</li>
               <li>
-                Wait for your expiry&apos;s Friday 08:00 UTC or check{' '}
-                <Code>/dashboard</Code> for live PnL and settlement countdown.
+                Follow the position on <Code>/dashboard</Code> until it settles
+                after its Friday expiry.
               </li>
             </List>
           </>
@@ -384,45 +295,34 @@ cash-secured put :  0.98x · 0.94x · 0.88x · 0.80x   (below spot)`}
     items: [
       {
         id: 'covered-call',
-        icon: '📈',
         title: 'Covered call vault',
         eyebrow: 'PROTOCOL AND PRODUCT',
-        tagline: 'Sell upside on your XLM. Keep the upfront no matter what.',
+        tagline: 'Sell upside on your XLM or BTC. Keep the premium whatever happens.',
         body: (
           <>
             <P>
-              The covered call vault lets XLM holders generate LUSD yield by
-              selling the right to buy their XLM at a strike price higher than
-              the current spot. In exchange they receive an upfront LUSD payment,
-              locked in at the moment of deposit.
+              The covered call vault pays you LUSD for selling the right to buy
+              your collateral at a strike above spot.
             </P>
             <H>How a position works</H>
             <P>
-              You deposit a whole amount of XLM into the vault and select one
-              strike multiplier. The protocol computes the gross premium from
-              the Black-Scholes engine, subtracts the 25% revenue share, and
-              transfers the net upfront LUSD to your wallet once your deposit
-              settles. Your XLM is then locked into your chosen expiry until its
-              Friday 08:00 UTC.
+              You deposit XLM (or LBTC) and pick a strike and expiry. The
+              quoter co-signs the premium, net of the 10% fee, and one
+              transaction escrows your collateral in the vault contract and
+              pays you. The collateral stays escrowed until settlement.
             </P>
             <H>Settlement outcomes</H>
             <List>
               <li>
-                <strong>
-                  Spot at expiry ≤ strike (call expires out of the money):
-                </strong>{' '}
-                you keep 100% of your XLM <em>and</em> 100% of the upfront. This
-                is the base case and the scenario Lusty is optimized for.
+                Expiry price at or below the strike: the call expires
+                worthless. Your collateral comes back whole and you keep the
+                premium. Lusty is built around this case.
               </li>
               <li>
-                <strong>
-                  Spot at expiry &gt; strike (call is assigned):
-                </strong>{' '}
-                your XLM is converted to LUSD at the strike price. You still
-                keep the upfront — you have simply sold your XLM at a price you
-                already agreed was acceptable. If spot keeps running, you&apos;ve
-                given up that extra upside; if spot reverses, you&apos;ve
-                effectively sold the top.
+                Expiry price above the strike: the call is assigned. Your
+                collateral goes to the treasury and you receive its value at
+                the strike in LUSD, as if you had sold there. You keep the
+                premium but give up the rise above the strike.
               </li>
             </List>
             <H>Strike grid</H>
@@ -435,52 +335,42 @@ cash-secured put :  0.98x · 0.94x · 0.88x · 0.80x   (below spot)`}
             </Pre>
             <H>Who should use it</H>
             <P>
-              Covered calls are for XLM holders who are either long-term bullish
-              but comfortable trimming at a specific higher price, or who simply
-              want to harvest the volatility upfront on an existing XLM bag. If
-              you would be upset about selling XLM at <Code>1.02x</Code> spot,
-              pick a further strike or use the put vault instead.
+              Holders content to sell at a specific higher price, or who want to
+              earn on coins they plan to hold anyway. If selling at{' '}
+              <Code>1.02x</Code> spot would bother you, pick a further strike.
             </P>
           </>
         ),
       },
       {
         id: 'cash-secured-put',
-        icon: '📉',
         title: 'Cash-secured put vault',
         eyebrow: 'PROTOCOL AND PRODUCT',
-        tagline: 'Sell downside. Get paid to bid for XLM at a discount.',
+        tagline: 'Get paid to bid for XLM or BTC below spot.',
         body: (
           <>
             <P>
-              The cash-secured put vault lets LUSD holders earn yield by agreeing
-              to buy XLM at a strike price <em>below</em> the current spot. As
-              with covered calls, the upfront is paid immediately and is
-              yours regardless of how the trade settles.
+              The cash-secured put vault pays you to agree to buy the underlying
+              at a strike <em>below</em> spot.
             </P>
             <H>How a position works</H>
             <P>
-              You deposit LUSD into the vault and select one strike multiplier
-              under spot. The protocol reserves enough LUSD to buy XLM at your
-              chosen strike, pays you the net upfront, and locks your
-              collateral into your chosen expiry until its Friday 08:00 UTC.
+              You deposit LUSD (testnet USDC can be routed into it) and pick a
+              strike and expiry. The contract escrows the LUSD and pays the
+              premium in the same transaction. The BTC book needs an LBTC
+              trustline, since an assigned put pays out LBTC.
             </P>
             <H>Settlement outcomes</H>
             <List>
               <li>
-                <strong>
-                  Spot at expiry ≥ strike (put expires out of the money):
-                </strong>{' '}
-                you keep all your LUSD and all of the upfront. No conversion
-                happens.
+                Expiry price at or above the strike: you get your LUSD back and
+                keep the premium.
               </li>
               <li>
-                <strong>Spot at expiry &lt; strike (put is assigned):</strong>{' '}
-                your LUSD is used to buy XLM at the strike, not at the
-                (lower) spot. You still keep the upfront, but you now hold XLM
-                bought above market. If you were already planning to bid XLM at
-                that level, the upfront is pure extra yield; if you weren&apos;t,
-                you&apos;ve taken a mark-to-market loss offset by the upfront.
+                Expiry price below the strike: the put is assigned. Your LUSD
+                goes to the treasury and you receive the XLM or LBTC it buys at
+                the strike. You keep the premium but hold the underlying above
+                market, a loss the premium only partly offsets.
               </li>
             </List>
             <H>Strike grid</H>
@@ -493,233 +383,183 @@ cash-secured put :  0.98x · 0.94x · 0.88x · 0.80x   (below spot)`}
             </Pre>
             <H>Who should use it</H>
             <P>
-              The put vault is ideal for users who want XLM exposure but think
-              current spot is too rich. Instead of bidding passively on an
-              orderbook and hoping to get filled, you get{' '}
-              <em>paid upfront</em> to make the bid — and if XLM never touches
-              your level, the upfront is free yield on idle LUSD.
+              Anyone who wants XLM or BTC but finds spot too expensive. You are
+              paid up front to place the bid, and if the price never reaches
+              your strike, the premium is yield on idle LUSD.
             </P>
           </>
         ),
       },
       {
         id: 'pricing',
-        icon: '🧮',
         title: 'Pricing model',
         eyebrow: 'PROTOCOL AND PRODUCT',
-        tagline: 'Black-Scholes with a volatility smile and a dynamic APR layer.',
+        tagline: 'Black-76 with a volatility smile, under a time-scaled APR ceiling.',
         body: (
           <>
             <P>
-              Lusty quotes every strike through a two-stage pricing pipeline.
-              Stage one produces a <strong>fair</strong> premium using a
-              Black-Scholes engine with a curvature adjustment. Stage two
-              applies a transparent <strong>dynamic margin</strong> that reflects
-              the current state of vault inventory and flow.
+              One engine (<Code>src/lib/pricing-server.ts</Code>) prices what
+              the earn page shows and what the vault pays. Black-76 sets the
+              shape of the ladder; policy sets its level.
             </P>
-            <H>Stage 1 — Fair premium</H>
+            <H>Stage 1: fair premium</H>
             <Pre>
-{`iv_eff(K)    = iv_base × (1 + 6 × ln(K / S)^2)      // volatility smile
-gross_prem   = BlackScholes(side, S, K, T, iv_eff)  // per 1 unit collateral
-fair_prem    = gross_prem × (1 − 0.25)               // 25% revenue share
-APR_fair     = fair_prem / S × (365 / days) × 100`}
+{`σ_real  ← realized vol, EWMA λ=0.94
+σ_atm   = min(σ_real × 1.10 + 0.03, 1.00)
+z       = ln(K / F) / (σ_atm · √T)
+σ_K     = σ_atm × ψ(z)                     // volatility smile
+F       ← forward from perp funding        // ≈ spot for weeklies
+fair    = Black-76(side, F, K, T, σ_K)`}
             </Pre>
             <P>
-              The <Code>iv_eff</Code> term is the volatility smile: it lifts
-              implied volatility on strikes far from spot so that deep-OTM tails
-              are never systematically under-priced. The multiplier{' '}
-              <Code>6</Code> is the curvature and is fixed in V1.
+              XLM has no options market, so the smile shape ψ(z) comes from
+              Derive&apos;s BTC and ETH surfaces in standardized moneyness. At
+              XLM&apos;s current volatility the 100% cap on σ_atm binds, so
+              realized vol does not move the quote today.
             </P>
-            <H>Stage 2 — Dynamic APR adjustment</H>
+            <H>Stage 2: the APR ceiling</H>
             <P>
-              The fair APR is then scaled by a transparent adjustment that only
-              ever <em>discounts</em> it — it never pays above Black-Scholes
-              fair value. Two factors multiply together, both capped at 1.0:
+              The nearest strike is pinned to 120% APR, scaled down for shorter
+              expiries, and the others fall away in their Black-76 proportion.
+              The APR tapers linearly with pool utilization, to half at a full
+              pool, and the 10% fee comes off the premium.
             </P>
-            <List>
-              <li>
-                <strong>Time decay:</strong> the quoted APR is anchored to a
-                14-day selling window. Shorter residual windows shrink it
-                linearly, so a near-expiry position never displays an
-                annualized spike nobody can actually harvest. Positions 14 days
-                out or longer see the full fair APR.
-              </li>
-              <li>
-                <strong>Utilization:</strong> a kinked Aave/Compound-style
-                curve. An empty expiry quotes the full fair APR; as it fills the
-                APR drifts down, then drops convexly past the 80% kink toward a
-                floor of 25% of fair value. Late depositors crowding into a
-                saturated expiry are quoted less, so they cannot dilute the
-                realized yield of earlier depositors.
-              </li>
-            </List>
             <Pre>
-{`time_factor  = min(1, days_to_expiry / 14)
-util_factor  = kinked(utilization)          // 1.0 empty → 0.25 full
-APR_quoted   = APR_fair × time_factor × util_factor`}
+{`apr_self   = fair × (1 − 0.20) / capital × 365 / days
+apr_ref    = apr_self of the nearest strike
+target_top = 120 × min(1, days / days_ref)   // days_ref: farthest open expiry
+scale      = min(1, target_top / apr_ref)
+apr        = min(apr_self × scale, target_top) × (1 − 0.5 × utilization) × (1 − 0.10)`}
             </Pre>
             <P>
-              Crucially, the protocol pays the upfront against this{' '}
-              <em>same</em> adjusted APR — recomputed server-side from its own
-              on-chain utilization, never from a client-supplied number — so the
-              premium that lands in your wallet equals the quote you saw on the
-              earn page. The inputs (days-to-expiry and live epoch utilization)
-              are public protocol state, surfaced on the <Code>/earn</Code> and{' '}
-              <Code>/research</Code> pages, so you can always reconstruct why a
-              strike is quoted at the APR you see.
+              Unit tests hold two invariants: a writer is never paid above 80%
+              of fair value, and no strike, even an off-ladder one, quotes above
+              the displayed ceiling. The server derives every input itself and
+              ignores any premium a client sends. The contract adds a bound of
+              its own: no premium above 20% of the collateral at the oracle
+              price.
             </P>
           </>
         ),
       },
       {
         id: 'epochs',
-        icon: '⏱️',
         title: 'Epochs & settlement',
         eyebrow: 'PROTOCOL AND PRODUCT',
-        tagline: 'Weekly, deterministic, server-settled today.',
+        tagline: 'Weekly expiries, settled on chain at the expiry price.',
         body: (
           <>
             <P>
-              Lusty operates on <strong>rolling weekly expiries</strong>.
-              Several Friday 08:00 UTC expiries are open at once, and you choose
-              which one to write your position into. This keeps the protocol
-              simple, makes APR comparisons apples-to-apples across strikes, and
-              lets you pick exactly when your capital will be liquid again.
+              Three Friday 08:00 UTC expiries are open at once. You choose the
+              one that matches when you want your capital back.
             </P>
             <H>Epoch lifecycle</H>
             <List>
               <li>
-                <strong>Open:</strong> the next few Friday expiries are open
-                simultaneously, each accepting deposits up to its own per-expiry
-                capacity cap. Deposits close <strong>2 days before</strong> an
-                expiry, so the vault never sells high-decay options in the final
-                hours before settlement.
+                An open expiry takes deposits up to its own capacity until{' '}
+                <strong>2 days before</strong> it, so the vault never sells
+                options in their last hours.
               </li>
               <li>
-                <strong>Active:</strong> existing positions accrue no additional
-                yield (premium is already paid upfront); the only live question
-                is where spot is trading relative to each strike.
+                An open position accrues nothing; the premium is already paid.
               </li>
               <li>
-                <strong>Expiry:</strong> at Friday 08:00 UTC the settlement
-                price is snapshotted for the epoch. From that moment on, every
-                position is settleable.
+                At Friday 08:00 UTC the oracle price fixes the outcome.
               </li>
               <li>
-                <strong>Settle &amp; claim:</strong> the depositor claims to
-                release their collateral — in-the-money positions are converted
-                at the strike; out-of-the-money positions are returned as-is.
-                Claims can be rolled directly into the next epoch.
+                After expiry anyone can call <Code>settle(id)</Code>, and a
+                runner does so every two hours. It must happen within about a
+                day, while Reflector still holds the expiry price; after that
+                the v4 contract refuses to settle and the collateral stays
+                escrowed.
               </li>
             </List>
             <H>Oracle</H>
             <P>
-              Settlement reads the <strong>Reflector</strong> oracle, Stellar&apos;s
-              native decentralized price feed, pinned to the epoch&apos;s expiry
-              timestamp. The same feed and rule back the on-chain Soroban vault,
-              so an epoch settles at one verifiable number regardless of rail.
-              Binance only drives the live UI tape and supplies the volatility
-              and forward inputs to the quote.
+              The contract reads <strong>Reflector</strong> for the price at the
+              expiry timestamp. Until that record is queryable it accepts the
+              latest price only if it is at most an hour old; otherwise it
+              reverts. Off-chain sources feed quotes only and never decide a
+              settlement.
             </P>
-            <Roadmap>
-              As custody moves into the Soroban vault (T2), settlement becomes
-              fully permissionless on-chain: anyone can trigger it and the
-              outcome is determined entirely by the Reflector price at expiry,
-              with no server in the path.
-            </Roadmap>
           </>
         ),
       },
       {
         id: 'fees',
-        icon: '💸',
         title: 'Fees',
         eyebrow: 'PROTOCOL AND PRODUCT',
-        tagline: '25% revenue share on upfront income. Visible on every quote.',
+        tagline: '10% of the premium, already netted out of every quote.',
         body: (
           <>
             <P>
-              Lusty takes a <strong>25% revenue share</strong> on the upfront
-              of every position. The share is applied to the Black-Scholes fair
-              value before the dynamic adjustment and before the user sees a
-              quoted APR — in other words, the number you see on the earn page
-              is the number you actually earn. (The fee is 25%, not 15%, to
-              leave headroom for realized-vol spikes on the un-hedged short-call
-              inventory.)
+              Lusty keeps <strong>10% of each premium</strong>, never any
+              collateral. Quoted APRs are net of it, so the quote is what you
+              receive.
             </P>
             <H>What you do NOT pay</H>
             <List>
-              <li>No deposit fee.</li>
-              <li>No withdrawal fee.</li>
-              <li>No performance fee.</li>
-              <li>No roll / renewal fee.</li>
-              <li>No oracle fee.</li>
-              <li>No hidden spread between the quoted APR and the settled APR.</li>
+              <li>No deposit, withdrawal, performance or settlement fee.</li>
+              <li>No gap between the quoted APR and the premium paid.</li>
             </List>
-            <H>Where the 25% goes</H>
+            <H>Where the fee goes</H>
             <P>
-              In the current testnet phase, 100% of protocol revenue accrues to
-              a treasury earmarked for audit, bounty and liquidity
-              incentives. A transparent on-chain split (treasury vs. insurance
-              buffer vs. stakers) will be introduced alongside the mainnet
-              launch and will be documented on this page.
+              Nowhere: the vault pays 10% less than the engine prices, and that
+              amount stays in the book&apos;s cash pool.
             </P>
           </>
         ),
       },
       {
         id: 'limits',
-        icon: '📏',
         title: 'Deposit limits',
         eyebrow: 'PROTOCOL AND PRODUCT',
-        tagline: 'Conservative caps during testnet — scaling with demand.',
+        tagline: 'Conservative testnet caps, enforced by the contract and the quoter.',
         body: (
           <>
             <P>
-              During the testnet and early-mainnet phases, every single deposit
-              is bounded between <Code>100 XLM</Code> and{' '}
-              <Code>10,000 XLM</Code> worth of collateral. For the put vault,
-              those bounds are converted to their LUSD-equivalent at the live
-              spot price at the moment of deposit.
-            </P>
-            <P>
-              Two further notional caps run alongside the per-deposit bounds and
-              the per-expiry capacity buckets:
+              A call takes <Code>100</Code> to <Code>10,000 XLM</Code> or{' '}
+              <Code>0.001</Code> to <Code>0.05 LBTC</Code>; a put takes up to{' '}
+              <Code>10,000</Code> or <Code>1,500 LUSD</Code> on the XLM and BTC
+              books. By default the quoter also declines to co-sign past:
             </P>
             <List>
+              <li><Code>$50,000</Code> per wallet per book over 30 days;</li>
               <li>
-                <strong>Per-wallet limit:</strong> a single wallet can deposit
-                up to a rolling <Code>$50,000</Code> of notional across any
-                30-day window — no one address can monopolize the vault.
+                one position&apos;s maximum per wallet per expiry on each side;
               </li>
               <li>
-                <strong>Per-strike inventory limit:</strong> up to{' '}
-                <Code>$30,000</Code> of notional may be sold against any one
-                strike over a 14-day window, so the vault&apos;s short-option
-                risk can&apos;t concentrate on a single price point.
+                <Code>$30,000</Code> sold against one strike over 14 days,
+                across all wallets.
               </li>
             </List>
-            <H>Why the cap exists</H>
-            <List>
-              <li>
-                Protects early epochs from single-whale concentration risk.
-              </li>
-              <li>
-                Keeps settlement gas and contract complexity bounded while the
-                protocol is still being battle-tested.
-              </li>
-              <li>
-                Lets the team scale caps intentionally as open interest and
-                oracle confidence grow.
-              </li>
-            </List>
-            <H>Scaling policy</H>
             <P>
-              Caps are reviewed at the end of every epoch. When a strike fills
-              its cap without stress (no oracle deviation, no settlement delay,
-              no reverts), the cap for that strike is raised for the next
-              epoch. Cap changes are always announced on the Lusty Twitter
-              account before they take effect.
+              These checks reserve nothing, so racing requests can overshoot one
+              by a single position, still inside the contract&apos;s caps.
+            </P>
+            <H>What the contract enforces</H>
+            <P>
+              These hold even if the server is compromised. Calls count in the
+              underlying, puts in LUSD.
+            </P>
+            <Pre>
+{`                          XLM book    BTC book
+max position, call        10,000      0.05
+max per expiry, call      500,000     5
+max position, put         10,000      1,500
+max per expiry, put       500,000     150,000
+max premium               20% of collateral at the oracle price`}
+            </Pre>
+            <P>
+              It also refuses any position its pools could not pay on
+              assignment.
+            </P>
+            <H>Changing a limit</H>
+            <P>
+              <Code>set_limits</Code> needs two of the admin&apos;s three
+              signatures and affects new positions only. Before quoting a book,
+              the app reads its limits off the contract and refuses the book if
+              they disagree.
             </P>
           </>
         ),
@@ -732,31 +572,18 @@ APR_quoted   = APR_fair × time_factor × util_factor`}
         body: (
           <>
             <P>
-              Every action on Lusty earns points that feed a single Season 0
-              leaderboard. Points are not a token and have no on-chain
-              representation today — they exist to rank early users for
-              priority allocation at mainnet and to reward consistent
-              participation rather than one-shot deposits.
+              Deposits, premiums and swaps earn points on one Season 0
+              leaderboard. Points are not a token and live only in Lusty&apos;s
+              database. They reward steady use over one large deposit.
             </P>
             <H>Scoring components</H>
             <List>
+              <li>1 point per <Code>$1</Code> of collateral deposited.</li>
               <li>
-                <strong>Deposit points (1×):</strong> 1 point for every{' '}
-                <Code>$1</Code> of collateral deposited into a Lusty vault.
-                Counted on the USD notional at the moment of deposit.
+                3 points per LUSD of premium collected, which favors strikes
+                with real assignment risk.
               </li>
-              <li>
-                <strong>Upfront points (3×):</strong> points earned on the LUSD
-                upfront you actually collected, multiplied by 3 to reward
-                taking on real assignment risk instead of parking capital in
-                deep-OTM strikes.
-              </li>
-              <li>
-                <strong>Swap points (0.5×):</strong> 0.5 points for every{' '}
-                <Code>$1</Code> of swap volume. Swapping earns fewer points
-                than vault deposits but still rewards protocol activity and
-                liquidity usage.
-              </li>
+              <li>0.5 points per <Code>$1</Code> of swap volume.</li>
             </List>
             <H>Points formula</H>
             <Pre>
@@ -764,124 +591,71 @@ APR_quoted   = APR_fair × time_factor × util_factor`}
             </Pre>
             <H>Where to track them</H>
             <P>
-              Live ranks, your personal score, and the full top-of-table sit
-              on the <Code>/leaderboard</Code> page. Your position updates
-              in real time after every transaction.
+              On <Code>/leaderboard</Code>.
             </P>
             <H>What points unlock</H>
-            <P>
-              At mainnet, the top of the Season 0 leaderboard receives
-              priority access: earlier deposit windows, higher per-strike caps
-              before public lift, and a share of the launch incentive pool.
-              Final allocation rules will be published before the season
-              closes.
-            </P>
+            <P>Nothing is promised for points today.</P>
           </>
         ),
       },
       {
         id: 'lusd',
-        icon: '🪙',
         title: 'LUSD stablecoin',
         eyebrow: 'PROTOCOL AND PRODUCT',
-        tagline: 'What LUSD is, how it is issued and redeemed, and what backs it.',
+        tagline: 'What LUSD is, where it comes from, and why it has no backing.',
         body: (
           <>
             <P>
-              <strong>LUSD</strong> is the unit of account inside Lusty. It is
-              the asset you receive as your upfront premium, the collateral for
-              the cash-secured put vault, and one side of the{' '}
-              <Code>XLM ↔ LUSD</Code> swap. It is a Stellar asset issued by the
-              Lusty issuer account and is intended to track <strong>1 USD</strong>.
+              <strong>LUSD</strong> is the cash of both books: premiums are paid
+              in it, puts escrow it, and assigned calls pay out in it. Lusty
+              issues it and counts it as <strong>1 USD</strong> by convention.
             </P>
             <Today>
-              On testnet, LUSD is a <strong>faucet-issued test token with no
-              real-world backing</strong>. The 1:1 USD value is a convention for
-              pricing and accounting, not a redeemable claim on reserves. Do not
-              treat testnet LUSD as money — it exists so users can exercise the
-              full deposit → premium → settle → swap loop without real funds.
+              LUSD is an <strong>unbacked testnet token</strong> with no reserve
+              and no redemption, so it lets you run the whole loop without real
+              money. On mainnet the cash asset is Circle&apos;s native USDC,
+              which the contract already supports. LUSD has no mainnet path.
             </Today>
 
             <H>Issuance (mint)</H>
             <P>
-              LUSD is minted by the <strong>issuer account</strong> and
-              distributed from the <strong>distributor account</strong>. On
-              testnet, new LUSD enters circulation through three paths:
+              A 2-of-3 issuer account mints LUSD. The distributor hands it out
+              through the faucet, through the <Code>/swap</Code> desk (XLM to
+              LUSD at spot, less a 0.1% spread), and by converting testnet USDC
+              one for one to fund puts. Premiums mint nothing: the vault pays
+              them from a cash pool the operator funds in advance.
             </P>
-            <List>
-              <li>
-                <strong>Faucet:</strong> the <Code>/api/faucet/lusd</Code>{' '}
-                endpoint sends test LUSD to a user so they can try the put vault
-                and swap.
-              </li>
-              <li>
-                <strong>Upfront premium:</strong> when you open a position, the
-                net premium is paid to you in LUSD from the distributor.
-              </li>
-              <li>
-                <strong>Swap:</strong> swapping XLM into LUSD draws LUSD from the
-                distributor at the live Binance spot price.
-              </li>
-            </List>
 
             <H>Redemption (burn / exit)</H>
             <P>
-              There is no fiat redemption window. You exit LUSD the same way you
-              entered it — by <strong>swapping LUSD back to XLM</strong> through
-              the <Code>/swap</Code> page at the live spot price (0.1% spread),
-              or by holding it as put-vault collateral until settlement. LUSD
-              returned to the distributor is held there; the issuer can burn
-              supply by clawing returned LUSD back to the issuer account.
+              Nothing redeems LUSD for dollars. You exit by swapping back to XLM
+              or by holding it as put collateral. LUSD to XLM swaps are capped
+              per address by the XLM it put in, by a daily outflow ceiling and
+              by a fee floor, so faucet LUSD cannot drain the desk.
             </P>
 
             <H>Reserve & backing</H>
             <P>
-              The peg is maintained operationally, not by an over-collateralized
-              reserve:
+              None on testnet. The swap, quoting live XLM/USD spot, is the only
+              place LUSD meets a price. On mainnet USDC replaces LUSD rather
+              than backing it.
             </P>
-            <List>
-              <li>
-                <strong>Testnet (today):</strong> no reserve. LUSD is
-                faucet-issued and priced at 1 USD by convention. The swap is the
-                only price-discovery surface, and it quotes against the Binance
-                XLM/USD feed.
-              </li>
-              <li>
-                <strong>Mainnet (planned):</strong> LUSD upfront and swap
-                liquidity is intended to be backed by a{' '}
-                <strong>USDC reserve</strong> held by the protocol, with the
-                reserve ratio and attestation method documented here before any
-                mainnet launch.
-              </li>
-            </List>
-            <Roadmap>
-              The trust-minimized design — LUSD mint/burn governed by a Soroban
-              contract against an on-chain USDC reserve, with a verifiable
-              reserve ratio — arrives with the Soroban migration (T2/T3). Until
-              then, supply and reserve are operator-controlled.
-            </Roadmap>
 
             <H>Stress scenarios</H>
             <List>
               <li>
-                <strong>Distributor drained:</strong> if the distributor runs
-                low on LUSD or XLM, swaps and premium payouts in that direction
-                are paused rather than partially filled. Caps and the per-epoch
-                limits exist to keep payout obligations inside the distributor
-                balance.
+                The faucet and swap desk pay from the distributor&apos;s capped
+                balance and cannot reach vault collateral. The contract refuses
+                a position its pool cannot cover.
               </li>
               <li>
-                <strong>Peg break:</strong> because testnet LUSD has no reserve,
-                its &quot;value&quot; is purely the swap rate. If the swap is paused,
-                LUSD cannot be marked to USD until it resumes. On mainnet, a peg
-                deviation would be defended by the USDC reserve and, failing
-                that, by halting new issuance.
+                With no reserve, LUSD is worth only the swap rate, and nothing
+                marks it while the swap is down.
               </li>
               <li>
-                <strong>Price feed down:</strong> if the Binance feed is
-                unreachable, deposits, claims and swaps are rejected (no stale
-                fallback price), so no LUSD is minted or redeemed at a wrong
-                rate while the peg reference is unavailable.
+                Spot comes from Reflector, then Binance. With neither, quotes and
+                swaps are refused. Calls also cannot open on a stale oracle feed;
+                puts, already collateralized in cash, keep trading.
               </li>
             </List>
           </>
@@ -895,112 +669,98 @@ APR_quoted   = APR_fair × time_factor × util_factor`}
     items: [
       {
         id: 'assignment',
-        icon: '⚠️',
         title: 'Assignment risk',
         eyebrow: 'RISK',
-        tagline: 'Selling options is a directional commitment — understand it.',
+        tagline: 'Selling an option is a commitment to trade at the strike.',
         body: (
           <>
             <P>
-              Lusty is not a magic yield box. When you sell a covered call or a
-              cash-secured put, you are making a specific, enforceable promise:
-              you will sell XLM at a given strike, or you will buy XLM at a
-              given strike, if the oracle says so at expiry. The upfront is the
-              compensation for that promise.
+              Writing a call or a put commits you to sell the underlying at the
+              strike, or buy it there, if the expiry price crosses it. The
+              premium pays for that commitment.
             </P>
             <H>What assignment feels like</H>
             <List>
               <li>
-                <strong>Covered call assigned:</strong> you wake up on Friday
-                and your XLM has been swapped to LUSD at the strike. If spot is
-                well above the strike, you&apos;ve given up the extra upside. Your
-                downside in that scenario is opportunity cost, not capital loss.
+                Assigned call: your collateral became LUSD at the strike. If the
+                price ran well past it, you missed that upside, an opportunity
+                cost rather than a capital loss.
               </li>
               <li>
-                <strong>Cash-secured put assigned:</strong> you wake up on
-                Friday and your LUSD has been swapped into XLM at the strike.
-                If spot is well below the strike, you now hold XLM that is
-                worth less than what you paid. This is a real mark-to-market
-                loss, partly offset by the upfront you were paid.
+                Assigned put: your LUSD became XLM or LBTC at the strike. If the
+                price fell well below it, you hold an asset worth less than you
+                paid, a real loss the premium only partly covers.
               </li>
             </List>
             <H>Managing it</H>
             <List>
               <li>
-                Pick strikes that reflect levels at which you would{' '}
-                <em>actually</em> want to transact — not just the ones with the
+                Pick strikes where you would <em>actually</em> trade, not the
                 highest APR.
               </li>
-              <li>
-                Size positions so that a worst-case assignment on a single
-                vault would not break your broader portfolio.
-              </li>
-              <li>
-                Diversify across the two vaults rather than going all-in on one
-                direction.
-              </li>
+              <li>Size positions so the worst assignment would not hurt you.</li>
+              <li>Spread across calls and puts.</li>
             </List>
           </>
         ),
       },
       {
         id: 'smart-contract',
-        icon: '🔐',
         title: 'Custody & contract risk',
         eyebrow: 'RISK',
-        tagline: 'Custodial and server-settled today — please read this carefully.',
+        tagline: 'Collateral sits in an unaudited testnet contract. Read this before depositing.',
         body: (
           <>
             <Today>
-              There are <strong>no Soroban smart contracts deployed yet</strong>.
-              Today Lusty is <strong>custodial</strong>: your deposit is sent to
-              a protocol-operated distributor account, and pricing, settlement
-              and payouts are executed <strong>server-side</strong>. You are
-              trusting the Lusty operator to settle and return collateral
-              correctly. This is testnet only, with test XLM and test LUSD that
-              have no real value.
+              The vault contract (v4) escrows every position on Stellar testnet.
+              Collateral leaves only through <Code>settle(id)</Code>, which
+              anyone can call and which pays the owner at the oracle&apos;s
+              expiry price. No server path can move it; the pre-custody book was
+              settled in full and its payout route deleted. All assets are test
+              assets.
             </Today>
             <P>
-              Because settlement is server-side, the main risks today are{' '}
-              <strong>operator risk</strong> (the distributor account and the
-              settlement server) and ordinary web-application risk, rather than
-              smart-contract bugs. We have hardened the API surface (server-side
-              repricing, server-canonical strike binding, replay protection,
-              fail-closed caps, and an auto-halt circuit breaker that pauses new
-              deposits the moment a risk trigger — or an admin — trips it), but
-              a custodial server is a trust assumption you should weigh.
+              The server holds the quoter key, which only co-signs premiums. The
+              contract caps each at 20% of the collateral at the oracle price,
+              so a stolen key could overpay on positions the thief must
+              collateralize but not drain the pools. The 2-of-3 admin can change
+              limits and the quoter set, nothing else. Two admin signers plus a
+              quoter key could widen the ceiling, which is why the admin and
+              quoter are separate accounts.
             </P>
-            <Roadmap>
-              The Soroban vault is <strong>deployed on testnet</strong> and
-              settles real positions against Reflector, but it is{' '}
-              <strong>not yet audited</strong>. An independent audit before any
-              mainnet launch, a bug bounty, and a timelock on upgrades are part
-              of the T2 scope. Until the audit report is published on this page,
-              assume the contract may contain bugs.
-            </Roadmap>
             <H>What this means for you</H>
             <List>
               <li>
-                The current deployment runs on <strong>Stellar testnet</strong>.
-                Deposits use test XLM and test LUSD from the testnet faucet,
-                which have no real value.
+                The contract is <strong>not independently audited</strong>; an
+                audit is planned before mainnet. Assume it may have bugs.
               </li>
               <li>
-                The mainnet launch will be gated behind a public audit from a
-                reputable firm, followed by a bug bounty program.
+                It has no upgrade entrypoint: nobody can change it under an open
+                position, and a fix means redeploying and migrating.
               </li>
               <li>
-                Upgrades will be announced in advance and a timelock will be
-                introduced before any contract upgrade can go live on mainnet.
+                A position must be settled within about a day of expiry. On v4,
+                one left past that window stays escrowed with no admin override.
+                The undeployed v5 records the expiry price on chain and releases
+                an unpriced position after 30 days.
+              </li>
+              <li>
+                Deposits halt automatically on a volatility spike, oracle stress
+                or a per-epoch loss cap, or by hand.
               </li>
             </List>
             <H>Responsible testing</H>
             <P>
-              We actively welcome users breaking the protocol on testnet.
-              Report any issue — from UI glitches to potential contract
-              exploits — through the channels listed in the{' '}
-              <strong>Resources → Security</strong> section. During testnet,
-              responsible disclosure is rewarded with points on the leaderboard.
+              An adversarial testnet window has been open since 2026-10-06 and
+              runs until mainnet. Attack within the{' '}
+              <a href="/docs#adversarial" className="underline hover:text-ink">
+                rules of engagement
+              </a>{' '}
+              and report through the button on every page or the{' '}
+              <a href="/docs#reporting" className="underline hover:text-ink">
+                reporting guide
+              </a>
+              . A valid finding may earn an XLM reward.
             </P>
           </>
         ),
@@ -1015,114 +775,93 @@ APR_quoted   = APR_fair × time_factor × util_factor`}
         // Placeholder: withReference swaps in the architecture document,
         // rendered on the server from components/docs/ArchitectureArticle.
         id: 'architecture',
-        icon: '🏛️',
         title: 'Technical architecture',
         eyebrow: 'RESOURCES',
         body: null,
       },
       {
         id: 'stack',
-        icon: '🧰',
         title: 'Tech stack',
         eyebrow: 'RESOURCES',
-        tagline: 'Everything Lusty is built on.',
+        tagline: 'What Lusty is built on.',
         body: (
           <>
             <P>
-              Lusty is a full-stack DeFi application. This page lists every
-              meaningful dependency the protocol and the frontend currently
-              rely on. If something is not on this list, Lusty does not use it.
+              The app keeps its position mirror, replay ledger and leaderboard
+              in PostgreSQL (Supabase) and runs on self-hosted Coolify.
             </P>
-            <H>Blockchain (today)</H>
+            <H>Blockchain</H>
             <List>
               <li>
-                <strong>Stellar Classic</strong> — payment layer for all
-                collateral and LUSD upfront transfers, via a protocol-operated
-                distributor account (2-of-3 multisig on the issuer).
+                <strong>Soroban</strong>: the vault contract (Rust, v4), deployed
+                twice from one wasm hash for the XLM and BTC books.
               </li>
               <li>
-                <strong>Reflector</strong> — Stellar-native decentralized
-                oracle; settlement reads its <Code>XLM/USD</Code> feed via
-                Soroban RPC, pinned to expiry. Already the settlement source on
-                both rails.
+                <strong>Reflector</strong>: the settlement oracle, and the
+                server&apos;s first source of live spot.
               </li>
               <li>
-                <strong>Soroban</strong> — the Lusty vault contract (Rust) is
-                deployed on testnet and settles real positions against
-                Reflector. See the technical architecture page.
+                <strong>Stellar Asset Contracts</strong> for XLM, LBTC and LUSD.
               </li>
               <li>
-                <strong>Binance API</strong> — quote inputs only: realized-vol
-                history and perp funding for pricing, plus a public websocket
-                for the live UI tape and a settlement fallback candle.
+                <strong>Stellar Classic</strong> accounts: the 2-of-3 admin, the
+                LUSD and LBTC issuers, and the faucet and swap distributors.
               </li>
             </List>
-            <H>Blockchain (roadmap — T2)</H>
+            <H>In the repository, not yet deployed</H>
             <List>
-              <li>
-                Move custody into the deployed Soroban vault so collateral is
-                escrowed on-chain rather than by the distributor, add an
-                in-contract premium ceiling and a multisig quoter, and bring
-                cash-secured puts into the contract.
-              </li>
+              <li>Vault v5, with on-chain expiry prices and a 30-day release.</li>
+              <li>An ETH book, waiting on a vault instance and an asset issuer.</li>
             </List>
             <H>Smart-contract tooling</H>
             <List>
               <li>
-                <strong>@stellar/stellar-sdk</strong> — Horizon / Soroban RPC
-                client used by the frontend to build and submit transactions.
+                <strong>@stellar/stellar-sdk</strong>: Horizon and Soroban RPC
+                client.
               </li>
               <li>
-                <strong>@creit.tech/stellar-wallets-kit</strong> — unified
-                wallet connector for Freighter, xBull, Albedo and Lobstr.
+                <strong>@creit.tech/stellar-wallets-kit</strong>: Freighter,
+                xBull, Albedo and Lobstr.
               </li>
             </List>
             <H>Frontend</H>
             <List>
               <li>
-                <strong>Next.js 14</strong> (App Router) — framework for the
-                earn, dashboard, research and docs pages.
+                <strong>Next.js 15.5</strong> (App Router), pages and API routes.
               </li>
               <li>
-                <strong>React 18</strong> — UI runtime.
+                <strong>React 19.2</strong>.
               </li>
               <li>
-                <strong>TypeScript 5</strong> — strict mode across the entire
-                codebase.
+                <strong>TypeScript 5</strong>, strict mode.
               </li>
               <li>
-                <strong>Tailwind CSS</strong> — styling, design tokens and the
-                light (cream) + dark themes.
+                <strong>Tailwind CSS</strong>, dark and cream themes.
               </li>
               <li>
-                <strong>lightweight-charts</strong> (TradingView) — powers the
-                price and APR charts on the research page.
+                <strong>lightweight-charts</strong> (TradingView) for research
+                charts.
               </li>
               <li>
-                <strong>lucide-react</strong> — icon set.
+                <strong>lucide-react</strong> icons.
               </li>
             </List>
             <H>Price oracle</H>
             <List>
               <li>
-                <strong>Reflector</strong> — the settlement oracle. The server
-                reads its <Code>XLM/USD</Code> feed via Soroban RPC, pinned to
-                expiry; the Soroban vault reads the same feed on-chain. If no
-                expiry-pinned price is available the claim is refused rather
-                than settled at a live price.
+                <strong>Reflector</strong>: the only settlement source.
               </li>
               <li>
-                <strong>Binance REST API</strong> — quote inputs (realized-vol
-                history, perp funding) and the live spot used to value deposits
-                against the USD caps (<Code>XLMUSDT</Code>), plus the
-                expiry-minute candle used as a settlement fallback. If a needed
-                feed is unavailable, transactions are rejected rather than
-                falling back to a stale price.
+                <strong>Binance REST</strong>: fallback spot, volatility history
+                and perp funding.
               </li>
               <li>
-                <strong>Binance WebSocket</strong> — client-side live tape for
-                the research page and UI price display. Purely cosmetic — never
-                influences settlement.
+                <strong>CoinGecko</strong> and <strong>Bitstamp</strong>:
+                fallback volatility history.
+              </li>
+              <li>
+                <strong>Binance WebSocket</strong>: the browser&apos;s live tape,
+                display only.
               </li>
             </List>
           </>
@@ -1130,28 +869,27 @@ APR_quoted   = APR_fair × time_factor × util_factor`}
       },
       {
         id: 'official-links',
-        icon: '🔗',
         title: 'Official links',
         eyebrow: 'RESOURCES',
         body: (
           <>
             <P>
-              These are the only channels the Lusty team posts from. Anything
-              else is not us.
+              The Lusty team posts only from these channels. Anything else is
+              not us.
             </P>
             <List>
               <li>
-                Website &amp; app — <Code>lusty.finance</Code>
+                Website and app: <Code>lusty.finance</Code>
               </li>
               <li>
-                Docs — <Code>lusty.finance/docs</Code> (this site)
+                Docs: <Code>lusty.finance/docs</Code> (this site)
               </li>
               <li>
-                Technical architecture —{' '}
+                Technical architecture:{' '}
                 <Code>lusty.finance/docs#architecture</Code>
               </li>
               <li>
-                GitHub —{' '}
+                GitHub:{' '}
                 <a
                   href="https://github.com/utkurock/Lusty"
                   target="_blank"
@@ -1167,67 +905,52 @@ APR_quoted   = APR_fair × time_factor × util_factor`}
       },
       {
         id: 'oracle',
-        icon: '🔮',
         title: 'Oracle & price feed',
         eyebrow: 'RESOURCES',
-        tagline: 'Reflector settles every position; Binance feeds the quote inputs.',
+        tagline: 'Reflector settles every position. Off-chain feeds only shape quotes.',
         body: (
           <>
             <P>
-              Lusty draws a clear line between the price that <strong>settles
-              your money</strong> and the prices that only <strong>feed the
-              quote</strong>. The settlement price is the one that decides
-              whether you are assigned, so it comes from the on-chain{' '}
-              <strong>Reflector oracle</strong>.
+              The price that <strong>settles a position</strong> decides
+              assignment, so it comes from the <strong>Reflector
+              oracle</strong> and the contract reads it itself. Other prices
+              only <strong>feed a quote</strong>.
             </P>
-            <H>Settlement price — Reflector</H>
+            <H>Settlement price: Reflector</H>
             <P>
-              At settlement the server reads the Reflector{' '}
-              <Code>XLM/USD</Code> feed through Soroban RPC, pinned to your
-              position&apos;s <strong>expiry timestamp</strong> (not the price
-              at the moment you claim). This is the same feed and the same
-              expiry-pinned rule the on-chain Soroban vault uses, so both rails
-              settle a position at the same number. Reads are free RPC
-              simulations — no key is touched and nothing is signed.
+              <Code>settle(id)</Code> calls Reflector&apos;s{' '}
+              <Code>price(asset, timestamp)</Code> for the{' '}
+              <strong>expiry timestamp</strong> on the feed&apos;s 300-second
+              grid, so settling later changes nothing. Each book reads its own
+              feed. Reflector keeps about 24 hours of history; until the expiry
+              record is queryable the contract accepts the latest price only if
+              it is at most an hour old, and with neither it reverts. Settlement
+              therefore has a deadline of about a day, which the runner reports
+              for each due position.
             </P>
+            <H>Quote inputs: off-chain feeds</H>
             <P>
-              Reflector keeps about 24 hours of history. If you claim long
-              after expiry and the record has been pruned, settlement falls
-              back to the Binance 1-minute candle at the same expiry minute,
-              which is also expiry-pinned. If neither source can produce an
-              expiry-pinned price, the claim is refused rather than settled at
-              a live price.
-            </P>
-            <H>Quote inputs — Binance</H>
-            <P>
-              Pricing a fresh quote needs data Reflector does not carry: the
-              realized-volatility history (for σ) and the perpetual funding rate
-              (for the forward). Those come from Binance, along with the live
-              spot used to value a deposit against the USD caps. These never
-              decide a settlement; they only shape the premium you are offered.
+              Quotes need volatility history and perp funding, which Reflector
+              does not carry. Those come from Binance, with CoinGecko and
+              Bitstamp as volatility fallbacks. Live spot comes from Reflector,
+              then Binance.
             </P>
             <H>Safety mechanism</H>
             <P>
-              Every price source is fail-closed. If the feed needed for an
-              operation is unreachable or returns invalid data, the transaction
-              is rejected with a <Code>price feed unavailable</Code> error.
-              There is no hardcoded fallback price, and an expired position is
-              never settled at a live price.
-            </P>
-            <P>
-              The frontend streams live spot from the Binance public websocket
-              for responsiveness. This stream drives the UI price display and
-              the TradingView chart on the research page only.
+              Every source fails closed: if a needed feed is down or returns bad
+              data, the request is refused (a quote answers{' '}
+              <Code>price feed unavailable</Code>). There is no hardcoded
+              fallback price. The Binance websocket in the browser drives only
+              the price display and research chart.
             </P>
           </>
         ),
       },
       {
         id: 'terms',
-        icon: '📄',
         title: 'Terms of Service',
         eyebrow: 'RESOURCES',
-        tagline: 'Last updated: 2026-04-09.',
+        tagline: 'Last updated: 2026-10-26.',
         body: (
           <>
             <P>
@@ -1253,14 +976,12 @@ APR_quoted   = APR_fair × time_factor × util_factor`}
             </P>
             <H>3. Custody</H>
             <P>
-              During the current server-settled testnet phase, Lusty is{' '}
-              <strong>custodial</strong>: deposits are held by a
-              protocol-operated distributor account and settlement is executed
-              server-side. You are trusting the Lusty operator to settle and
-              return collateral correctly. The non-custodial model — collateral
-              held by Soroban contracts the user interacts with directly, with
-              no ability for the team to freeze or seize positions — is a
-              roadmap target that arrives with the Soroban migration.
+              Collateral is held by the Lusty vault contract, not by the Lusty
+              team, and leaves it only through settlement, which anyone can
+              trigger and which pays the position&apos;s owner at the
+              oracle&apos;s expiry price. The team cannot freeze or seize
+              escrowed collateral. On the current contract version, collateral
+              not settled within about a day of expiry stays escrowed.
             </P>
             <H>4. Assignment &amp; settlement</H>
             <P>
@@ -1274,8 +995,9 @@ APR_quoted   = APR_fair × time_factor × util_factor`}
             <P>
               While Lusty is in its testnet phase, the Service is provided
               strictly for testing and evaluation purposes. Contracts are
-              unaudited. Do not send real funds. Any real funds sent to testnet
-              addresses may be unrecoverable.
+              unaudited, and LUSD and LBTC are unbacked test assets. Do not send
+              real funds. Any real funds sent to testnet addresses may be
+              unrecoverable.
             </P>
             <H>6. No warranty</H>
             <P>
@@ -1294,96 +1016,83 @@ APR_quoted   = APR_fair × time_factor × util_factor`}
             </P>
             <H>8. Changes</H>
             <P>
-              These terms may be updated. Material changes will be announced on
-              the official Twitter account and reflected here with an updated
-              date at the top of the document.
+              These terms may be updated. Changes will appear here with a new
+              date at the top.
             </P>
           </>
         ),
       },
       {
         id: 'privacy',
-        icon: '🔏',
         title: 'Privacy Policy',
         eyebrow: 'RESOURCES',
-        tagline: 'Last updated: 2026-04-09.',
+        tagline: 'Last updated: 2026-10-26.',
         body: (
           <>
             <P>
-              Lusty is designed around the principle of collecting as little
-              personal data as possible. This policy describes what we do and
-              don&apos;t collect, and how the information is used.
+              Lusty collects as little personal data as it can. This is what it
+              collects and why.
             </P>
             <H>What we do NOT collect</H>
             <List>
-              <li>We do not collect names, emails, phone numbers or KYC data from Service users.</li>
-              <li>We do not require account creation or sign-up.</li>
-              <li>We do not sell or share user data with third parties for advertising.</li>
-              <li>We do not link wallet addresses to off-chain identities.</li>
+              <li>No names, emails, phone numbers or KYC data to use the app, and no sign-up.</li>
+              <li>We do not sell or share user data for advertising.</li>
+              <li>We do not try to link wallet addresses to off-chain identities.</li>
             </List>
             <H>What is inherently public</H>
             <P>
-              Every transaction you make with Lusty contracts is recorded on
-              the Stellar ledger and is publicly visible. This is a property of
-              the blockchain, not of Lusty. Your wallet address, your position,
-              and your settlements are queryable by anyone using a block
-              explorer.
+              Every transaction with the Lusty contracts is on the Stellar
+              ledger, so your address, positions and settlements are visible to
+              anyone with a block explorer.
             </P>
             <H>What we collect incidentally</H>
             <List>
               <li>
-                <strong>Analytics:</strong> basic, aggregated and anonymized
-                pageview statistics on the frontend to understand which pages
-                are used. No wallet addresses are linked to these events.
+                Usage events sent to Lusty&apos;s own server: the page, a random
+                browser session id, and your wallet address when connected. No
+                third-party analytics.
               </li>
+              <li>The address of each wallet you connect.</li>
+              <li>Contact details you give in a security report or feedback, so we can reply.</li>
               <li>
-                <strong>RPC logs:</strong> when you use the app, your browser
-                sends RPC requests to a Stellar Horizon / Soroban RPC endpoint.
-                Those endpoints may log your IP independently of Lusty, under
-                their own privacy policies.
-              </li>
-              <li>
-                <strong>Error reporting:</strong> uncaught frontend errors may
-                include a minimal stack trace sent to a monitoring service for
-                debugging. We strip wallet addresses before transmission where
-                technically possible.
+                Stellar Horizon and Soroban RPC endpoints your browser calls may
+                log your IP under their own policies.
               </li>
             </List>
             <H>Cookies</H>
             <P>
-              Lusty uses only strictly necessary cookies (wallet-connection
-              state, theme preference). There are no third-party advertising or
-              tracking cookies.
+              Lusty sets no cookies. Wallet choice, theme and session id live in
+              your browser&apos;s local storage, which you can clear.
             </P>
             <H>Your rights</H>
             <P>
-              Because we do not collect personal data tied to identity, there
-              is generally no personal record to rectify or delete. If you
-              believe we hold data about you, contact{' '}
-              <Code>privacy@lusty.finance</Code> and we will respond.
+              We hold little data tied to identity, so there is usually nothing
+              to correct or delete. If you believe we hold data about you,
+              contact the maintainer through the{' '}
+              <a href="/docs#reporting" className="underline hover:text-ink">
+                reporting guide
+              </a>
+              .
             </P>
           </>
         ),
       },
       {
         id: 'brand',
-        icon: '🎨',
         title: 'Brand kit',
         eyebrow: 'RESOURCES',
         body: (
           <>
             <P>
-              If you want to write about Lusty, integrate with it, or list it on
-              an aggregator, please use the assets and colors on this page
-              rather than screenshotting the app.
+              To write about, integrate or list Lusty, use these names and
+              colors rather than screenshots of the app.
             </P>
             <H>Name &amp; wordmark</H>
             <List>
               <li>
-                Always written as <Code>lusty_</Code> in the logo form and{' '}
-                <strong>Lusty</strong> in prose.
+                <Code>lusty_</Code> in the logo form, Lusty in prose.
               </li>
-              <li>Never all-caps unless part of a headline.</li>
+              <li>All caps only as part of a headline.</li>
               <li>Never hyphenated, never spaced.</li>
             </List>
             <H>Colors</H>
@@ -1393,26 +1102,20 @@ surface (paper)     : #f0ece3
 ink (near-black)    : #1a1a1a
 accent (gold)       : #eab308
 muted text          : #6b6560
-border              : #c4bfb2`}
+border              : #cac4b7`}
             </Pre>
             <P>
-              The app ships both a light (cream) and a dark theme, toggleable
-              from the navbar. The gold accent <Code>#eab308</Code> is shared
-              across both; everything else is a design token that flips with the
-              theme.
+              These are the cream theme&apos;s values. The app defaults to dark
+              and switches from the navbar; the gold <Code>#eab308</Code> is
+              shared and the rest are tokens that change with the theme.
             </P>
             <H>Typography</H>
             <List>
-              <li>
-                Display &amp; body: <strong>Inter</strong>.
-              </li>
-              <li>
-                Mono &amp; code: <strong>JetBrains Mono</strong>.
-              </li>
+              <li>Display and body: Jeko, falling back to Inter.</li>
+              <li>Code: JetBrains Mono.</li>
             </List>
             <P>
-              Logo files and press assets can be requested at{' '}
-              <Code>brand@lusty.finance</Code>.
+              Request logo files and press assets through the GitHub repository.
             </P>
           </>
         ),
@@ -1426,6 +1129,9 @@ export default function DocsClient({ reference }: { reference: ReferenceSections
   const allItems = groups.flatMap((g) => g.items)
   const [activeId, setActiveId] = useState(allItems[0].id)
   const [copied, setCopied] = useState(false)
+  // Below lg the nav would sit above the article as a full screen of links,
+  // so it folds behind a toggle there; lg and up it is always shown.
+  const [navOpen, setNavOpen] = useState(false)
 
   // Select a section and reflect it in the URL hash so the address bar always
   // points at the section you're reading (and the Copy button can grab it).
@@ -1433,6 +1139,7 @@ export default function DocsClient({ reference }: { reference: ReferenceSections
   // previous section's scroll offset and opens the next one halfway down.
   const selectSection = (id: string) => {
     setActiveId(id)
+    setNavOpen(false)
     if (typeof window !== 'undefined') {
       history.replaceState(null, '', `#${id}`)
       window.scrollTo({ top: 0 })
@@ -1492,12 +1199,25 @@ export default function DocsClient({ reference }: { reference: ReferenceSections
 
   return (
     <div className="bg-surface min-h-screen text-ink">
-      <div className="max-w-content mx-auto px-6 py-10 grid lg:grid-cols-[260px_1fr] gap-10">
+      <div className="max-w-content mx-auto px-6 py-10 grid lg:grid-cols-[260px_1fr] gap-6 lg:gap-10">
         {/* Sidebar */}
         {/* The nav is taller than the viewport, so it scrolls on its own. Slim
             bar, and the ends fade into the page so a half-visible item reads as
             "keep going" instead of as a crop. */}
-        <aside ref={navRef} className="scroll-slim scroll-fade-y font-mono text-caption space-y-6 lg:sticky lg:top-20 lg:self-start lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto pr-3 pb-14">
+        <button
+          type="button"
+          onClick={() => setNavOpen((o) => !o)}
+          aria-expanded={navOpen}
+          aria-controls="docs-nav"
+          className="press lg:hidden flex items-center justify-between gap-3 w-full rounded-md border border-line bg-card px-3 py-2.5 font-mono text-caption text-ink"
+        >
+          <span className="truncate">
+            <span className="text-ink-2 uppercase tracking-wider mr-2">Contents</span>
+            {allItems[activeIdx]?.title}
+          </span>
+          <ChevronDown size={16} className={'shrink-0 transition ' + (navOpen ? 'rotate-180' : '')} />
+        </button>
+        <aside id="docs-nav" ref={navRef} className={(navOpen ? 'block' : 'hidden') + ' lg:block scroll-slim scroll-fade-y font-mono text-caption space-y-6 lg:sticky lg:top-20 lg:self-start lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto pr-3 pb-24'}>
           {groups.map((g) => (
             <div key={g.id}>
               <div className="uppercase text-ink-2 mb-2 tracking-wider">

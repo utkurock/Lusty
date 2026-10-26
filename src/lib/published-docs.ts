@@ -3,6 +3,8 @@
 // They are sections of the one documentation page, rendered from the files in
 // docs/ so the page and the repository cannot disagree. A slug never becomes a
 // path: it is looked up here, which is the whole of what the site will read.
+// A slug added here also needs a place in the sidebar (withReference in
+// app/docs/DocsClient.tsx), or its section renders nowhere a reader can reach.
 
 export interface PublishedDoc {
   file: string

@@ -49,8 +49,9 @@ the premium on every `open()` and can do nothing else — it cannot move
 collateral, settle, or change a position once opened, and the contract caps
 every premium it may sign at `max_premium_bps` of the collateral behind it.
 
-Tranche 2 covers what remains: putting quoter administration behind a multisig,
-a scheduled runner that settles expired positions, and an independent audit.
+Quoter administration sits behind a 2-of-3 admin multisig, and a scheduled
+runner settles expired positions. An independent audit is still to come before
+mainnet.
 
 LUSD is a testnet convenience token, faucet-issued and unbacked, and the app
 says so. It has no mainnet path. Mainnet settles in Circle's native USDC,
@@ -99,7 +100,7 @@ quote above the displayed ceiling.
 
 | Layer | Tech |
 |-------|------|
-| Frontend | Next.js 14, React 18, TypeScript, Tailwind |
+| Frontend | Next.js 15.5, React 19.2, TypeScript, Tailwind |
 | Wallets | Stellar Wallets Kit (Freighter, xBull, Albedo, Lobstr) |
 | Settlement oracle | Reflector: cross-contract call on-chain, Soroban RPC simulation server-side |
 | Contracts | Soroban (Rust), `contracts/vault` |

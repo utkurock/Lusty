@@ -165,7 +165,7 @@ function RiskPanel({
   // of the two reasons it is.
   const absence =
     portfolio.counts.open === 0
-      ? 'nothing open to price — expired positions settle at a price already fixed by the oracle'
+      ? 'nothing open to price (expired positions settle at a price the oracle already fixed)'
       : !portfolio.market
         ? 'price feed unavailable, so live risk cannot be computed'
         : 'positions could not be priced'
@@ -196,13 +196,13 @@ function RiskPanel({
           {g.pricedPositions < portfolio.counts.open && (
             <div className="font-mono text-tiny text-brand mt-4">
               priced {g.pricedPositions} of {portfolio.counts.open} open
-              positions — the rest could not be priced and are not in these
+              positions; the rest could not be priced and are left out of these
               totals
             </div>
           )}
         </>
       ) : (
-        <div className="font-mono text-caption text-ink-2">Not shown — {absence}.</div>
+        <div className="font-mono text-caption text-ink-2">Not shown: {absence}.</div>
       )}
     </Panel>
   )
@@ -247,7 +247,7 @@ function ExposurePanel({
   return (
     <Panel
       title="Asset exposure"
-      note={`calls lock ${symbol}, puts lock cash — separate tokens, so there is no combined total`}
+      note={`calls lock ${symbol} and puts lock cash, two different tokens, so there is no combined total`}
     >
       <StatStrip
         className="mb-6"
@@ -329,8 +329,8 @@ function ExposurePanel({
       {buckets.some((b) => b.vault) && (
         <div className="font-mono text-tiny text-ink-2 mt-3">
           Vault load is every writer&apos;s collateral at that expiry against the
-          contract&apos;s own per-expiry cap, read from contract state — not your
-          share.
+          contract&apos;s own per-expiry cap, read from contract state. It is not
+          your share.
         </div>
       )}
     </Panel>
@@ -383,8 +383,8 @@ function Settlement({ position }: { position: Position }) {
     <div className="mt-4 pt-4 border-t border-line-light flex flex-wrap items-baseline gap-x-2 gap-y-1">
       <span className="font-mono text-caption text-ink-2">
         {assigned
-          ? `Assigned${at} — the vault took your ${gaveUp} and paid you`
-          : `Not assigned${at} — your collateral came back as`}
+          ? `Assigned${at}: the vault took your ${gaveUp} and paid you`
+          : `Not assigned${at}: your collateral came back as`}
       </span>
       <span className="num text-caption text-accent-green font-semibold">
         {payoutAmount(payout)}
@@ -466,7 +466,7 @@ function PositionRow({ p }: { p: Position }) {
           />
           <div>
             <div className="font-mono font-semibold text-ink">
-              {shownAsset} {isCall ? 'Covered Call' : 'Cash-Secured Put'}
+              {shownAsset} {isCall ? 'Covered call' : 'Cash-secured put'}
             </div>
             <div className="font-mono text-tiny text-ink-2">
               strike ${formatStrike(p.strikePrice ?? 0)} · {p.expiryLabel}
@@ -715,7 +715,7 @@ export default function DashboardPage() {
           <EmptyState
             icon={Wallet}
             title="Connect a wallet to see your positions."
-            hint="Nothing is stored locally — positions are read from contract state, so they follow the wallet, not the browser."
+            hint="Nothing is stored locally. Positions are read from contract state, so they follow the wallet, not the browser."
             action={
               <button onClick={connect} className="btn btn-primary press">
                 connect

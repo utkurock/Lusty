@@ -86,7 +86,7 @@ export default function SwapPage() {
         setStatus(null)
         setTxError(
           `Your wallet is on a different account now (${live.slice(0, 4)}…${live.slice(-4)}). ` +
-            `Nothing was sent — press again to swap from it.`
+            `Nothing was sent. Press again to swap from it.`
         )
         return
       }
@@ -108,7 +108,7 @@ export default function SwapPage() {
       if (!pre.ok || !preData?.ready) {
         throw new Error(
           `${preData?.reason ?? preData?.error ?? 'the swap cannot be completed right now'}. ` +
-            `Nothing was sent — your ${fromAsset} is untouched.`
+            `Nothing was sent. Your ${fromAsset} is untouched.`
         )
       }
 
@@ -116,7 +116,7 @@ export default function SwapPage() {
       if (toAsset === 'LUSD') {
         const hasTrust = await hasLusdTrustline(address)
         if (!hasTrust) {
-          setStatus('Opening LUSD trustline — confirm in wallet')
+          setStatus('Opening LUSD trustline: confirm in wallet')
           const trustXdr = await buildTrustlineTx(address)
           const signedTrust = await signTransaction(trustXdr)
           const tx = TransactionBuilder.fromXDR(signedTrust, Networks.TESTNET)
@@ -136,7 +136,7 @@ export default function SwapPage() {
       }
 
       // 1. Build + sign a payment to the distributor (user sends source asset)
-      setStatus('Sending payment — confirm in wallet')
+      setStatus('Sending payment: confirm in wallet')
       const payXdr = await buildSwapPaymentTx({
         user: address,
         type: fromAsset === 'XLM' ? 'call' : 'put',
@@ -173,7 +173,7 @@ export default function SwapPage() {
               : null
         const reason = [swapData.error ?? 'Swap failed', detail]
           .filter(Boolean)
-          .join(' — ')
+          .join(': ')
         throw new Error(
           `${reason}. Your ${fromAsset} has already been sent and is held by the protocol; ` +
             `it has not been lost. Keep this transaction hash: ${payHash}`
@@ -209,7 +209,7 @@ export default function SwapPage() {
             <div className="font-mono text-caption text-brand">~/swap</div>
             <h1 className="font-display text-head-lg text-ink mt-1">Swap</h1>
             <p className="font-mono text-caption text-ink-2 mt-1">
-              Routed through the native Stellar DEX via path payments.
+              You pay the protocol&apos;s distributor and it sends the other asset back at the live XLM price.
             </p>
           </div>
           <button

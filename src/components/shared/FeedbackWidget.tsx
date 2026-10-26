@@ -115,14 +115,14 @@ export function FeedbackWidget() {
             <div className="w-12 h-12 rounded-full bg-accent-green/15 flex items-center justify-center">
               <Check size={24} className="text-accent-green" />
             </div>
-            <p className="font-mono text-body text-ink">Thanks for the feedback!</p>
+            <p className="font-mono text-body text-ink">Thanks, your feedback was sent.</p>
           </div>
         ) : (
           <div className="space-y-4">
             {/* Rating */}
             <div>
               <label className="label mb-2 block">
-                How is your experience?
+                Rate your experience
               </label>
               <div className="flex gap-1">
                 {[1, 2, 3, 4, 5].map((n) => (
@@ -181,7 +181,7 @@ export function FeedbackWidget() {
                 onChange={(e) => setMessage(e.target.value)}
                 rows={4}
                 maxLength={2000}
-                placeholder="What's working, what's confusing, what you'd love to see…"
+                placeholder="What's working, what's confusing, what you'd like to see…"
                 className="w-full px-3 py-2 rounded-sm border border-line bg-card text-ink font-mono text-body resize-none focus:outline-none focus:border-ink transition"
               />
             </div>
@@ -221,7 +221,7 @@ export function FeedbackWidget() {
 
             {!address && (
               <p className="font-mono text-tiny text-ink-2 text-center">
-                Tip: connect your wallet so we can follow up.
+                Connect your wallet so we can follow up.
               </p>
             )}
           </div>
