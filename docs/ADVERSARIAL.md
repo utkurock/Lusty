@@ -229,7 +229,7 @@ deadline set before mainnet. Nothing is quietly carried.
 
 Because the window runs to mainnet, the adversarial report is published once the
 fourteen-day minimum has passed, and is updated with every finding received after it until
-launch.
+launch. It is [`ADVERSARIAL-REPORT.md`](./ADVERSARIAL-REPORT.md).
 
 ---
 
@@ -256,26 +256,27 @@ report of one of them should be triaged as known rather than counted twice:
 | 7 | High | `/api/swap` and `/api/anchor/bridge` released the replay guard on **any** payout submit error. A Horizon 504 does not mean the payout failed: it can still land before its time bound, and the released guard then let the same funding hash be paid again. Found 2026-10-06 while scripting class 19. Now only a 400 carrying result codes releases the guard; anything else keeps it, records the payout hash and answers `payout_unconfirmed`. | fixed, `47f7cf6`, live 2026-10-06 |
 | 8 | Low | A routed swap's settle read a Horizon outage as "no path payment". It closed the swap, released its routing capacity and journaled a refusal for what may have been a fill, and the writer's put stopped after a swap that had gone through. Found 2026-10-06 while scripting class 19. Now only a 404 means not on the ledger; an unreadable ledger keeps the swap open and answers 503 `retry`, and the client re-asks. | fixed, `2361971`, live 2026-10-06 |
 | 9 | Low | Market inputs had no age limit in an outage. With Binance, Bitstamp and CoinGecko all down, the last σ priced every quote for as long as the process stayed up, and the last perp funding rate rolled every forward the same way. Found 2026-10-06 while scripting class 19. σ is now served stale for at most 24 hours, then quoting fails closed; funding for at most one 8-hour interval, then the forward is F = S. | fixed, `12dd382`, live 2026-10-06 |
-| 10 | High | The swap and bridge replay guard was keyed on the caller's raw `txHash` string, so each dot-segment spelling of one funding hash (`x/../<hash>`) was a fresh key and the distributor paid the same payment again. Now the guard is keyed on the canonical 64-hex hash the Horizon record itself carries. | fixed, `93ca969` |
-| 11 | Medium | Quote reservations for throwaway addresses could hold a strike's inventory, blocking every honest writer at that strike for 14 days. Lapsed reservations are now settled for every wallet on the monitor's timer, and authorize is limited per client. | fixed, `b855903` |
-| 12 | Low | The utilization taper counted only voluntarily indexed deposits, so skipping `/api/vault/deposit` kept premiums at full APR. Utilization is now the larger of indexed rows and on-chain exposure. | fixed, `b855903` |
-| 13 | Low | Indexing a call replaced its USD reservation with a row summed in collateral units, so the per-strike USD cap stopped binding for BTC calls. Strike and wallet caps now sum in USD. | fixed, `b855903` |
-| 14 | Low | Routed-swap settle accepted any matching ledger payment, so one `txHash` could journal unlimited forged fills. Settle is now bound to the prepared transaction's hash and `sendMax`, and one hash closes one swap. | fixed, `f63d12c` |
-| 15 | Low | `anchor-bridge-setup` signed an unverified remote SEP-10 challenge with the distributor key. The challenge is now verified before the key signs it. | fixed, `93ca969` |
-| 16 | Low | The replay-ledger backfill copied unverified caller hashes from contract-era deposit rows into the intake index, where they could refuse someone else's funding as already processed. Those rows are now skipped. | fixed, `93ca969` |
-| 17 | Low | Cached commentary reads spent the global model ceiling, so three clients could block the desk note for everyone. The ceiling is now charged only on regeneration. | fixed, `f63d12c` |
-| 18 | Low | XLM↔LUSD swaps were priced at claim time against a cap the caller chose, a free 15-minute option against the distributor. Swaps now price at the less favourable of funding-time and claim-time spot. | fixed, `93ca969` |
-| 19 | Low | Free faucet LUSD could be swapped for the distributor's XLM with no reserve check or outflow cap. `lusd_to_xlm` is now capped by each address's XLM put in, a daily outflow ceiling and a fee floor. | fixed, `93ca969` |
-| 20 | Low | Leaderboard points for calls used spot at indexing time, not at open. Calls are now priced from the quote live at open. | fixed, `b855903` |
-| 21 | Low | `vault/stats` and unscoped `vault/events` each shared one process-wide limiter key, so one client could lock every visitor out. Public read limits are now keyed per client. | fixed, `f63d12c` |
-| 22 | Low | The in-memory limiter's sweeper dropped timestamps after 10 minutes, so hourly limits reset early. Each limit now keeps its timestamps for its own window. | fixed, `f63d12c` |
-| 23 | Low | The automatic settlement sweep never reached positions more than 2,000 ids past the oldest unsettled one. The sweep now resumes where its budget stopped. | fixed, `f63d12c` |
-| 24 | Low | Anyone could spend a named wallet's co-signature rate limit and lock it out of opening positions. The budget is now keyed on the client as well as the wallet. | fixed, `b855903` |
-| 25 | Low | The quoter's co-signature fixed the premium for 100 ledgers, so a writer could wait for spot to move against the quote before opening. The signature now lasts 12 ledgers. | fixed, `b855903` |
-| 26 | Low | The deposit indexer let anyone index another wallet's position under a chosen `txHash` and spend that wallet's indexing limit. It now verifies the open transaction's event before reserving anything. | fixed, `b855903` |
+| 10 | High | The swap and bridge replay guard was keyed on the caller's raw `txHash` string, so each dot-segment spelling of one funding hash (`x/../<hash>`) was a fresh key and the distributor paid the same payment again. Now the guard is keyed on the canonical 64-hex hash the Horizon record itself carries. | fixed, `93ca969`, live |
+| 11 | Medium | Quote reservations for throwaway addresses could hold a strike's inventory, blocking every honest writer at that strike for 14 days. Lapsed reservations are now settled for every wallet on the monitor's timer, and authorize is limited per client. | fixed, `b855903`, live |
+| 12 | Low | The utilization taper counted only voluntarily indexed deposits, so skipping `/api/vault/deposit` kept premiums at full APR. Utilization is now the larger of indexed rows and on-chain exposure. | fixed, `b855903`, live |
+| 13 | Low | Indexing a call replaced its USD reservation with a row summed in collateral units, so the per-strike USD cap stopped binding for BTC calls. Strike and wallet caps now sum in USD. | fixed, `b855903`, live |
+| 14 | Low | Routed-swap settle accepted any matching ledger payment, so one `txHash` could journal unlimited forged fills. Settle is now bound to the prepared transaction's hash and `sendMax`, and one hash closes one swap. | fixed, `f63d12c`, live |
+| 15 | Low | `anchor-bridge-setup` signed an unverified remote SEP-10 challenge with the distributor key. The challenge is now verified before the key signs it. | fixed, `93ca969`, live |
+| 16 | Low | The replay-ledger backfill copied unverified caller hashes from contract-era deposit rows into the intake index, where they could refuse someone else's funding as already processed. Those rows are now skipped. | fixed, `93ca969`, live |
+| 17 | Low | Cached commentary reads spent the global model ceiling, so three clients could block the desk note for everyone. The ceiling is now charged only on regeneration. | fixed, `f63d12c`, live |
+| 18 | Low | XLM↔LUSD swaps were priced at claim time against a cap the caller chose, a free 15-minute option against the distributor. Swaps now price at the less favourable of funding-time and claim-time spot. | fixed, `93ca969`, live |
+| 19 | Low | Free faucet LUSD could be swapped for the distributor's XLM with no reserve check or outflow cap. `lusd_to_xlm` is now capped by each address's XLM put in, a daily outflow ceiling and a fee floor. | fixed, `93ca969`, live |
+| 20 | Low | Leaderboard points for calls used spot at indexing time, not at open. Calls are now priced from the quote live at open. | fixed, `b855903`, live |
+| 21 | Low | `vault/stats` and unscoped `vault/events` each shared one process-wide limiter key, so one client could lock every visitor out. Public read limits are now keyed per client. | fixed, `f63d12c`, live |
+| 22 | Low | The in-memory limiter's sweeper dropped timestamps after 10 minutes, so hourly limits reset early. Each limit now keeps its timestamps for its own window. | fixed, `f63d12c`, live |
+| 23 | Low | The automatic settlement sweep never reached positions more than 2,000 ids past the oldest unsettled one. The sweep now resumes where its budget stopped. | fixed, `f63d12c`, live |
+| 24 | Low | Anyone could spend a named wallet's co-signature rate limit and lock it out of opening positions. The budget is now keyed on the client as well as the wallet. | fixed, `b855903`, live |
+| 25 | Low | The quoter's co-signature fixed the premium for 100 ledgers, so a writer could wait for spot to move against the quote before opening. The signature now lasts 12 ledgers. | fixed, `b855903`, live |
+| 26 | Low | The deposit indexer let anyone index another wallet's position under a chosen `txHash` and spend that wallet's indexing limit. It now verifies the open transaction's event before reserving anything. | fixed, `b855903`, live |
 
-Fixes 10–26 are on `main`, each with its test. Each is marked live once the testnet
-redeploy carrying it has been retried against the original scenario. The full write-up of
+Fixes 10–26 are on `main`, each with its test, and live in the deployed `2e4dffb`. The
+fixes from our 2026-10-09 review, the audit's leads, what is still open, and the retest of
+each against the live deployment are in [`ADVERSARIAL-REPORT.md`](./ADVERSARIAL-REPORT.md). The full write-up of
 the first pass, including what was checked and found sound, is in the security-pass section
 of the tranche notes.
 

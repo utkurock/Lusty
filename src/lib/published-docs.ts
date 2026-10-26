@@ -16,6 +16,11 @@ export const PUBLISHED_DOCS: Record<string, PublishedDoc> = {
     title: 'Adversarial testnet program',
     blurb: 'Scope, rules of engagement, severity, and what counts as resolved.',
   },
+  'adversarial-report': {
+    file: 'ADVERSARIAL-REPORT.md',
+    title: 'Adversarial testnet report',
+    blurb: 'Every finding, its severity and status, the deployed fix, and the retest.',
+  },
   reporting: {
     file: 'REPORTING.md',
     title: 'Reporting a finding',
