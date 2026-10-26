@@ -216,7 +216,19 @@ export async function POST(req: Request) {
     // Only for an issued underlying, and only ever one Horizon read: native
     // XLM is nobody's trustline, so the XLM book pays nothing for this check.
     if (asset.stellarAsset.kind === 'issued') {
-      if (!(await hasTrustline(body.address, asset.stellarAsset))) {
+      let trusted: boolean
+      try {
+        trusted = await hasTrustline(body.address, asset.stellarAsset)
+      } catch {
+        // Horizon unreadable is not "no trustline": telling the writer to open
+        // one they may already hold is the wrong instruction. Refused either
+        // way, so nothing is signed on an unanswered check.
+        return NextResponse.json(
+          { error: 'trustline check unavailable — please retry', code: 'trustline_check_unavailable' },
+          { status: 503 },
+        )
+      }
+      if (!trusted) {
         return NextResponse.json(
           {
             error: `Your account has no ${asset.stellarAsset.code} trustline — open one before writing ${asset.symbol}.`,

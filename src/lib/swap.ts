@@ -89,21 +89,40 @@ export async function buildTrustlineTx(
 }
 
 /** Check whether `userAddress` can hold `asset`. Native is always holdable. */
+/**
+ * Horizon could not say whether the account holds a trustline. Not the same
+ * answer as "it does not": during an outage that answer told writers to open a
+ * trustline they already had.
+ */
+export class TrustlineCheckUnavailable extends Error {
+  constructor() {
+    super('Could not check your trustline — Horizon is unreachable. Please retry.')
+    this.name = 'TrustlineCheckUnavailable'
+  }
+}
+
+/**
+ * Whether `userAddress` can hold `asset`. False when Horizon has never seen
+ * the account, since an account that does not exist holds nothing. Throws
+ * TrustlineCheckUnavailable when Horizon cannot be read at all.
+ */
 export async function hasTrustline(
   userAddress: string,
   asset: StellarAsset,
 ): Promise<boolean> {
   const classic = classicAsset(asset)
   if (!classic) return true
+  let acc: Awaited<ReturnType<typeof horizon.loadAccount>>
   try {
-    const acc = await horizon.loadAccount(userAddress)
-    return acc.balances.some(
-      (b: any) =>
-        b.asset_code === classic.getCode() && b.asset_issuer === classic.getIssuer()
-    )
-  } catch {
-    return false
+    acc = await horizon.loadAccount(userAddress)
+  } catch (e: any) {
+    if (e?.response?.status === 404) return false
+    throw new TrustlineCheckUnavailable()
   }
+  return acc.balances.some(
+    (b: any) =>
+      b.asset_code === classic.getCode() && b.asset_issuer === classic.getIssuer()
+  )
 }
 
 /** Check whether `userAddress` already has a LUSD trustline. */
