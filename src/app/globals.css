@@ -84,7 +84,10 @@
   --glow: rgba(38, 33, 24, .05);
 }
 
-html.dark {
+/* `.theme-dark` lends the same tokens to one subtree: the landing page is
+   dark in either theme. */
+html.dark,
+.theme-dark {
   --surface: 16 15 13;      /* #100f0d canvas */
   --surface-2: 26 24 20;    /* #1a1814 sunken, tracks, wells */
   --card: 26 25 22;         /* #1a1916 card */
@@ -584,6 +587,20 @@ html, body, .terminal-card, .light-card, .raised-card {
   .animate-rise {
     animation: riseIn .35s var(--ease-entrance) both;
   }
+
+  /* The same rise, block by block: each child starts a beat after the last,
+     and anything past the eighth comes in with the eighth. Pro's rule. */
+  .animate-stagger > * {
+    animation: riseIn .4s var(--ease-entrance) both;
+    animation-delay: 280ms;
+  }
+  .animate-stagger > :nth-child(1) { animation-delay: 0ms; }
+  .animate-stagger > :nth-child(2) { animation-delay: 40ms; }
+  .animate-stagger > :nth-child(3) { animation-delay: 80ms; }
+  .animate-stagger > :nth-child(4) { animation-delay: 120ms; }
+  .animate-stagger > :nth-child(5) { animation-delay: 160ms; }
+  .animate-stagger > :nth-child(6) { animation-delay: 200ms; }
+  .animate-stagger > :nth-child(7) { animation-delay: 240ms; }
 
   /* The landing mockup's cursor press and the ring it leaves. The flow's
      timing lives in ProductMockup; these are the two one-shot beats it
