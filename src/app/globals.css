@@ -584,6 +584,25 @@ html, body, .terminal-card, .light-card, .raised-card {
   .animate-rise {
     animation: riseIn .35s var(--ease-entrance) both;
   }
+
+  /* The landing mockup's cursor press and the ring it leaves. The flow's
+     timing lives in ProductMockup; these are the two one-shot beats it
+     replays on every click. */
+  @keyframes mockPress {
+    0%, 100% { scale: 1; }
+    40%      { scale: .8; }
+  }
+  .mock-press {
+    animation: mockPress 280ms var(--ease-std);
+  }
+  @keyframes mockRing {
+    0%   { opacity: 0; scale: .3; }
+    15%  { opacity: 1; scale: .55; }
+    100% { opacity: 0; scale: 1.9; }
+  }
+  .mock-ring {
+    animation: mockRing 650ms ease-out both;
+  }
 }
 
 /* Every animation has an off switch. */
