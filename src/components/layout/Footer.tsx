@@ -3,7 +3,8 @@ import { usePathname } from 'next/navigation'
 
 export function Footer() {
   const pathname = usePathname()
-  if (pathname?.startsWith('/docs') || pathname?.startsWith('/architecture'))
+  // The docs and the landing page close with footers of their own.
+  if (pathname === '/' || pathname?.startsWith('/docs') || pathname?.startsWith('/architecture'))
     return null
   return (
     <footer className="w-full border-t border-line-light bg-surface mt-16">

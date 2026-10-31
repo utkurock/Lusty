@@ -20,7 +20,8 @@ export function Navbar() {
   const pathname = usePathname()
   const [open, setOpen] = useState(false)
 
-  if (pathname?.startsWith('/docs') || pathname?.startsWith('/architecture'))
+  // The docs and the landing page carry headers of their own.
+  if (pathname === '/' || pathname?.startsWith('/docs') || pathname?.startsWith('/architecture'))
     return null
 
   return (

@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { usePathname } from 'next/navigation'
 import { ShieldAlert, Loader2, Check, ExternalLink } from 'lucide-react'
 import { Modal } from './Modal'
 import { useWalletContext } from '@/providers/WalletProvider'
@@ -44,6 +45,7 @@ const inputClass =
 // commitments, and a button that says otherwise would be a promise.
 export function SecurityReportWidget() {
   const { address } = useWalletContext()
+  const pathname = usePathname()
   // Decided after mount: the server's clock and the visitor's may straddle
   // the window's edge, and a mismatch there is a hydration error.
   const [visible, setVisible] = useState(false)
@@ -62,7 +64,8 @@ export function SecurityReportWidget() {
     setVisible(windowState() === 'open')
   }, [])
 
-  if (!visible) return null
+  // Not on the landing page, which carries no corner buttons.
+  if (!visible || pathname === '/') return null
 
   const set = (k: keyof typeof EMPTY) => (e: { target: { value: string } }) =>
     setFields((f) => ({ ...f, [k]: e.target.value }))

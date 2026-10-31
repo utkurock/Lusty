@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef } from 'react'
+import { usePathname } from 'next/navigation'
 import { MessageCircle, Star, Loader2, Check } from 'lucide-react'
 import { Modal } from './Modal'
 import { useWalletContext } from '@/providers/WalletProvider'
@@ -18,6 +19,7 @@ type Status = 'idle' | 'submitting' | 'done' | 'error'
 
 export function FeedbackWidget() {
   const { address } = useWalletContext()
+  const pathname = usePathname()
   const [open, setOpen] = useState(false)
   const [rating, setRating] = useState(0)
   const [hover, setHover] = useState(0)
@@ -86,6 +88,10 @@ export function FeedbackWidget() {
       setError('Network error. Try again.')
     }
   }
+
+  // The landing page is read before anyone has used the app, so it carries
+  // no corner buttons.
+  if (pathname === '/') return null
 
   return (
     <>
