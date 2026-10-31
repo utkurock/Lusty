@@ -40,13 +40,13 @@ const SCREENS = [
 
 const UPFRONT = '+5.28 LUSD'
 
-type Step = { ms: number; screen: number; cursor: keyof typeof SPOTS; scrolled?: boolean; click?: boolean; toast?: boolean; hidden?: boolean; blank?: boolean }
+type Step = { ms: number; screen: number; cursor: keyof typeof SPOTS; scrolled?: boolean; click?: boolean; toast?: boolean; hidden?: boolean }
 
 // The flow, beat by beat. A step's `ms` is how long it holds; a cursor move
-// takes most of the step it is set on. The loop goes round behind a blank
-// (`blank`), so the book scrolling back to its top is never seen.
+// takes most of the step it is set on. The loop goes round by fading the
+// list back in over the book.
 const STEPS: Step[] = [
-  { ms: 600, screen: 0, cursor: 'rest', hidden: true, blank: true },
+  { ms: 600, screen: 0, cursor: 'rest', hidden: true },
   { ms: 500, screen: 0, cursor: 'rest' },
   { ms: 1100, screen: 0, cursor: 'xlmRow' },
   { ms: 450, screen: 0, cursor: 'xlmRow', click: true },
@@ -60,7 +60,6 @@ const STEPS: Step[] = [
   { ms: 450, screen: 2, cursor: 'earn', scrolled: true, click: true },
   { ms: 2600, screen: 2, cursor: 'earn', scrolled: true, toast: true },
   { ms: 500, screen: 2, cursor: 'earn', scrolled: true, hidden: true },
-  { ms: 450, screen: 2, cursor: 'earn', scrolled: true, hidden: true, blank: true },
 ]
 
 export function ProductMockup() {
@@ -156,33 +155,37 @@ export function ProductMockup() {
 
         {/* The viewport: the screens stacked, one showing at a time. */}
         <div className="relative overflow-hidden" style={{ aspectRatio: `${VIEW.w} / ${VIEW.h}` }}>
-          {SCREENS.map((s, n) => (
+          {SCREENS.map((s, n) => {
+            const shown = n === step.screen
+            return (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               key={s.src}
               src={s.src}
-              alt={n === step.screen ? s.alt : ''}
-              aria-hidden={n !== step.screen}
+              alt={shown ? s.alt : ''}
+              aria-hidden={!shown}
               width={2070}
               height={Math.round((2070 * s.h) / VIEW.w)}
               className="absolute inset-x-0 top-0 block h-auto w-full"
               style={{
-                opacity: n === step.screen ? 1 : 0,
-                transform: `translateY(${step.scrolled && n > 0 ? -SCROLL : 0}%)`,
-                transition: `opacity 350ms ease, transform 1100ms cubic-bezier(.65, 0, .35, 1)`,
+                opacity: shown ? 1 : 0,
+                transform: `translateY(${shown && step.scrolled ? -SCROLL : 0}%)`,
+                // A dissolve, not a crossfade: the incoming screen fades in on
+                // top while the outgoing one stays solid underneath, and only
+                // then drops out and goes back to its top. Two half-faded
+                // screens would let the dark page through, and a hidden one
+                // scrolling home would be seen.
+                zIndex: shown ? 1 : 0,
+                transition: shown
+                  ? 'opacity 450ms ease, transform 1100ms cubic-bezier(.65, 0, .35, 1)'
+                  : 'opacity 0s linear 450ms, transform 0s linear 450ms',
               }}
             />
-          ))}
-
-          {/* The blank the loop goes round behind. */}
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-0 bg-surface transition-opacity duration-[400ms]"
-            style={{ opacity: !still && step.blank ? 1 : 0 }}
-          />
+            )
+          })}
 
           {!still && (
-            <div aria-hidden className="pointer-events-none absolute inset-0">
+            <div aria-hidden className="pointer-events-none absolute inset-0 z-10">
               {/* The deposit confirming: the upfront, paid. */}
               <div
                 className={cn(
@@ -204,14 +207,14 @@ export function ProductMockup() {
               {clicks > 0 && (
                 <span
                   key={clicks}
-                  className="mock-ring absolute h-10 w-10 rounded-full border-2 border-[#eab308]"
+                  className="mock-ring absolute h-8 w-8 rounded-full border-2 border-[#eab308]"
                   style={{ left: `${spot.x}%`, top: `${spot.y}%`, translate: '-50% -50%' }}
                 />
               )}
 
               <svg
                 viewBox="0 0 24 24"
-                className={cn('absolute h-5 w-5 drop-shadow-[0_2px_4px_rgba(0,0,0,.6)] sm:h-6 sm:w-6', step.click && 'mock-press')}
+                className={cn('absolute h-3.5 w-3.5 drop-shadow-[0_2px_4px_rgba(0,0,0,.6)] sm:h-[18px] sm:w-[18px]', step.click && 'mock-press')}
                 style={{
                   left: `${spot.x}%`,
                   top: `${spot.y}%`,
