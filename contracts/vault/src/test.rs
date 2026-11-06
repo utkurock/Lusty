@@ -1,9 +1,13 @@
 #![cfg(test)]
 
 use super::reflector::{Asset, PriceData};
-use super::{DataKey, Kind, Limits, LustyVault, LustyVaultClient, MAX_QUOTERS};
+use super::{
+    DataKey, Kind, Limits, LustyVault, LustyVaultClient, PendingLimits, LIMIT_RAISE_DELAY_SECS,
+    MAX_QUOTERS,
+};
 use soroban_sdk::testutils::storage::Persistent as _;
-use soroban_sdk::testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke};
+use soroban_sdk::testutils::{Address as _, Events as _, Ledger, MockAuth, MockAuthInvoke};
+use soroban_sdk::xdr::{ContractEventBody, ScSymbol, ScVal};
 use soroban_sdk::{
     contract, contractimpl, symbol_short, token, vec, Address, Env, IntoVal, Symbol, Vec,
 };
@@ -92,6 +96,14 @@ fn limits_with_premium_bps(bps: u32) -> Limits {
         max_premium_bps: bps,
         ..limits(MAX_POSITION_CALL, MAX_POSITION_PUT)
     }
+}
+
+/// Move past the delay a raised limit waits out, keeping the feed fresh so a
+/// write still has a price to value its collateral at.
+fn wait_out_raise(s: &Setup) {
+    let now = START + LIMIT_RAISE_DELAY_SECS;
+    s.env.ledger().with_mut(|l| l.timestamp = now);
+    s.oracle.set_lastprice(&SPOT, &now);
 }
 
 // Aligned to the mock feed's 300s resolution so EXPIRY normalizes to itself.
@@ -313,6 +325,7 @@ fn deposit_fails_closed_when_pool_short() {
     // Put the premium ceiling out of the way — 10,000 XLM at $0.20 backs a
     // $2,000 premium at 100% — so the pool is the only thing left to fail on.
     s.vault.set_limits(&limits_with_premium_bps(10_000));
+    wait_out_raise(&s);
     token::StellarAssetClient::new(&s.env, &s.token.address).mint(&s.writer, &MAX_POSITION_CALL);
     s.vault
         .deposit(&s.writer, &MAX_POSITION_CALL, &STRIKE, &EXPIRY, &(POOL + 1), &s.quoter);
@@ -652,6 +665,108 @@ fn set_limits_requires_the_admin() {
         },
     }]);
     s.vault.set_limits(&limits(1, 1));
+}
+
+// ── Raising a limit is delayed ──────────────────────────────────────
+//
+// A tightening binds at once; a raise is scheduled and binds a day later, so a
+// limit raised and restored between two readings never takes effect unseen.
+
+#[test]
+fn a_raise_binds_only_after_the_delay() {
+    let s = setup();
+    let raised = limits_with_premium_bps(10_000);
+    s.vault.set_limits(&raised);
+
+    assert_eq!(s.vault.limits().max_premium_bps, MAX_PREMIUM_BPS);
+    assert_eq!(
+        s.vault.pending_limits(),
+        Some(PendingLimits { limits: raised.clone(), effective_at: START + LIMIT_RAISE_DELAY_SECS })
+    );
+
+    s.env.ledger().with_mut(|l| l.timestamp = START + LIMIT_RAISE_DELAY_SECS - 1);
+    assert_eq!(s.vault.limits().max_premium_bps, MAX_PREMIUM_BPS);
+
+    s.env.ledger().with_mut(|l| l.timestamp = START + LIMIT_RAISE_DELAY_SECS);
+    assert_eq!(s.vault.limits(), raised);
+    assert_eq!(s.vault.pending_limits(), None);
+}
+
+#[test]
+fn a_write_is_held_to_the_old_cap_while_a_raise_waits() {
+    let s = setup();
+    // Tighten first (binds at once), so the raise stays small enough for the
+    // pool to cover the assignment it would reserve.
+    s.vault.set_limits(&limits(COLLATERAL, MAX_POSITION_PUT));
+    s.vault.set_limits(&limits(COLLATERAL * 2, MAX_POSITION_PUT));
+
+    let refused = s
+        .vault
+        .try_deposit(&s.writer, &(COLLATERAL + 1), &STRIKE, &EXPIRY, &0, &s.quoter);
+    assert!(refused.is_err());
+
+    wait_out_raise(&s);
+    s.vault
+        .deposit(&s.writer, &(COLLATERAL + 1), &STRIKE, &EXPIRY, &0, &s.quoter);
+}
+
+#[test]
+fn a_mixed_change_tightens_now_and_raises_later() {
+    let s = setup();
+    let mixed = Limits {
+        max_premium_bps: 10_000,
+        ..limits(COLLATERAL - 1, MAX_POSITION_PUT)
+    };
+    s.vault.set_limits(&mixed);
+
+    let now = s.vault.limits();
+    assert_eq!(now.max_position_call, COLLATERAL - 1);
+    assert_eq!(now.max_premium_bps, MAX_PREMIUM_BPS);
+    let refused = s
+        .vault
+        .try_deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &0, &s.quoter);
+    assert!(refused.is_err());
+
+    wait_out_raise(&s);
+    assert_eq!(s.vault.limits(), mixed);
+}
+
+#[test]
+fn a_raise_restored_before_it_binds_never_takes_effect() {
+    let s = setup();
+    let original = s.vault.limits();
+    s.vault.set_limits(&limits_with_premium_bps(10_000));
+    s.vault.set_limits(&original);
+
+    assert_eq!(s.vault.pending_limits(), None);
+    wait_out_raise(&s);
+    assert_eq!(s.vault.limits(), original);
+}
+
+#[test]
+fn a_later_raise_restarts_the_delay() {
+    let s = setup();
+    s.vault.set_limits(&limits_with_premium_bps(8_000));
+    s.env.ledger().with_mut(|l| l.timestamp = START + 3600);
+    s.vault.set_limits(&limits_with_premium_bps(10_000));
+
+    assert_eq!(
+        s.vault.pending_limits().unwrap().effective_at,
+        START + 3600 + LIMIT_RAISE_DELAY_SECS
+    );
+    s.env.ledger().with_mut(|l| l.timestamp = START + LIMIT_RAISE_DELAY_SECS);
+    assert_eq!(s.vault.limits().max_premium_bps, MAX_PREMIUM_BPS);
+}
+
+#[test]
+fn a_raise_is_announced_when_it_is_scheduled() {
+    let s = setup();
+    s.vault.set_limits(&limits_with_premium_bps(10_000));
+    let want = ScVal::Symbol(ScSymbol("lim_raise".try_into().unwrap()));
+    let announced = s.env.events().all().events().iter().any(|e| match &e.body {
+        ContractEventBody::V0(v) => v.topics.first() == Some(&want),
+    });
+    assert!(announced);
 }
 
 #[test]

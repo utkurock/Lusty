@@ -87,6 +87,15 @@ changes for them until a v5 instance is deployed and the books are pointed at it
 - **The admin cannot be a quoter** (`QuoterIsAdmin`, 19), and **the treasury
   cannot be the vault** (`InvalidTreasury`, 20). An oracle with an unusable
   scale or grid is refused at deploy (`InvalidOracle`, 21).
+- **A raised limit waits a day.** `set_limits` applies every field that
+  tightens at once. A field that is raised binds only after
+  `LIMIT_RAISE_DELAY_SECS` (24h): until then the vault holds the tighter of
+  the old and new value, `pending_limits()` returns the scheduled set, and a
+  `lim_raise` event announces it with the time it binds. Each `set_limits`
+  replaces whatever was scheduled, so an unwanted raise is withdrawn by
+  setting the limits again. A limit raised and restored between two readings
+  therefore never takes effect, and the monitor alerts a day before a raise
+  can be used.
 
 ### What the contract refuses
 

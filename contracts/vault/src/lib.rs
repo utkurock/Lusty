@@ -81,6 +81,13 @@ const MAX_PRICE_STALENESS_SECS: u64 = 3600;
 /// month is long enough that no writer can count on it.
 const UNPRICED_RELEASE_SECS: u64 = 30 * 86_400;
 
+/// How long a raised limit waits before it binds. A tightening applies at
+/// once, but a raise is only scheduled: it is announced by a `lim_raise` event
+/// and takes effect this long after, so a limit raised and restored between
+/// two readings can no longer pass unseen, and anyone watching has a day to
+/// act on a raise the admin did not mean to make.
+pub const LIMIT_RAISE_DELAY_SECS: u64 = 86_400;
+
 /// Ledger close time assumed when converting seconds into TTL ledgers. Shorter
 /// than the network's real close time, so the TTLs it yields err long.
 const LEDGER_SECS: u64 = 5;
@@ -165,7 +172,7 @@ pub const MAX_QUOTERS: u32 = 8;
 /// to have checked them. Stored apart from `Config` because these are the only
 /// values the admin can change.
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Limits {
     /// Largest single position, in the kind's own collateral units:
     /// underlying for a call, cash for a put.
@@ -188,7 +195,29 @@ pub struct Limits {
 /// Denominator for `max_premium_bps`.
 const BPS: i128 = 10_000;
 
+/// Limits the admin has raised, waiting out `LIMIT_RAISE_DELAY_SECS`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingLimits {
+    pub limits: Limits,
+    /// Unix seconds from which `limits` binds.
+    pub effective_at: u64,
+}
+
 impl Limits {
+    /// The tighter of two limit sets, field by field. Both being valid, this
+    /// is too: each expiry cap is at least its own position cap, so the
+    /// smaller expiry cap is at least the smaller position cap.
+    fn tightest(&self, other: &Limits) -> Limits {
+        Limits {
+            max_position_call: self.max_position_call.min(other.max_position_call),
+            max_position_put: self.max_position_put.min(other.max_position_put),
+            max_expiry_call: self.max_expiry_call.min(other.max_expiry_call),
+            max_expiry_put: self.max_expiry_put.min(other.max_expiry_put),
+            max_premium_bps: self.max_premium_bps.min(other.max_premium_bps),
+        }
+    }
+
     fn max_position(&self, kind: Kind) -> i128 {
         match kind {
             Kind::Call => self.max_position_call,
@@ -283,6 +312,8 @@ enum DataKey {
     /// calls owe cash, puts owe the underlying.
     Owed(Kind),
     Limits,
+    /// A raise scheduled by `set_limits`, binding from its `effective_at`.
+    PendingLimits,
     /// Collateral escrowed against one expiry, per kind. Persistent rather
     /// than instance storage: expiries accumulate without bound, and a settled
     /// date's bucket must not weigh on every later deposit.
@@ -422,10 +453,39 @@ impl LustyVault {
     /// the quoter prices in. The admin still cannot pay a premium (only the
     /// quoter signs one) and the quoter cannot raise its own band, so the two
     /// keys bound each other. They must not be the same account.
+    ///
+    /// Every field that tightens binds at once. Any field that is raised waits
+    /// `LIMIT_RAISE_DELAY_SECS`: until then the vault holds the tighter of the
+    /// old and new value, and the full set is scheduled, announced by a
+    /// `lim_raise` event. Each call replaces whatever was scheduled before, so
+    /// a raise is withdrawn by setting the limits again.
     pub fn set_limits(env: Env, limits: Limits) {
         let cfg: Config = env.storage().instance().get(&DataKey::Config).unwrap();
         cfg.admin.require_auth();
-        Self::store_limits(&env, &limits);
+        Self::check_limits(&env, &limits);
+        let now = env.ledger().timestamp();
+        let binding = limits.tightest(&Self::current_limits(&env, now));
+        env.storage().instance().set(&DataKey::Limits, &binding);
+        if binding == limits {
+            env.storage().instance().remove(&DataKey::PendingLimits);
+        } else {
+            let effective_at = now + LIMIT_RAISE_DELAY_SECS;
+            env.storage().instance().set(
+                &DataKey::PendingLimits,
+                &PendingLimits { limits: limits.clone(), effective_at },
+            );
+            env.events().publish(
+                (symbol_short!("lim_raise"),),
+                (
+                    limits.max_position_call,
+                    limits.max_position_put,
+                    limits.max_premium_bps,
+                    limits.max_expiry_call,
+                    limits.max_expiry_put,
+                    effective_at,
+                ),
+            );
+        }
         Self::extend_instance(&env);
         env.events().publish(
             (symbol_short!("limits"),),
@@ -433,17 +493,25 @@ impl LustyVault {
             // alone was invisible to anyone watching events. Appended, not
             // inserted: a reader of the first three fields is unaffected.
             (
-                limits.max_position_call,
-                limits.max_position_put,
-                limits.max_premium_bps,
-                limits.max_expiry_call,
-                limits.max_expiry_put,
+                binding.max_position_call,
+                binding.max_position_put,
+                binding.max_premium_bps,
+                binding.max_expiry_call,
+                binding.max_expiry_put,
             ),
         );
     }
 
+    /// The limits binding now, a scheduled raise included once it is due.
     pub fn limits(env: Env) -> Limits {
-        env.storage().instance().get(&DataKey::Limits).unwrap()
+        Self::current_limits(&env, env.ledger().timestamp())
+    }
+
+    /// A raise that has been scheduled and does not bind yet, if any.
+    pub fn pending_limits(env: Env) -> Option<PendingLimits> {
+        let pending: Option<PendingLimits> =
+            env.storage().instance().get(&DataKey::PendingLimits);
+        pending.filter(|p| env.ledger().timestamp() < p.effective_at)
     }
 
     /// Top up the cash pool: premiums for both legs, plus the strike value a
@@ -742,7 +810,7 @@ impl LustyVault {
         }
         // Size cap: one writer must not be able to put the whole vault behind a
         // single strike and expiry.
-        let limits: Limits = env.storage().instance().get(&DataKey::Limits).unwrap();
+        let limits = Self::current_limits(&env, env.ledger().timestamp());
         if amount > limits.max_position(kind) {
             panic_with_error!(&env, Error::PositionTooLarge);
         }
@@ -848,6 +916,23 @@ impl LustyVault {
     /// `pool` rides along as a second topic so the two pools can be told apart
     /// — and filtered for — at the RPC level, without resolving token addresses.
     fn store_limits(env: &Env, limits: &Limits) {
+        Self::check_limits(env, limits);
+        env.storage().instance().set(&DataKey::Limits, limits);
+    }
+
+    /// The stored limits, or the scheduled raise once its delay has passed.
+    /// Read lazily, so a raise needs nobody to submit anything when it falls
+    /// due, and every path that enforces a limit sees the same set.
+    fn current_limits(env: &Env, now: u64) -> Limits {
+        let pending: Option<PendingLimits> =
+            env.storage().instance().get(&DataKey::PendingLimits);
+        match pending {
+            Some(p) if now >= p.effective_at => p.limits,
+            _ => env.storage().instance().get(&DataKey::Limits).unwrap(),
+        }
+    }
+
+    fn check_limits(env: &Env, limits: &Limits) {
         if limits.max_position_call <= 0
             || limits.max_position_put <= 0
             || limits.max_expiry_call < limits.max_position_call
@@ -861,7 +946,6 @@ impl LustyVault {
             // two unreachable — a limit set that can never be met as written.
             panic_with_error!(env, Error::InvalidLimit);
         }
-        env.storage().instance().set(&DataKey::Limits, limits);
     }
 
     fn fund_pool(env: &Env, token_id: &Address, pool: Symbol, from: Address, amount: i128) {

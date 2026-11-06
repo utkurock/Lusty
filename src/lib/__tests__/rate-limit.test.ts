@@ -20,11 +20,15 @@ const query = vi.fn(async (sql: string, params: any[] = []) => {
     return { rows: table.filter((r) => r.key === key && (r.bucket === b1 || r.bucket === b2)) }
   }
   if (/^\s*insert into rate_limits/.test(sql)) {
-    const [key, bucket] = params
+    const [key, bucket, , ceiling] = params
     const row = table.find((r) => r.key === key && r.bucket === bucket)
-    if (row) row.hits += 1
-    else table.push({ key, bucket, hits: 1 })
-    return { rows: [] }
+    if (row) {
+      if (row.hits > ceiling) return { rows: [], rowCount: 0 }
+      row.hits += 1
+      return { rows: [{ hits: row.hits }], rowCount: 1 }
+    }
+    table.push({ key, bucket, hits: 1 })
+    return { rows: [{ hits: 1 }], rowCount: 1 }
   }
   return { rows: [] }
 })
@@ -94,11 +98,36 @@ describe('durableRateLimit', () => {
     expect((await durableRateLimit('feedback', 86_400_000, 1)).ok).toBe(true)
   })
 
-  it('falls back to the per-process limit when the database is down', async () => {
+  it('refuses when the database is down instead of counting per process', async () => {
     failing = true
     const { durableRateLimit } = await import('../rate-limit')
-    expect((await durableRateLimit('k', 60_000, 1)).ok).toBe(true)
-    expect((await durableRateLimit('k', 60_000, 1)).ok).toBe(false)
+    expect(await durableRateLimit('k', 60_000, 5)).toEqual({ ok: false, retryAfter: 30 })
+  })
+
+  it('lets only one of two replicas racing for the last slot through', async () => {
+    // Both replicas read the count before either writes, the interleaving the
+    // read-then-write version let through twice.
+    let reads = 0
+    let release!: () => void
+    const bothRead = new Promise<void>((r) => (release = r))
+    const plain = query.getMockImplementation()!
+    query.mockImplementation(async (sql: string, params: any[] = []) => {
+      const res = await plain(sql, params)
+      if (/^\s*select bucket, hits from rate_limits/.test(sql)) {
+        if (++reads === 2) release()
+        await bothRead
+      }
+      return res
+    })
+    const a = await import('../rate-limit')
+    resetProcess()
+    const b = await import('../rate-limit')
+    const [ra, rb] = await Promise.all([
+      a.durableRateLimit('race', 60_000, 1),
+      b.durableRateLimit('race', 60_000, 1),
+    ])
+    expect([ra.ok, rb.ok].sort()).toEqual([false, true])
+    expect(table.find((r) => r.key === 'race@60000')?.hits).toBe(1)
   })
 
   it('uses the per-process limit alone when no database is configured', async () => {

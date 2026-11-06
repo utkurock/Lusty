@@ -106,7 +106,36 @@ one for one into LUSD, the vault's cash, before the position opens.
 | Soroban RPC | `https://soroban-testnet.stellar.org` |
 | Horizon | `https://horizon-testnet.stellar.org` |
 
-## 7. Reading it back yourself
+## 7. Replacing a book's instance (v4 → v5)
+
+The settlement sweep walks each book's configured vault and nothing else, so
+pointing a book at a new instance takes the old one out of the sweep. A
+position on it that can still settle would then run out its oracle window
+unattended. `deploy-vault.mjs` therefore refuses to replace an instance that
+has any unsettled position younger than the window, and lists the ones
+already past it.
+
+```sh
+# 1. Stop quoting on the book, so nothing new opens on the old instance.
+curl -X POST https://lusty.finance/api/admin/circuit-breaker \
+  -H "x-admin-token: $ADMIN_TOKEN" -H 'content-type: application/json' \
+  -d '{"scope": "XLM", "tripped": true, "reason": "v5 migration"}'
+
+# 2. Build v5, then deploy from that build. Refused while the old instance
+#    still has positions the sweep has to settle.
+cargo build --manifest-path contracts/Cargo.toml --target wasm32v1-none --release
+node scripts/deploy-vault.mjs XLM --wasm contracts/target/wasm32v1-none/release/lusty_vault.wasm
+
+# 3. Point the book at the new instance, list the old one in
+#    NEXT_PUBLIC_VAULT_CONTRACTS so its history stays indexed, fund the new
+#    pools, redeploy the app, check, and release the breaker.
+node scripts/deploy-vault.mjs XLM --check
+```
+
+The new instance's pools start empty. `fund` is one-way, so what the old
+instance holds stays there.
+
+## 8. Reading it back yourself
 
 Anyone can verify every line above:
 

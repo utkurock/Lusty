@@ -1,17 +1,23 @@
 import { getPool, ensureSchema } from '@/lib/db'
 import {
-  getBreakerState,
+  ALL_BOOKS,
+  getScopeState,
   setBreaker,
   type BreakerState,
 } from '@/lib/circuit-breaker'
-import { enabledUnderlyings } from '@/lib/assets'
+import { enabledUnderlyings, type UnderlyingAsset } from '@/lib/assets'
 import { computeVolRatio, fetchCloses } from './checks'
 
 /**
  * Automatic circuit-breaker triggers (P1-8 step 2). Evaluates the halt
  * conditions called out in the SCF risk review — volatility spike, oracle
- * stress, and a per-epoch loss cap — and trips/clears the deposit breaker via
+ * stress, and a per-epoch loss cap — and trips/clears the breakers via
  * `setBreaker(..., 'auto')`. Wired into the monitor cron.
+ *
+ * Volatility and oracle stress are a market's own, so each trips only the
+ * book of the asset that moved; a thin market moved on purpose halts that
+ * book, not the desk. The loss cap is counted over every book, so it trips
+ * the desk-wide switch.
  *
  * Safety rule: this only ever touches breaker rows it owns. A breaker tripped
  * manually by an admin (`source = 'manual'`) is never auto-cleared, even once
@@ -29,6 +35,8 @@ const ORACLE_JUMP_PCT = Number(process.env.MONITOR_ORACLE_JUMP_PCT ?? 10)
 const EPOCH_LOSS_CAP_USD = Number(process.env.MONITOR_EPOCH_LOSS_CAP_USD ?? 25_000)
 
 export interface AutoHaltEval {
+  /** Which switch the reasons are for: a book's symbol, or ALL_BOOKS. */
+  scope: string
   halt: boolean
   reasons: string[]
 }
@@ -46,48 +54,34 @@ export function currentEpochStart(now = new Date()): Date {
   return start
 }
 
-// The breaker is one switch for the whole desk, so a stress condition on any
-// book halts every book. Conservative on purpose — but the reason names the
-// asset, because "volatility spike" with two underlyings live does not say
-// which market moved.
-async function volSpikeHalt(): Promise<string | null> {
-  const reasons: string[] = []
-  for (const asset of enabledUnderlyings()) {
-    try {
-      const ratio = await computeVolRatio(asset)
-      if (ratio !== null && ratio >= VOL_HALT_MULT) {
-        reasons.push(
-          `${asset.symbol} volatility spike ${ratio.toFixed(2)}× its 24h baseline (halt ≥ ${VOL_HALT_MULT}×)`
-        )
-      }
-    } catch {
-      // Vol data unavailable is its own alert elsewhere; don't halt on it.
+async function volSpikeHalt(asset: UnderlyingAsset): Promise<string | null> {
+  try {
+    const ratio = await computeVolRatio(asset)
+    if (ratio !== null && ratio >= VOL_HALT_MULT) {
+      return `${asset.symbol} volatility spike ${ratio.toFixed(2)}× its 24h baseline (halt ≥ ${VOL_HALT_MULT}×)`
     }
+  } catch {
+    // Vol data unavailable is its own alert elsewhere; don't halt on it.
   }
-  return reasons.length > 0 ? reasons.join('; ') : null
+  return null
 }
 
-async function oracleStressHalt(): Promise<string | null> {
-  const reasons: string[] = []
-  for (const asset of enabledUnderlyings()) {
-    try {
-      const closes = await fetchCloses('1m', 6, asset)
-      let maxMovePct = 0
-      for (let i = 1; i < closes.length; i++) {
-        const movePct = Math.abs((closes[i] - closes[i - 1]) / closes[i - 1]) * 100
-        if (movePct > maxMovePct) maxMovePct = movePct
-      }
-      if (maxMovePct >= ORACLE_JUMP_PCT) {
-        reasons.push(
-          `${asset.symbol} oracle stress — ${maxMovePct.toFixed(1)}% 1m price move (halt ≥ ${ORACLE_JUMP_PCT}%)`
-        )
-      }
-    } catch {
-      // Feed unreachable = we can't price settlements safely → halt.
-      reasons.push(`${asset.symbol} oracle stress — price feed unreachable`)
+async function oracleStressHalt(asset: UnderlyingAsset): Promise<string | null> {
+  try {
+    const closes = await fetchCloses('1m', 6, asset)
+    let maxMovePct = 0
+    for (let i = 1; i < closes.length; i++) {
+      const movePct = Math.abs((closes[i] - closes[i - 1]) / closes[i - 1]) * 100
+      if (movePct > maxMovePct) maxMovePct = movePct
     }
+    if (maxMovePct >= ORACLE_JUMP_PCT) {
+      return `${asset.symbol} oracle stress — ${maxMovePct.toFixed(1)}% 1m price move (halt ≥ ${ORACLE_JUMP_PCT}%)`
+    }
+    return null
+  } catch {
+    // Feed unreachable = we can't price settlements safely → halt.
+    return `${asset.symbol} oracle stress — price feed unreachable`
   }
-  return reasons.length > 0 ? reasons.join('; ') : null
 }
 
 /** USD notional assigned against the vault since the current epoch started. */
@@ -120,48 +114,60 @@ async function epochLossHalt(): Promise<string | null> {
   }
 }
 
-/** Evaluate every auto-halt condition. Never throws. */
-export async function evaluateAutoHalt(): Promise<AutoHaltEval> {
-  const reasons = (
-    await Promise.all([volSpikeHalt(), oracleStressHalt(), epochLossHalt()])
-  ).filter((r): r is string => r !== null)
-  return { halt: reasons.length > 0, reasons }
+const evaluation = (scope: string, found: (string | null)[]): AutoHaltEval => {
+  const reasons = found.filter((r): r is string => r !== null)
+  return { scope, halt: reasons.length > 0, reasons }
 }
 
-export interface AutoBreakerResult {
-  changed: boolean
+/**
+ * Evaluate every auto-halt condition, one evaluation per switch: the desk's
+ * first, then each enabled book's. Never throws.
+ */
+export async function evaluateAutoHalt(): Promise<AutoHaltEval[]> {
+  const books = enabledUnderlyings()
+  const [desk, ...perBook] = await Promise.all([
+    epochLossHalt().then((r) => evaluation(ALL_BOOKS, [r])),
+    ...books.map(async (asset) =>
+      evaluation(asset.symbol, await Promise.all([volSpikeHalt(asset), oracleStressHalt(asset)]))
+    ),
+  ])
+  return [desk, ...perBook]
+}
+
+export interface AutoBreakerChange {
   state: BreakerState
   evaluation: AutoHaltEval
 }
 
 /**
- * Trip or clear the breaker based on the auto conditions. Trips when a halt
- * condition appears and the breaker is open; clears only an *auto* trip once
- * conditions are normal. Leaves manual trips untouched.
+ * Trip or clear each switch based on its own conditions. Trips when a halt
+ * condition appears and the switch is open; clears only an *auto* trip once
+ * conditions are normal. Leaves manual trips untouched. Returns the switches
+ * that changed.
  */
-export async function applyAutoBreaker(): Promise<AutoBreakerResult> {
-  const evaluation = await evaluateAutoHalt()
-  const state = await getBreakerState()
-
-  if (evaluation.halt && !state.tripped) {
-    const next = await setBreaker({
-      tripped: true,
-      reason: `auto-halt: ${evaluation.reasons.join('; ')}`,
-      source: 'auto',
-      updatedBy: 'monitor',
-    })
-    return { changed: true, state: next, evaluation }
+export async function applyAutoBreaker(): Promise<AutoBreakerChange[]> {
+  const changes: AutoBreakerChange[] = []
+  for (const ev of await evaluateAutoHalt()) {
+    const state = await getScopeState(ev.scope)
+    if (ev.halt && !state.tripped) {
+      const next = await setBreaker({
+        scope: ev.scope,
+        tripped: true,
+        reason: `auto-halt: ${ev.reasons.join('; ')}`,
+        source: 'auto',
+        updatedBy: 'monitor',
+      })
+      changes.push({ state: next, evaluation: ev })
+    } else if (!ev.halt && state.tripped && state.source === 'auto') {
+      const next = await setBreaker({
+        scope: ev.scope,
+        tripped: false,
+        reason: 'auto-cleared: risk conditions back to normal',
+        source: 'auto',
+        updatedBy: 'monitor',
+      })
+      changes.push({ state: next, evaluation: ev })
+    }
   }
-
-  if (!evaluation.halt && state.tripped && state.source === 'auto') {
-    const next = await setBreaker({
-      tripped: false,
-      reason: 'auto-cleared: risk conditions back to normal',
-      source: 'auto',
-      updatedBy: 'monitor',
-    })
-    return { changed: true, state: next, evaluation }
-  }
-
-  return { changed: false, state, evaluation }
+  return changes
 }

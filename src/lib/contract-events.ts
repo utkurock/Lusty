@@ -404,25 +404,35 @@ export interface LimitsChange {
   /** v5 instances only: v4 left the per-expiry caps out of the event. */
   maxExpiryCall?: number
   maxExpiryPut?: number
+  /**
+   * Set when this is a raise the instance scheduled (`lim_raise`, v5) rather
+   * than limits it applied: the values bind from this time unless the admin
+   * sets the limits again first.
+   */
+  effectiveAt?: string
 }
 
 /**
- * Read a `limits` event. Every instance publishes the two position caps and
- * the premium ceiling; v5 appends the two per-expiry caps. On a v4 instance a
- * change to the per-expiry caps alone still shows up here, with values that
- * look unchanged.
+ * Read a `limits` event, or a `lim_raise` one. Every instance publishes the two
+ * position caps and the premium ceiling; v5 appends the two per-expiry caps. On
+ * a v4 instance a change to the per-expiry caps alone still shows up here, with
+ * values that look unchanged. A v5 raise is first announced as `lim_raise`,
+ * with the time it binds from appended, a day before it can be used.
  */
 export function parseLimitsEvent(e: sorobanRpc.Api.EventResponse): LimitsChange | null {
   try {
     const topics = e.topic.map((t: xdr.ScVal) => scValToNative(t))
-    if (String(topics[0]) !== 'limits') return null
-    const [call, put, bps, expCall, expPut] = scValToNative(e.value) as [
+    const kind = String(topics[0])
+    if (kind !== 'limits' && kind !== 'lim_raise') return null
+    const [call, put, bps, expCall, expPut, effectiveAt] = scValToNative(e.value) as [
       bigint,
       bigint,
       number | bigint,
       bigint?,
       bigint?,
+      bigint?,
     ]
+    if (kind === 'lim_raise' && effectiveAt === undefined) return null
     return {
       contractId: e.contractId?.contractId() ?? '',
       ledger: e.ledger,
@@ -433,6 +443,9 @@ export function parseLimitsEvent(e: sorobanRpc.Api.EventResponse): LimitsChange 
       maxPremiumBps: Number(bps),
       ...(expCall !== undefined ? { maxExpiryCall: Number(expCall) / TOKEN_SCALE } : {}),
       ...(expPut !== undefined ? { maxExpiryPut: Number(expPut) / TOKEN_SCALE } : {}),
+      ...(kind === 'lim_raise'
+        ? { effectiveAt: new Date(Number(effectiveAt) * 1000).toISOString() }
+        : {}),
     }
   } catch {
     return null
@@ -443,7 +456,7 @@ export function parseLimitsEvent(e: sorobanRpc.Api.EventResponse): LimitsChange 
 const LIMITS_LOOKBACK_LEDGERS = 2 * LEDGERS_PER_PAGE
 
 /**
- * Every `set_limits` since `cursor`, oldest first, and the cursor to resume
+ * Every `set_limits` since `cursor`, applied or scheduled, oldest first, and the cursor to resume
  * from next time.
  *
  * Unlike the settlement index this throws on an RPC failure: the caller is a
@@ -455,7 +468,7 @@ export async function scanLimitsChanges(
 ): Promise<{ changes: LimitsChange[]; cursor?: string }> {
   if (VAULT_IDS.length === 0) return { changes: [], cursor }
   const server = new sorobanRpc.Server(RPC_URL)
-  const topic = nativeToScVal('limits', { type: 'symbol' }).toXDR('base64')
+  const topic = (name: string) => nativeToScVal(name, { type: 'symbol' }).toXDR('base64')
 
   let start: { startLedger: number } | { cursor: string }
   if (cursor) {
@@ -468,7 +481,7 @@ export async function scanLimitsChanges(
   const page = await scanForward(
     server,
     start,
-    [[topic]],
+    [[topic('limits')], [topic('lim_raise')]],
     cursor ? 3 : LIMITS_LOOKBACK_LEDGERS / LEDGERS_PER_PAGE,
   )
   const changes = page.events

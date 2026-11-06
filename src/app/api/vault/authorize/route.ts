@@ -273,11 +273,12 @@ export async function POST(req: Request) {
       )
     }
 
-    // Same halt switch the old deposit rail honoured: when the breaker is
-    // tripped the protocol stops quoting, and without a quoter signature no
-    // position can open. Fail closed if the state cannot be read.
+    // Same halt switch the old deposit rail honoured: when this book's
+    // breaker or the desk's is tripped the protocol stops quoting, and without
+    // a quoter signature no position can open. Fail closed if the state cannot
+    // be read.
     try {
-      const breaker = await getBreakerState()
+      const breaker = await getBreakerState(asset.symbol)
       if (breaker.tripped) {
         return NextResponse.json(
           {

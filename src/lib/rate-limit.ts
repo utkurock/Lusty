@@ -108,7 +108,10 @@ export function slidingWindowDecision(
   return { ok: false, retryAfter: Math.max(1, Math.ceil(((1 - f + fNext) * windowMs) / 1000)) }
 }
 
-let warnedFallback = false
+/** How long a caller is told to wait when the count cannot be read. */
+const UNAVAILABLE_RETRY_SECS = 30
+
+let warnedUnavailable = false
 
 /**
  * A rate limit that survives a deploy and holds across replicas.
@@ -118,12 +121,12 @@ let warnedFallback = false
  * This one keeps its counts in Postgres, one row per key per window, so every
  * process reads and writes the same number.
  *
- * The local limiter still runs first. It is free, it sheds a flood before it
- * reaches the database, and it is what remains if the database cannot be
- * reached — in which case this degrades to exactly the old behaviour, logged,
- * rather than failing the request. The routes behind this already fail closed
- * on their own durable checks (the faucet's caps, the breaker, the quote
- * policy), so a missing count here loosens a first line, not the last one.
+ * The local limiter still runs first. It is free and it sheds a flood before
+ * it reaches the database. With a database configured but unreachable this
+ * refuses rather than falling back to the per-process count: everything behind
+ * it (payouts, admin login, the faucet, paid commentary) depends on that same
+ * database, and a limit that quietly becomes per-process during an outage is
+ * the gap an attacker would wait for.
  *
  * Only accepted requests are counted, as the local limiter does: a client that
  * keeps knocking while limited is not pushed further back for knocking.
@@ -152,18 +155,27 @@ export async function durableRateLimit(
       [k, bucket, bucket - 1]
     )
     const count = (b: number) => Number(rows.find((r: any) => Number(r.bucket) === b)?.hits ?? 0)
-    const decision = slidingWindowDecision(count(bucket - 1), count(bucket), elapsed, windowMs, maxRequests)
+    const prev = count(bucket - 1)
+    const decision = slidingWindowDecision(prev, count(bucket), elapsed, windowMs, maxRequests)
     if (!decision.ok) return decision
 
-    // Read then write, so two replicas can both admit the last slot. The
-    // overshoot is bounded by the number of replicas racing on one key in one
-    // instant, which is a rounding error on the limits this guards.
-    await pool.query(
+    // The most this window's count may already hold for one more to fit. The
+    // increment is conditional on it, and Postgres re-checks the condition on
+    // the locked row, so replicas racing for the last slot cannot both take it.
+    // The previous window is closed, so its count can be read beforehand.
+    const ceiling = Math.floor(maxRequests - 1 - prev * (1 - elapsed / windowMs))
+    const won = await pool.query(
       `insert into rate_limits (key, bucket, hits, expires_at)
        values ($1, $2, 1, to_timestamp($3 / 1000.0))
-       on conflict (key, bucket) do update set hits = rate_limits.hits + 1`,
-      [k, bucket, (bucket + 2) * windowMs]
+       on conflict (key, bucket) do update set hits = rate_limits.hits + 1
+       where rate_limits.hits <= $4
+       returning hits`,
+      [k, bucket, (bucket + 2) * windowMs, ceiling]
     )
+    if (won.rowCount === 0) {
+      // Another replica took the slot between the read and the write.
+      return slidingWindowDecision(prev, ceiling + 1, elapsed, windowMs, maxRequests)
+    }
     // Expired rows are swept by whoever happens to be writing, now and then,
     // so the table stays the size of the live windows without a cron.
     if (Math.random() < 0.01) {
@@ -171,10 +183,10 @@ export async function durableRateLimit(
     }
     return { ok: true }
   } catch (err) {
-    if (!warnedFallback) {
-      warnedFallback = true
-      console.warn('rate-limit: durable store unavailable, falling back to per-process limits', err)
+    if (!warnedUnavailable) {
+      warnedUnavailable = true
+      console.warn('rate-limit: durable store unavailable, refusing until it is back', err)
     }
-    return local
+    return { ok: false, retryAfter: UNAVAILABLE_RETRY_SECS }
   }
 }

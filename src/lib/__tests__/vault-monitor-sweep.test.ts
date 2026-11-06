@@ -11,11 +11,7 @@ const getPositionsOf = vi.fn(async (..._a: any[]) => [])
 vi.mock('@/lib/monitor/checks', () => ({ runMonitorChecks: async () => [] }))
 vi.mock('@/lib/monitor/notify', () => ({ sendAlert: async () => ({ delivered: true }) }))
 vi.mock('@/lib/monitor/triggers', () => ({
-  applyAutoBreaker: async () => ({
-    changed: false,
-    state: { tripped: false, source: 'auto' },
-    evaluation: { reasons: [] },
-  }),
+  applyAutoBreaker: async () => [],
 }))
 vi.mock('@/lib/db-queries', () => ({ purgeOldIps: async () => ({ feedback: 0, securityReports: 0 }) }))
 vi.mock('@/lib/quote-policy', () => ({

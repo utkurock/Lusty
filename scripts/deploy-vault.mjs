@@ -2,6 +2,11 @@
 //
 //   node scripts/deploy-vault.mjs BTC
 //   node scripts/deploy-vault.mjs BTC --dry-run
+//   node scripts/deploy-vault.mjs BTC --wasm contracts/target/wasm32v1-none/release/lusty_vault.wasm
+//
+// --wasm is for a new contract version (v4 → v5): it uploads that build and
+// deploys from its hash instead of the reference instance's. Without it the
+// new book runs exactly the code the reference runs, as below.
 //
 // One instance per underlying is the whole shape of multi-asset here: the
 // contract is already parameterised, so a second book is a second deployment
@@ -34,6 +39,8 @@ import {
   xdr,
 } from '@stellar/stellar-sdk'
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 
 // The app's own configuration, read the same way the app reads it. A script
 // run by hand has no framework loading it, and a deploy that silently fell back
@@ -145,13 +152,29 @@ function limitsScVal(l) {
   ])
 }
 
+/**
+ * The env key a book's vault address lives under, as lib/assets/config.ts
+ * declares it: XLM was the first book and kept the unsuffixed name.
+ */
+const vaultEnvKey = (symbol) =>
+  symbol === 'XLM' ? 'NEXT_PUBLIC_VAULT_CONTRACT' : `NEXT_PUBLIC_VAULT_CONTRACT_${symbol}`
+
+/** The value after a flag, e.g. `--wasm <path>`. */
+function flagValue(name) {
+  const i = process.argv.indexOf(name)
+  if (i === -1) return null
+  const v = process.argv[i + 1]
+  if (!v || v.startsWith('--')) throw new Error(`${name} needs a value`)
+  return v
+}
+
 /** Read a function off a deployed instance without sending anything. */
-async function read(contractId, fn, probe) {
+async function read(contractId, fn, probe, ...args) {
   const tx = new TransactionBuilder(await server.getAccount(probe), {
     fee: BASE_FEE,
     networkPassphrase: PASSPHRASE,
   })
-    .addOperation(new Contract(contractId).call(fn))
+    .addOperation(new Contract(contractId).call(fn, ...args))
     .setTimeout(30)
     .build()
   const sim = await server.simulateTransaction(tx)
@@ -193,6 +216,29 @@ async function submit(tx, signer, label) {
     await new Promise((r) => setTimeout(r, 1000))
   }
   throw new Error(`${label}: timed out (${sent.hash})`)
+}
+
+// How long after expiry a position can still be settled: Reflector keeps about
+// a day of history. Past it, a v4 position cannot settle at all.
+const SETTLE_WINDOW_SECS = 86_400
+
+/**
+ * Unsettled positions on an instance, split into those that can still settle
+ * and those past the oracle window.
+ */
+async function unsettledPositions(contractId) {
+  const { next_id } = await read(contractId, 'stats', PROBE_ACCOUNT)
+  const now = Math.floor(Date.now() / 1000)
+  const live = []
+  const stranded = []
+  for (let id = 0n; id < BigInt(next_id); id++) {
+    const p = await read(contractId, 'position', PROBE_ACCOUNT, nativeToScVal(id, { type: 'u64' }))
+    if (p.settled) continue
+    const row = { id: Number(id), expiry: new Date(Number(p.expiry) * 1000).toISOString() }
+    if (Number(p.expiry) + SETTLE_WINDOW_SECS > now) live.push(row)
+    else stranded.push(row)
+  }
+  return { live, stranded }
 }
 
 /** Whether `account` can receive what `sac` pays out. */
@@ -243,24 +289,55 @@ async function main() {
   // configured for this asset. The answers change as pools are funded and
   // trustlines opened, so it is worth being able to ask again.
   const checkOnly = process.argv.includes('--check')
+  const wasmPath = flagValue('--wasm')
   if (!/^[A-Z0-9]{1,12}$/.test(symbol)) {
-    console.error('usage: node scripts/deploy-vault.mjs <SYMBOL> [--dry-run] [--check]')
+    console.error('usage: node scripts/deploy-vault.mjs <SYMBOL> [--dry-run] [--check] [--wasm <file>]')
     console.error('  SYMBOL is the book as declared in src/lib/assets/config.ts, e.g. BTC')
     process.exit(1)
   }
   const book = bookFromEnv(symbol)
+  const replacing = process.env[vaultEnvKey(symbol)] || null
 
   if (checkOnly) {
-    const live = process.env[`NEXT_PUBLIC_VAULT_CONTRACT_${symbol}`]
-    if (!live) throw new Error(`no NEXT_PUBLIC_VAULT_CONTRACT_${symbol} configured`)
+    const live = process.env[vaultEnvKey(symbol)]
+    if (!live) throw new Error(`no ${vaultEnvKey(symbol)} configured`)
     const cfg = await read(live, 'config', PROBE_ACCOUNT)
     console.log(`→ ${symbol} book:`, live, `(feed ${cfg.feed})`)
+    console.log('  wasm hash  :', (await wasmHashOf(live)).toString('hex'))
+    // v5 only: a raise the admin scheduled and that does not bind yet.
+    const pending = await read(live, 'pending_limits', PROBE_ACCOUNT).catch(() => undefined)
+    if (pending) {
+      console.log(`  pending    : limit raise binds at ${new Date(Number(pending.effective_at) * 1000).toISOString()}`)
+    }
     await preflight(live, cfg.treasury, cfg.token, cfg.cash, PROBE_ACCOUNT)
     return
   }
 
   const reference = process.env.NEXT_PUBLIC_VAULT_CONTRACT
   if (!reference) throw new Error('NEXT_PUBLIC_VAULT_CONTRACT must name the instance to copy the desk from')
+
+  // Replacing a book's instance moves the settlement sweep off the old one:
+  // it walks each book's configured vault and nothing else. Any position
+  // there that can still settle would be left to run out its oracle window
+  // unattended — finding 55 recreated by the migration. So the old instance
+  // has to be drained first: halt quoting on the book (POST
+  // /api/admin/circuit-breaker {"scope": "<SYMBOL>", "tripped": true}), let
+  // the sweep settle what remains, then deploy.
+  if (replacing) {
+    const { live, stranded } = await unsettledPositions(replacing)
+    console.log(`→ replacing  : ${replacing}`)
+    if (stranded.length > 0) {
+      console.log(`  stranded   : ${stranded.map((p) => `#${p.id} (expired ${p.expiry})`).join(', ')}`)
+    }
+    if (live.length > 0) {
+      throw new Error(
+        `${replacing} still has ${live.length} position(s) that can settle: ` +
+          live.map((p) => `#${p.id} (expiry ${p.expiry})`).join(', ') +
+          `.\n  Halt quoting on ${symbol} with the breaker and let the sweep settle them before replacing the instance.`,
+      )
+    }
+    console.log('  open       : none left to settle')
+  }
   if (!book.token) {
     throw new Error(`${symbol} has no collateral contract: set NEXT_PUBLIC_${symbol}_CONTRACT`)
   }
@@ -281,9 +358,16 @@ async function main() {
   const config = await read(reference, 'config', deployer.publicKey())
   const cash = book.cash ?? config.cash
   const quoters = await read(reference, 'quoters', deployer.publicKey())
-  const wasmHash = await wasmHashOf(reference)
+  const referenceHash = await wasmHashOf(reference)
+  const wasm = wasmPath ? readFileSync(wasmPath) : null
+  let wasmHash = wasm ? createHash('sha256').update(wasm).digest() : referenceHash
   console.log('→ reference  :', reference, `(feed ${config.feed})`)
-  console.log('  wasm hash  :', wasmHash.toString('hex'))
+  console.log('  wasm hash  :', referenceHash.toString('hex'))
+  if (wasm) {
+    console.log(`→ new wasm   : ${wasmPath} (${wasm.length} bytes)`)
+    console.log('  wasm hash  :', wasmHash.toString('hex'))
+    if (wasmHash.equals(referenceHash)) console.log('  note       : same code the reference already runs')
+  }
   console.log('  oracle     :', config.oracle)
   console.log('  treasury   :', config.treasury)
   console.log('  admin      :', config.admin)
@@ -304,6 +388,27 @@ async function main() {
   if (dryRun) {
     console.log('\n(dry run — nothing deployed)')
     return
+  }
+
+  if (wasm && !wasmHash.equals(referenceHash)) {
+    // Uploading code that is already on the network is harmless; it costs the
+    // fee and returns the same hash. Compare it anyway: the hash deployed from
+    // must be the hash of the file that was read.
+    console.log('→ uploading wasm')
+    const upload = new TransactionBuilder(await server.getAccount(deployer.publicKey()), {
+      fee: '10000000',
+      networkPassphrase: PASSPHRASE,
+    })
+      .addOperation(Operation.uploadContractWasm({ wasm }))
+      .setTimeout(120)
+      .build()
+    const { hash: uploadTx, result } = await submit(upload, deployer, 'upload')
+    const uploaded = Buffer.from(scValToNative(result.returnValue))
+    if (!uploaded.equals(wasmHash)) {
+      throw new Error(`upload returned hash ${uploaded.toString('hex')}, not the file's ${wasmHash.toString('hex')}`)
+    }
+    console.log('   tx:', uploadTx)
+    wasmHash = uploaded
   }
 
   const args = [
@@ -346,6 +451,8 @@ async function main() {
   console.log('  limits :', liveLimits)
   if (live.feed !== book.feed) throw new Error(`instance reads back feed ${live.feed}, not ${book.feed}`)
   if (live.token !== book.token) throw new Error('instance reads back a different collateral token')
+  const running = await wasmHashOf(contractId)
+  if (!running.equals(wasmHash)) throw new Error(`instance runs wasm ${running.toString('hex')}, not ${wasmHash.toString('hex')}`)
 
   // What is still not true about this book. All of it fails late — at
   // settlement, from inside a token contract — rather than at deploy, so it is
@@ -353,7 +460,12 @@ async function main() {
   await preflight(contractId, config.treasury, book.token, cash, deployer.publicKey())
 
   console.log('\npaste into .env.local:\n')
-  console.log(`NEXT_PUBLIC_VAULT_CONTRACT_${symbol}=${contractId}`)
+  console.log(`${vaultEnvKey(symbol)}=${contractId}`)
+  if (process.env[vaultEnvKey(symbol)]) {
+    // The instance it replaces keeps its positions, and the indexer and the
+    // settlement runner only reach it if it is still listed.
+    console.log(`\nand add the instance it replaces to NEXT_PUBLIC_VAULT_CONTRACTS: ${process.env[vaultEnvKey(symbol)]}`)
+  }
 }
 
 main().catch((e) => {

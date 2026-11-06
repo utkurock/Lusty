@@ -395,6 +395,23 @@ async function createSchema(): Promise<void> {
     insert into circuit_breaker (id, tripped) values (1, false)
       on conflict (id) do nothing;
 
+    -- Circuit breakers, one per scope: 'all' for the whole desk, or a book's
+    -- symbol. Replaces the single row above, whose state carries over as the
+    -- desk-wide switch the first time this runs. The old table is left in
+    -- place so a rollback reads the state it last had.
+    create table if not exists circuit_breakers (
+      scope       text primary key,
+      tripped     boolean not null default false,
+      reason      text,
+      source      text not null default 'manual' check (source in ('manual','auto')),
+      updated_by  text,
+      updated_at  timestamptz not null default now()
+    );
+    insert into circuit_breakers (scope, tripped, reason, source, updated_by, updated_at)
+      select 'all', tripped, reason, source, updated_by, updated_at
+        from circuit_breaker where id = 1
+      on conflict (scope) do nothing;
+
     -- Analytics: lightweight client-fired usage events (page_view,
     -- wallet_connect, etc.). Action-level analytics (deposits, claims,
     -- faucet) are derived from the transactions table, so the core

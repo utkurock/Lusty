@@ -132,7 +132,55 @@ describe('per-expiry caps on a v5 event', () => {
   })
 })
 
+describe('a scheduled raise on a v5 instance', () => {
+  it('is critical and says when it binds', () => {
+    const raise = { ...change({ maxPremiumBps: 10_000 }), effectiveAt: '2026-10-07T00:00:00.000Z' }
+    const a = limitsChangeAlert([raise], [xlm])!
+    expect(a.severity).toBe('critical')
+    expect(a.title).toBe('Vault limit raise scheduled')
+    expect(a.message).toContain('binds at 2026-10-07T00:00:00.000Z')
+    expect(a.message).toContain(`premium ceiling (bps) ${declared.maxPremiumBps} → 10000`)
+  })
+})
+
 describe('parseLimitsEvent', () => {
+  it('reads a lim_raise event and the time it binds from', () => {
+    const raw: any = {
+      topic: [nativeToScVal('lim_raise', { type: 'symbol' })],
+      value: xdr.ScVal.scvVec([
+        nativeToScVal(500_000_000n, { type: 'i128' }),
+        nativeToScVal(15_000_000_000n, { type: 'i128' }),
+        nativeToScVal(10_000, { type: 'u32' }),
+        nativeToScVal(2_500_000_000n, { type: 'i128' }),
+        nativeToScVal(30_000_000_000n, { type: 'i128' }),
+        nativeToScVal(1_791_331_200n, { type: 'u64' }),
+      ]),
+      contractId: { contractId: () => XLM_VAULT },
+      ledger: 9,
+      ledgerClosedAt: '2026-10-06T00:00:00Z',
+    }
+    expect(parseLimitsEvent(raw)).toMatchObject({
+      maxPremiumBps: 10_000,
+      maxExpiryCall: 250,
+      effectiveAt: new Date(1_791_331_200_000).toISOString(),
+    })
+  })
+
+  it('leaves effectiveAt unset on an applied change', () => {
+    const raw: any = {
+      topic: [nativeToScVal('limits', { type: 'symbol' })],
+      value: xdr.ScVal.scvVec([
+        nativeToScVal(500_000_000n, { type: 'i128' }),
+        nativeToScVal(15_000_000_000n, { type: 'i128' }),
+        nativeToScVal(2000, { type: 'u32' }),
+      ]),
+      contractId: { contractId: () => XLM_VAULT },
+      ledger: 10,
+      ledgerClosedAt: '2026-10-06T00:00:00Z',
+    }
+    expect(parseLimitsEvent(raw)!.effectiveAt).toBeUndefined()
+  })
+
   it('reads the three values the contract publishes', () => {
     const raw: any = {
       topic: [nativeToScVal('limits', { type: 'symbol' })],

@@ -259,24 +259,25 @@ Reports of these are acknowledged but triaged as known.
   more, and there is no reserve or redemption. This is stated in four places.
 - **Testnet XLM comes from a faucet**, so an attack costs only the transaction fee. That is
   deliberate.
-- **The rate limiter is durable, and approximate at the edge.** Deposit, authorize, swap,
-  routing, bridge, faucet, admin auth, feedback, wallet connect and the paid commentary
-  endpoint count in Postgres (`rate_limits`), so limits survive deploys and hold across
-  replicas. Known gaps: replicas racing on one key in one instant can each admit the last
-  slot, and with the database unreachable the limiter falls back to a per-process count
-  instead of refusing. Read-only endpoints (price, quote, stats, leaderboard, news) stay
-  per-process on purpose. The durable caps behind the limiter (the faucet's, the quote
-  policy's) still decide a payout.
-- **The circuit breaker is one switch for every book**, so volatility on any asset halts
-  all of them. That is conservative on purpose, but moving one thin market to stop the
-  whole desk is in scope and counts as a finding: the design is known, not judged safe.
-- **A raised-and-reverted limit is seen after the fact, not prevented.** Reconciliation
-  compares two readings, so a `set_limits` raised and restored between them passes. The
-  monitor also reads every `limits` event from a durable cursor and alerts on each, at
-  critical when it departs from the declared values or more than one lands in an interval.
-  That reports the write but cannot stop it, because the bound is the admin multisig. The
-  event carries the two position caps and the premium ceiling but not the per-expiry caps,
-  so a change to those alone shows unchanged values until the next reading.
+- **The rate limiter is durable.** Deposit, authorize, swap, routing, bridge, faucet, admin
+  auth, feedback, wallet connect and the paid commentary endpoint count in Postgres
+  (`rate_limits`), so limits survive deploys and hold across replicas. The increment is
+  conditional on the count, so replicas racing for the last slot cannot both take it, and
+  with the database unreachable these endpoints refuse rather than fall back to a
+  per-process count. Read-only endpoints (price, quote, stats, leaderboard, news) stay
+  per-process on purpose.
+- **Each book has its own circuit breaker**, and the desk has one over all of them.
+  Volatility or oracle stress on an asset halts that asset's book; the per-epoch loss cap
+  and an admin's desk-wide halt stop every book. Moving one thin market to stop a different
+  book is in scope and counts as a finding.
+- **On v4, a raised-and-reverted limit is seen after the fact, not prevented.**
+  Reconciliation compares two readings, so a `set_limits` raised and restored between them
+  passes. The monitor reads every `limits` event from a durable cursor and alerts on each,
+  but on v4 that reports the write without stopping it, and the v4 event leaves out the
+  per-expiry caps. v5 closes this: a raise binds only a day after it is scheduled, the
+  `lim_raise` event announces it (per-expiry caps included) and the monitor alerts then, and
+  setting the limits again before it binds withdraws it. Until v5 is live the bound is the
+  admin multisig.
 - **Retired vault instances are still streamed** by the event indexer so old positions keep
   their history. They are not in scope as live contracts.
 

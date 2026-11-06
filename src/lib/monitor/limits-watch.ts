@@ -23,6 +23,11 @@ import type { Alert } from './notify'
  * nobody announced is the thing to know about. One that lands on values other
  * than the declared ones is critical: the books are refused until the
  * declaration and the instance agree again.
+ *
+ * On a v5 instance a raise does not bind at once: it is scheduled, announced
+ * as `lim_raise`, and binds a day later. Reported here when it is scheduled,
+ * that day is the time to withdraw a raise nobody meant, before any position
+ * can be written under it.
  */
 
 const CURSOR_NAME = 'vault-limits'
@@ -70,17 +75,23 @@ export function limitsChangeAlert(
     const name = book?.symbol ?? `unknown instance ${c.contractId.slice(0, 8)}…`
     const away = book ? departures(c, book) : ['not a book this deployment declares']
     if (away.length > 0) critical = true
-    lines.push(
-      `${name} at ledger ${c.ledger}: ${
-        away.length > 0 ? away.join(', ') : 'set to the declared values'
-      }`,
-    )
+    const what = c.effectiveAt
+      ? `raise scheduled, binds at ${c.effectiveAt} unless the limits are set again first`
+      : away.length > 0
+        ? 'set'
+        : 'set to the declared values'
+    lines.push(`${name} at ledger ${c.ledger}: ${what}${away.length > 0 ? `: ${away.join(', ')}` : ''}`)
     fields.push({ label: `change_${i + 1}`, value: `${name} ${c.at} tx ${c.txHash ?? '—'}` })
   })
 
+  const scheduled = changes.some((c) => c.effectiveAt)
   return {
     severity: critical ? 'critical' : 'warning',
-    title: critical ? 'Vault limits changed away from the declared values' : 'Vault limits were set',
+    title: scheduled
+      ? 'Vault limit raise scheduled'
+      : critical
+        ? 'Vault limits changed away from the declared values'
+        : 'Vault limits were set',
     message:
       `${changes.length} set_limits call(s) since the last run. ${lines.join('. ')}.` +
       (changes.length > 1
