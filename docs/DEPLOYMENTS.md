@@ -40,10 +40,6 @@ every instance, so positions are keyed on instance and id together.
 |---|---|---|---|---|
 | `CBJZGTCF2PJVHX2BNFTFZ2L2LX6DWD5JMTLHNCVYTSOD3BLVSXZRUCJZ` | XLM v4 | 2026-11-08 | `VAULT_RETIRED_XLM` | #29 open until 2026-11-13; #8 to #18 stranded in Tranche 1 |
 | `CBQEACXAOZMCU3YOUWDC3MWXDSQBWKNGKBA6XMRPY5D5JQRNP2HLMVEU` | BTC v4 | 2026-11-08 | `VAULT_RETIRED_BTC` | nothing open |
-| `CCRQAW47KJXPHDMADDHEFMFDURO6RW3UOQEYYCQTVMJ3WUJSPRQE3WCE` | XLM v5, before the fix for 59 | 2026-11-08, unused | — | 20,000 LUSD and 8,000 XLM withdrawable to the treasury |
-| `CDMNC2J7YJAKHDHZYVJUR6MS7BKYZOVYPDYK5DLBMXDBDHMHJYWOGBCB` | BTC v5, before the fix for 59 | 2026-11-08, unused | — | 3,500 LUSD and 0.5 LBTC withdrawable to the treasury |
-| `CAHNGAMH7POYKPCNJEA3Z5JYJZHVZCDKO34NXHPTCOGL7L2WSMFD7OAV` | XLM v5, before withdrawals | 2026-11-08, unused | — | 20,000 LUSD and 9,000 XLM, not recoverable |
-| `CDNKW4WXZETGXW6XGQS5ZCGZMLYPHUW2HC4QU5AQXJR6YP2B475STK2U` | BTC v5, before withdrawals | 2026-11-08, unused | — | 3,500 LUSD and 0.5 LBTC, not recoverable |
 
 The v4 pools stay where they are: v4 has no withdrawal. Instances older than
 v4 can be listed in `NEXT_PUBLIC_VAULT_CONTRACTS` to keep their history in the
