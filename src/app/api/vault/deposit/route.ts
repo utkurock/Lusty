@@ -7,7 +7,7 @@ import { isValidStellarAddress } from '@/lib/utils'
 import { reserveAction, releaseAction, confirmAction } from '@/lib/idempotency'
 import { logTransaction } from '@/lib/db-queries'
 import { getPosition } from '@/lib/vault-contract'
-import { findOpenEvent } from '@/lib/contract-events'
+import { proveOpen } from '@/lib/open-proof'
 import { realizedApr } from '@/lib/apr'
 import { requestedUnderlying } from '@/lib/assets'
 import { USDC_CODE } from '@/lib/usdc'
@@ -213,7 +213,7 @@ export async function POST(req: Request) {
     // retry, never a guess.
     let opened: { at: number } | null
     try {
-      opened = await findOpenEvent(asset.contracts.vault, position.id, body.txHash)
+      opened = await proveOpen(asset, position, body.txHash)
     } catch (rpcErr) {
       console.warn('vault/deposit: open not verifiable now', rpcErr)
       return NextResponse.json(

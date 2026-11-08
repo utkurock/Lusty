@@ -15,7 +15,7 @@ const OPEN_TX = 'ab'.repeat(32)
 const DAY = 86_400_000
 
 const getPosition = vi.fn()
-const findOpenEvent = vi.fn()
+const proveOpen = vi.fn()
 const reservedOpenPrice = vi.fn()
 const markReservationIndexed = vi.fn(async () => {})
 const logTransaction = vi.fn(async (..._a: any[]) => {})
@@ -27,8 +27,8 @@ vi.mock('@/lib/vault-contract', async (importOriginal) => ({
   getPosition: (...a: any[]) => getPosition(...a),
   getVaultLimits: async (asset: any) => asset.onchainLimits,
 }))
-vi.mock('@/lib/contract-events', () => ({
-  findOpenEvent: (...a: any[]) => findOpenEvent(...a),
+vi.mock('@/lib/open-proof', () => ({
+  proveOpen: (...a: any[]) => proveOpen(...a),
 }))
 vi.mock('@/lib/quote-policy', () => ({
   reservedOpenPrice: (...a: any[]) => reservedOpenPrice(...a),
@@ -60,7 +60,7 @@ const expiry = new Date(openedAt + 10 * DAY)
 
 beforeEach(() => {
   getPosition.mockReset()
-  findOpenEvent.mockReset()
+  proveOpen.mockReset()
   reservedOpenPrice.mockReset()
   markReservationIndexed.mockClear()
   logTransaction.mockClear()
@@ -77,7 +77,7 @@ beforeEach(() => {
     settled: false,
     outcome: 'open',
   })
-  findOpenEvent.mockResolvedValue({ at: openedAt })
+  proveOpen.mockResolvedValue({ at: openedAt })
   reservedOpenPrice.mockResolvedValue(0.26)
 })
 
@@ -112,12 +112,16 @@ describe('the open transaction is the ledger s, checked before anything is reser
   })
 
   it('refuses a hash that did not open this position, and reserves nothing', async () => {
-    findOpenEvent.mockResolvedValue(null)
+    proveOpen.mockResolvedValue(null)
     const res = await post(body())
 
     expect(res.status).toBe(409)
     expect((await res.json()).code).toBe('open_mismatch')
-    expect(findOpenEvent).toHaveBeenCalledWith(XLM_VAULT, 7, OPEN_TX)
+    expect(proveOpen).toHaveBeenCalledWith(
+      expect.objectContaining({ contracts: expect.objectContaining({ vault: XLM_VAULT }) }),
+      expect.objectContaining({ id: 7 }),
+      OPEN_TX,
+    )
     // The point: a stranger with a junk hash cannot claim the replay key and
     // freeze the owner's position under it.
     expect(reserveAction).not.toHaveBeenCalled()
@@ -125,7 +129,7 @@ describe('the open transaction is the ledger s, checked before anything is reser
   })
 
   it('answers 503 when the ledger cannot be read, and reserves nothing', async () => {
-    findOpenEvent.mockRejectedValue(new Error('soroban rpc: 503'))
+    proveOpen.mockRejectedValue(new Error('soroban rpc: 503'))
     const res = await post(body())
 
     expect(res.status).toBe(503)
