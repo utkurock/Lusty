@@ -2,28 +2,29 @@
 
 This report covers the adversarial window described in [`ADVERSARIAL.md`](./ADVERSARIAL.md).
 The window opened on 2026-10-06 00:00 UTC, passed the grant's fourteen-day minimum on
-2026-10-20, and stays open until mainnet. Findings reported after 2026-10-26 will be added
-here.
+2026-10-20, and stays open until mainnet. Findings reported later are added here; the last
+update is 2026-11-08, after the v5 contract went live.
 
 ## Status
 
 | | Critical | High | Medium | Low | Total |
 |---|---|---|---|---|---|
-| Found | 1 | 8 | 9 | 40 | 58 |
-| Fixed and live | 1 | 8 | 7 | 39 | 55 |
-| Open | 0 | 0 | 2 | 1 | 3 |
+| Found | 1 | 8 | 10 | 40 | 59 |
+| Fixed and live | 1 | 8 | 10 | 39 | 58 |
+| Open | 0 | 0 | 0 | 1 | 1 |
 
 Every Critical and High finding is fixed and running on `lusty.finance`. We retested them
 against the live site on 2026-10-25 and 2026-10-26, apart from the few that need a signed,
 funded transaction or a Horizon outage. Our regression tests cover those.
 
-Three findings are still open. Two are Medium. Both sit in the settlement path
-of the live v4 contract and are fixed by deploying v5, which is due by 2026-11-20 (see "Open
-findings"). The third is Low and fails closed.
+Every Medium finding is fixed too. 54 and 55 were in the settlement path of the v4 contract
+and closed when both books moved to v5 on 2026-11-08. 59 was in v5's first fix for 54 and
+was reported from outside before v5 took any position; the instances now live include its
+fix. One finding is still open: 58, which is Low and fails closed.
 
-Nobody outside the team submitted a report during the window. The private report form
-received nothing (`security_reports` is empty), and no GitHub issue was filed. Every finding
-below comes from our own reviews.
+One report came from outside the team: 59, by email on 2026-11-08. The private report form
+received nothing (`security_reports` is empty), and no GitHub issue was filed. Every other
+finding below comes from our own reviews.
 
 Severity uses the grant's definitions, quoted in `ADVERSARIAL.md` §4. We count a finding as
 fixed only when it meets the five conditions in §5: root cause found, fix merged, regression
@@ -34,9 +35,11 @@ test in the same commit, redeployed, and the original scenario retried.
 | | |
 |---|---|
 | Application | `https://lusty.finance`, Stellar testnet |
-| Deployed commit | [`b7b672e`](https://github.com/utkurock/Lusty/commit/b7b672e), deployed 2026-10-26 |
-| XLM book | `CBJZGTCF2PJVHX2BNFTFZ2L2LX6DWD5JMTLHNCVYTSOD3BLVSXZRUCJZ` (vault v4) |
-| BTC book | `CBQEACXAOZMCU3YOUWDC3MWXDSQBWKNGKBA6XMRPY5D5JQRNP2HLMVEU` (vault v4) |
+| Deployed commit | [`718dab4`](https://github.com/utkurock/Lusty/commit/718dab4), deployed 2026-11-08 |
+| XLM book | `CDRRLRY3KSYAGKMSHBQ6NWQNWPVSF46DTNEADJBONMNJ7USF32H32TE2` (vault v5) |
+| BTC book | `CCE2WCB43ZGSWPLD3XRCECOYGXPBH5625RZZHJDHLQ4HD6YR35K2OYHQ` (vault v5) |
+| v5 wasm | `b61d403ad03ab430181455351355e34235685bbeedcf99948c3167ab993fbf64` |
+| Retired, still settled | `CBJZGTCF…UCJZ` (XLM v4), `CBQEACXA…MVEU` (BTC v4) |
 | Admin | `GBDNJQDP4HJQH6WCJCYVYGTKDRYKZXQQSVEC4FOE24CVG4VRQU26IKEC` (2-of-3 multisig) |
 | Quoter | `GC7Z4LVQCUOU7FMRBX4WOGANARQGM4SZTACKMSQSMGIOO4KEAASHLOTX` |
 
@@ -47,8 +50,13 @@ page shows the text that commit added (this report, for `b7b672e`), the CSP no l
 `93ca969`. Other addresses are in
 [`DEPLOYMENTS.md`](./DEPLOYMENTS.md).
 
-All fixes in this report are off-chain, in the API and the operator scripts, so none needed a
-new contract. The v5 contract in `contracts/vault` is not deployed yet.
+The v4 books are retired, not abandoned. They are listed in `VAULT_RETIRED_XLM` and
+`VAULT_RETIRED_BTC`, and the settlement sweep keeps settling their open positions where they
+were written, so the move did not have to wait for v4 to drain. XLM v4 still had one live
+position, #29, expiring 2026-11-13.
+
+Fixes 1 to 53 and 56 to 58 are off-chain, in the API and the operator scripts. 54, 55 and 59
+needed the new contract.
 
 The findings came from these reviews:
 
@@ -60,6 +68,7 @@ The findings came from these reviews:
 | Dependency advisories | 2026-10-09 to 10-10 | 48 |
 | Full audit of `8b4bae9` (19 agents, each candidate re-verified) | 2026-10-10 | 10 to 26, plus leads 49 to 54 and 57 |
 | Retest for this report | 2026-10-25 | 58 |
+| External report, by email | 2026-11-08 | 59 |
 
 ## Findings
 
@@ -80,7 +89,7 @@ the live site; "test" means a regression test covers it.
 | 28 | High | Quotes counted against wallet, expiry and strike limits only after the client reported its deposit. A client that never reported skipped the limits. | `6df2f28` | fixed, test |
 | 29 | High | The quoter signed expiries off the schedule. One second off gave a new per-expiry cap that settled on the same price. | `47a0380` | fixed, retested |
 
-### Medium: seven fixed, two open
+### Medium: all fixed
 
 | # | Finding | Fix | Status |
 |---|---|---|---|
@@ -91,8 +100,9 @@ the live site; "test" means a regression test covers it.
 | 31 | Anyone could index a dust position under someone else's funding hash and get that person's swap refused. | `1e6510c` | fixed, retested |
 | 32 | A few unsettleable positions could use up the settlement runner's whole cap. | `d48a360` | fixed, test |
 | 33 | A wallet removed from the admin list kept its session until it expired. | `b1ac59c` | fixed, test |
-| 54 | If Reflector has no record for the exact expiry period, v4 falls back to `lastprice` and the first settler picks the price. | v5 | open, due 2026-11-20 |
-| 55 | On v4, a position not settled within about a day of oracle history is locked for good. | v5 | open, due 2026-11-20 |
+| 54 | If Reflector has no record for the exact expiry period, v4 falls back to `lastprice` and the first settler picks the price. | v5, `718dab4` | fixed, test |
+| 55 | On v4, a position not settled within about a day of oracle history is locked for good. | v5, `583ef6a` | fixed, test |
+| 59 | v5's first fix for 54 still took `lastprice`, from any time after expiry within the hour, so the first caller of `settle` or `record_price` could wait for the print that suited them and pin it for the whole expiry. | `718dab4` | fixed, test |
 
 ### Low: 39 fixed, one open
 
@@ -144,8 +154,9 @@ regression test.
 
 ## Retests
 
-We replayed each of these against `https://lusty.finance`, at `2e4dffb` on 2026-10-25 and at
-`b7b672e` on 2026-10-26 for 56. Every request got the answer the fix introduced.
+We replayed each of these against `https://lusty.finance`, at `2e4dffb` on 2026-10-25, at
+`b7b672e` on 2026-10-26 for 56, and against the v5 instances on 2026-11-08 for 54, 55 and
+59. Every request got the answer the fix introduced.
 
 | # | Attack | Result |
 |---|---|---|
@@ -159,64 +170,82 @@ We replayed each of these against `https://lusty.finance`, at `2e4dffb` on 2026-
 | 26 | `POST /api/vault/deposit` for position #28 with position #27's `txHash` | `409 open_mismatch` |
 | 56 | `POST /api/vault/authorize` on the BTC book from an account Horizon has never seen | `400 trustline_required` (the 404 branch) |
 | 56 | The same, from an account that holds the LBTC trustline | passes the check, stops at the placeholder entry |
+| 54, 59 | `record_price` simulated on the XLM v5 book for the 02:15 UTC period of 2026-11-08 | `15071809198399`, the Reflector record for that period, to the unit |
+| 54, 59 | `record_price` for an expiry an hour ahead | `NotExpired` |
+| 55 | `/api/health` after the redeploy | both books on their v5 instance, limits reconciled, no drift |
 
 `node scripts/adversarial/refuse.mjs` simulates contract attacks on both live books without
 submitting anything. Each attempt failed with the expected error: `AlreadySettled`,
 `PositionNotFound`, `LastQuoter`, `InvalidLimit`, or a required admin signature for
 `set_limits` and quoter changes.
 
-`npx vitest run` at `b7b672e` passes all 821 tests in 83 files. `trustline-check`,
+`npx vitest run` at `718dab4` passes all 838 tests in 84 files, and `cargo test` in
+`contracts` passes all 91 contract tests. At `b7b672e` the app suite was 821 tests in 83 files. `trustline-check`,
 `security-report` and `notify-escape` cover 56 and 57, and each of their new tests fails on
 the code before the fix. A Horizon outage (56's other branch) and an alert flood (57) can't be
-staged against the live site without causing the problem, so those tests are the retest. Findings 2, 4, 7, 27 and 28
+staged against the live site without causing the problem, so those tests are the retest. The same
+holds for the branch of 54 and 59 that matters, a Reflector record missing at expiry, and for
+55's 30-day release: `a_late_first_caller_cannot_pick_a_later_print`,
+`record_price_takes_the_first_record_after_a_missing_one`, `settle_falls_back_to_the_next_period_record`
+and the unpriced-release tests each fail on the code before the fix. Findings 2, 4, 7, 27 and 28
 can't be replayed live without a signed, funded transaction or a Horizon outage, so their
 tests are the retest: `swap-proof`, `anchor-bridge-proof`, `deposit-dedupe`, `payout-submit`
 and `quote-reservations`. `outage-fail-closed` takes each dependency down in turn and checks
 that quoting, co-signing and payouts refuse.
 
+## Fixed in v5
+
+54: if Reflector skips the record for an expiry period, v4 falls back to any `lastprice` from
+within an hour of expiry, including one from just before it, so whoever settles first chooses
+the price. v5 reads only the oracle's period records: the expiry period's, else the first
+record after it within `MAX_PRICE_STALENESS_SECS` (one hour), never `lastprice`. A record does
+not change once written, so every caller gets the same price whenever they ask, and the first
+settlement or `record_price` stores it on chain for every later position on that expiry.
+
+59: v5 as first written limited the fallback to `lastprice` readings from at or after
+expiry. That still let the first caller wait inside the hour, while the latest print moved
+every five minutes, and pin whichever suited them. It was reported by email on 2026-11-08,
+before any v5 instance had taken a position, and fixed in `718dab4` by the rule above. The two
+v5 instances deployed earlier that day without it were replaced unused.
+
+55: Reflector keeps about a day of history. After that, v4's `settle` fails with
+`StalePrice`, and v4 has no admin release and no upgrade path. Nine XLM v4 positions (#8 to
+#18) were stranded this way in Tranche 1, before this window, when the settlement sweep was
+switched off. v5 stores each expiry's price on chain at the first settlement and releases a
+position nobody could price as kept 30 days after expiry. The sweep now also walks retired
+instances (`583ef6a`), so moving a book to a new instance no longer strands what is open on
+the old one.
+
 ## Open findings
 
-54 and 55 are Medium. Both are in the live v4 contract and are fixed by the same v5
-deployment, due 2026-11-20 and in any case before mainnet.
-
-54: if Reflector skips the exact record for an expiry period, v4 falls back to any
-`lastprice` from within an hour of expiry, including one from just before it. Whoever settles
-first chooses the price. In normal operation `lastprice` is the latest record, so the fallback
-does not come into play. The settlement runner also settles each expiry within 15 minutes, and
-the off-chain gate refuses off-schedule expiries (29). The fix is v5 with the fallback limited
-to the first record at or after the expiry, deployed as new instances for both books.
-
-55: Reflector keeps about a day of history. After that, v4's `settle` fails with `StalePrice`,
-and v4 has no admin release and no upgrade path. This happened in Tranche 1, before this
-window, when the settlement sweep was switched off and nine positions passed the deadline.
-Their collateral is still escrowed. We rate it Medium because we found no way for an attacker
-to cause it: `settle` is permissionless, so a position is stranded only if the runner and
-every owner miss a full day. The runner now sweeps every book from the lowest unsettled id
-(23, 32), and the monitor raises a critical alert for any position past the window. v5 stores
-each expiry's price on chain at the first settlement and releases positions nobody could price
-after 30 days. The runner already supports this (`b1f4406`).
-
-58, the one open Low finding, moves no funds. It refuses late indexing rather than recording
-anything wrong, and utilization already reads on-chain exposure (12). It comes from how long
-the Soroban RPC keeps events, so there is no code fix to make.
+58, the one open finding, is Low and moves no funds. It refuses late indexing rather than
+recording anything wrong, and utilization already reads on-chain exposure (12). It comes from
+how long the Soroban RPC keeps events and transactions.
 
 ## Remaining risks
 
 These limits are accepted and listed in `ADVERSARIAL.md` §7. LBTC and LUSD are unbacked test
-assets. Test capital comes from a faucet. The rate limiter can let one extra request through
-when replicas race, and falls back to a per-process count if the database is down. One
-circuit breaker covers every book. A `set_limits` raised and then restored between two
-readings is reported afterwards rather than blocked; the admin multisig is the real bound.
+assets. Test capital comes from a faucet.
 
-Until v5 is deployed, the off-chain gate enforces the expiry grid, and the admin and quoter
-are kept separate by configuration. A stolen quoter key is then bounded by v4's premium
-ceiling and caps.
+The vault has not been independently audited. v5 is new code, and 59 shows the settlement
+path can hide a mistake our own reviews and tests missed. An external audit is planned
+before mainnet.
+
+The v4 instances, and the two v5 instances replaced on 2026-11-08 by the fix for 59, cannot
+return their pool liquidity: they predate `request_withdrawal`. From the instances now live
+on, idle liquidity can go back to the treasury, a day after an announced request the admin
+can cancel. That path is admin-only and can never reach collateral or a reserved payout.
+
+The admin multisig is the bound on `set_limits`: on v5 a raise binds only after 24 hours,
+announced by a `lim_raise` event the monitor alerts on, and the same holds for withdrawals
+(`wd_req`). The admin and the quoter are separate accounts, which v5 also enforces on chain.
 
 ## Reproducing
 
 ```bash
-git checkout b7b672e && npm ci
+git checkout 718dab4 && npm ci
 npx vitest run
+cargo test --manifest-path contracts/Cargo.toml
 node scripts/adversarial/refuse.mjs
 ```
 

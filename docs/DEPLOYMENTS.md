@@ -8,31 +8,50 @@ Everything Lusty runs on Stellar testnet, each checkable on the network:
 
 Network: Stellar testnet (`Test SDF Network ; September 2015`). No mainnet
 deployment exists; nothing here holds real value or is insured. Last read back:
-2026-09-15 (limits, wasm hash) and 2026-09-13 (lifecycle balances in
-[`TESTNET-EVIDENCE.md`](./TESTNET-EVIDENCE.md)).
+2026-11-08 (v5 instances, limits, wasm hash, pools) and 2026-09-13 (v4 lifecycle
+balances in [`TESTNET-EVIDENCE.md`](./TESTNET-EVIDENCE.md)).
 
 ## 1. Vault instances
 
-One instance per underlying, each redeployed from the reference instance's wasm
-hash rather than rebuilt, so they provably run the same code and differ only in
-feed, collateral and limits.
+One instance per underlying, both deployed from one uploaded wasm, so they
+provably run the same code and differ only in feed, collateral and limits.
+Deployed 2026-11-08 by `GBHFLXBFV4YF7WLGRSQR5TKRPAJE2GFPXPG5RTJ5UKPET7VXLQAGXC2M`
+from commit `718dab4`.
 
 | Book | Contract | Feed | Status |
 |---|---|---|---|
-| XLM | `CBJZGTCF2PJVHX2BNFTFZ2L2LX6DWD5JMTLHNCVYTSOD3BLVSXZRUCJZ` | `Other("XLM")` | live |
-| BTC | `CBQEACXAOZMCU3YOUWDC3MWXDSQBWKNGKBA6XMRPY5D5JQRNP2HLMVEU` | `Other("BTC")` | live |
+| XLM | `CDRRLRY3KSYAGKMSHBQ6NWQNWPVSF46DTNEADJBONMNJ7USF32H32TE2` | `Other("XLM")` | live, v5 |
+| BTC | `CCE2WCB43ZGSWPLD3XRCECOYGXPBH5625RZZHJDHLQ4HD6YR35K2OYHQ` | `Other("BTC")` | live, v5 |
 | ETH | — | `Other("ETH")` | declared, not deployed ([MULTI-ASSET.md §7](./MULTI-ASSET.md)) |
 
-Wasm hash, both instances: `ceb612f26516d5fcf6ac027dd0428aa471037694fa850dc697dcef6ac0b6b35b`
+Wasm hash, both instances: `b61d403ad03ab430181455351355e34235685bbeedcf99948c3167ab993fbf64`
 
-Superseded instances are out of scope but still streamed by the event indexer
-(`NEXT_PUBLIC_VAULT_CONTRACTS`) to keep old positions' history. Position ids
-restart at zero on every instance, so positions are keyed on instance and id
-together.
+Pools at deployment: XLM book 20,000 LUSD and 8,000 XLM; BTC book 3,500 LUSD and
+0.5 LBTC.
+
+### Retired instances
+
+A retired instance is still settled: the sweep walks every instance listed in
+`VAULT_RETIRED_<SYMBOL>` and settles its open positions where they were
+written, and the event indexer streams it too. Position ids restart at zero on
+every instance, so positions are keyed on instance and id together.
+
+| Instance | Was | Retired | Listed in | Notes |
+|---|---|---|---|---|
+| `CBJZGTCF2PJVHX2BNFTFZ2L2LX6DWD5JMTLHNCVYTSOD3BLVSXZRUCJZ` | XLM v4 | 2026-11-08 | `VAULT_RETIRED_XLM` | #29 open until 2026-11-13; #8 to #18 stranded in Tranche 1 |
+| `CBQEACXAOZMCU3YOUWDC3MWXDSQBWKNGKBA6XMRPY5D5JQRNP2HLMVEU` | BTC v4 | 2026-11-08 | `VAULT_RETIRED_BTC` | nothing open |
+| `CCRQAW47KJXPHDMADDHEFMFDURO6RW3UOQEYYCQTVMJ3WUJSPRQE3WCE` | XLM v5, before the fix for 59 | 2026-11-08, unused | — | 20,000 LUSD and 8,000 XLM withdrawable to the treasury |
+| `CDMNC2J7YJAKHDHZYVJUR6MS7BKYZOVYPDYK5DLBMXDBDHMHJYWOGBCB` | BTC v5, before the fix for 59 | 2026-11-08, unused | — | 3,500 LUSD and 0.5 LBTC withdrawable to the treasury |
+| `CAHNGAMH7POYKPCNJEA3Z5JYJZHVZCDKO34NXHPTCOGL7L2WSMFD7OAV` | XLM v5, before withdrawals | 2026-11-08, unused | — | 20,000 LUSD and 9,000 XLM, not recoverable |
+| `CDNKW4WXZETGXW6XGQS5ZCGZMLYPHUW2HC4QU5AQXJR6YP2B475STK2U` | BTC v5, before withdrawals | 2026-11-08, unused | — | 3,500 LUSD and 0.5 LBTC, not recoverable |
+
+The v4 pools stay where they are: v4 has no withdrawal. Instances older than
+v4 can be listed in `NEXT_PUBLIC_VAULT_CONTRACTS` to keep their history in the
+event feed.
 
 ### Limits, as the instances enforce them
 
-Read back on 2026-09-15; calls in the underlying, puts in cash. The contract
+Read back on 2026-11-08, the same as v4's; calls in the underlying, puts in cash. The contract
 enforces these on every write, the desk quotes inside them, and the two are
 reconciled before a book is served ([MULTI-ASSET.md §3](./MULTI-ASSET.md)).
 
@@ -106,34 +125,33 @@ one for one into LUSD, the vault's cash, before the position opens.
 | Soroban RPC | `https://soroban-testnet.stellar.org` |
 | Horizon | `https://horizon-testnet.stellar.org` |
 
-## 7. Replacing a book's instance (v4 → v5)
+## 7. Replacing a book's instance
 
-The settlement sweep walks each book's configured vault and nothing else, so
-pointing a book at a new instance takes the old one out of the sweep. A
-position on it that can still settle would then run out its oracle window
-unattended. `deploy-vault.mjs` therefore refuses to replace an instance that
-has any unsettled position younger than the window, and lists the ones
-already past it.
+The settlement sweep walks each book's configured vault and every instance in
+`VAULT_RETIRED_<SYMBOL>`, so an instance with open positions can be replaced
+without waiting for it to drain, as long as it is listed there.
+`deploy-vault.mjs` refuses to replace an instance that still has positions
+that can settle unless it is listed, and lists the ones already past the
+oracle window.
 
 ```sh
-# 1. Stop quoting on the book, so nothing new opens on the old instance.
-curl -X POST https://lusty.finance/api/admin/circuit-breaker \
-  -H "x-admin-token: $ADMIN_TOKEN" -H 'content-type: application/json' \
-  -d '{"scope": "XLM", "tripped": true, "reason": "v5 migration"}'
-
-# 2. Build v5, then deploy from that build. Refused while the old instance
-#    still has positions the sweep has to settle.
+# 1. Build, then deploy from that build. The deployer only pays fees; set
+#    VAULT_DEPLOY_SECRET, or keep the key in the Stellar CLI as lusty-runner.
 cargo build --manifest-path contracts/Cargo.toml --target wasm32v1-none --release
 node scripts/deploy-vault.mjs XLM --wasm contracts/target/wasm32v1-none/release/lusty_vault.wasm
 
-# 3. Point the book at the new instance, list the old one in
-#    NEXT_PUBLIC_VAULT_CONTRACTS so its history stays indexed, fund the new
-#    pools, redeploy the app, check, and release the breaker.
+# 2. Fund the new pools (fund / fund_underlying), then check it.
 node scripts/deploy-vault.mjs XLM --check
+
+# 3. On the app, in one deploy: point NEXT_PUBLIC_VAULT_CONTRACT (or _BTC) at
+#    the new instance and add the old one to VAULT_RETIRED_XLM (or _BTC).
 ```
 
-The new instance's pools start empty. `fund` is one-way, so what the old
-instance holds stays there.
+Nothing has to be halted: positions opened on the old instance before the app
+switches are settled there like the rest. From v5 on, the old instance's idle
+liquidity can go back to the treasury once nothing needs it:
+`request_withdrawal(pool, amount)` by the admin, then `execute_withdrawal(pool)`
+a day later. Both need the 2-of-3 admin, and the monitor alerts on each step.
 
 ## 8. Reading it back yourself
 

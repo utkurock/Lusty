@@ -276,10 +276,11 @@ Reports of these are acknowledged but triaged as known.
   but on v4 that reports the write without stopping it, and the v4 event leaves out the
   per-expiry caps. v5 closes this: a raise binds only a day after it is scheduled, the
   `lim_raise` event announces it (per-expiry caps included) and the monitor alerts then, and
-  setting the limits again before it binds withdraws it. Until v5 is live the bound is the
-  admin multisig.
-- **Retired vault instances are still streamed** by the event indexer so old positions keep
-  their history. They are not in scope as live contracts.
+  setting the limits again before it binds withdraws it. Both books run v5 since
+  2026-11-08; the retired v4 instances take no new positions.
+- **Retired vault instances are still streamed and settled.** The event indexer streams them
+  and the settlement sweep settles their open positions (`VAULT_RETIRED_<SYMBOL>`). They take
+  no new positions, but settling one wrongly, or keeping it from settling, is in scope.
 
 ---
 
