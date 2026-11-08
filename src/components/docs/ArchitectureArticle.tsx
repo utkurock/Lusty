@@ -220,8 +220,9 @@ set_limits, add_quoter, remove_quoter   admin only`}</Pre>
             Reflector keeps about 24 hours of history.
           </li>
           <li>
-            Before that record is queryable, <Code>lastprice</Code>, only if at
-            most an hour old.
+            If Reflector skipped that period, the first record after it, within
+            an hour of expiry. Records never change, so the price does not
+            depend on who settles first or when.
           </li>
           <li>Otherwise the call reverts. No expired position settles at a live price.</li>
         </List>

@@ -480,36 +480,36 @@ fn settle_rejects_double_settlement() {
 }
 
 #[test]
-fn settle_falls_back_to_fresh_lastprice() {
+fn settle_falls_back_to_the_next_period_record() {
     let s = setup();
     let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
-    // No historical record; the live reading is the expiry period's own.
-    let now = EXPIRY + 60;
-    s.oracle.set_lastprice(&23_000_000_000_000, &EXPIRY);
-    s.env.ledger().with_mut(|l| l.timestamp = now);
+    // No record for the expiry period; the next period's stands in for it.
+    s.oracle.set_price(&(EXPIRY + 300), &23_000_000_000_000);
+    s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 360);
 
     assert_eq!(s.vault.settle(&id), symbol_short!("kept"));
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #8)")] // StalePrice
+#[should_panic(expected = "Error(Contract, #7)")] // NoPrice
 fn settle_refuses_a_fallback_from_before_expiry() {
     // Right after expiry the latest record is often the previous period's. Fresh
     // as it is, settling on it would let whoever calls first choose the print:
     // here OTM at T-300, so an ITM writer would keep their collateral.
     let s = setup();
     let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
+    s.oracle.set_price(&(EXPIRY - 300), &23_000_000_000_000);
     s.oracle.set_lastprice(&23_000_000_000_000, &(EXPIRY - 300));
     s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 60);
     s.vault.settle(&id);
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #8)")] // StalePrice
+#[should_panic(expected = "Error(Contract, #7)")] // NoPrice
 fn settle_blocks_on_stale_fallback() {
     let s = setup();
     let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
-    // No historical record; lastprice is 2h old → fail closed.
+    // No period record; a 2h-old live reading is not used → fail closed.
     let now = EXPIRY + 60;
     s.oracle.set_lastprice(&23_000_000_000_000, &(now - 7200));
     s.env.ledger().with_mut(|l| l.timestamp = now);
@@ -1476,4 +1476,65 @@ fn executing_a_withdrawal_requires_the_admin() {
         },
     }]);
     s.vault.execute_withdrawal(&Pool::Cash);
+}
+
+// ── A missing expiry record cannot be replaced by the caller's pick ─
+//
+// Reported 2026-11-08: with no record at the expiry period, v5 took whatever
+// `lastprice` said at call time, as long as it was from after expiry and the
+// call came within the hour. The latest print moves every period, so the first
+// caller could wait for the one that suited them and pin it for the whole
+// expiry. The substitute must be the first record after expiry, whoever asks
+// and whenever.
+
+const ITM: i128 = 30_000_000_000_000; // $0.30, above STRIKE
+const OTM: i128 = 20_000_000_000_000; // $0.20, below STRIKE
+
+/// No record at EXPIRY; the next two periods print on opposite sides of the
+/// strike, and the live feed has moved on to the second.
+fn skipped_expiry_record(s: &Setup) {
+    s.oracle.set_price(&(EXPIRY + 300), &ITM);
+    s.oracle.set_price(&(EXPIRY + 600), &OTM);
+    s.oracle.set_lastprice(&OTM, &(EXPIRY + 600));
+}
+
+#[test]
+fn a_late_first_caller_cannot_pick_a_later_print() {
+    let s = setup();
+    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
+    skipped_expiry_record(&s);
+    s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 650);
+    // The first record after expiry is ITM, so the call assigns, however long
+    // the settler waited for an OTM print.
+    assert_eq!(s.vault.settle(&id), symbol_short!("assigned"));
+}
+
+#[test]
+fn record_price_takes_the_first_record_after_a_missing_one() {
+    let s = setup();
+    skipped_expiry_record(&s);
+    s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 650);
+    assert_eq!(s.vault.record_price(&EXPIRY), ITM);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #7)")] // NoPrice
+fn nothing_is_recorded_before_any_record_after_expiry_exists() {
+    let s = setup();
+    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
+    // A live print from after expiry is not a record of a period: refused, so
+    // nobody can pin it before the oracle has written one.
+    s.oracle.set_lastprice(&OTM, &(EXPIRY + 60));
+    s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 120);
+    s.vault.settle(&id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")] // StalePrice
+fn a_substitute_more_than_an_hour_after_expiry_is_refused() {
+    let s = setup();
+    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
+    s.oracle.set_price(&(EXPIRY + 3900), &OTM);
+    s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 4000);
+    s.vault.settle(&id);
 }

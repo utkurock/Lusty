@@ -52,8 +52,8 @@ never depends on the protocol being online.
 
 - The settlement price comes from the Reflector feed at the expiry timestamp,
   normalized to the feed resolution. When the writer claims has no effect on
-  the outcome. The contract falls back to `lastprice` only while it is fresh
-  (at most one hour old).
+  the outcome. If Reflector skipped that period's record, v5 takes the first
+  record after it, within one hour of expiry; v4 fell back to `lastprice`.
 - On assignment the escrowed collateral goes to the treasury and the writer
   receives the other leg — the same payoff as transacting at the strike.
 - Otherwise the position is kept and the collateral comes back whole. The
@@ -75,9 +75,15 @@ changes for them until a v5 instance is deployed and the books are pointed at it
   none available from the oracle is released as kept 30 days after expiry.
   Before that the refusal stands, so a writer cannot wait out the oracle to
   avoid assignment.
-- **The `lastprice` fallback must be from at or after expiry.** Before v5, a
-  fresh reading from the period before expiry was accepted, so whoever
-  settled first could choose between two prints.
+- **A missing expiry record is replaced by the first record after it.** v4
+  fell back to a fresh `lastprice`, including one from the period before
+  expiry, so whoever settled first could choose between two prints. v5 first
+  limited that to readings at or after expiry, which still let the first
+  caller wait inside the hour for the print that suited them (reported
+  2026-11-08). Settlement now reads only period records, never `lastprice`:
+  the expiry period's, else the first one after it within
+  `MAX_PRICE_STALENESS_SECS` (1 hour). A record never changes once written,
+  so every caller gets the same price whenever they ask.
 - **Expiries must be on the oracle's grid.** `write` refuses an expiry that is
   not a multiple of the feed resolution (`InvalidExpiry`, 3). Exposure is
   capped per expiry timestamp, and an off-grid expiry was a fresh cap bucket

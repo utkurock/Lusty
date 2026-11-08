@@ -68,8 +68,10 @@ pub mod reflector {
 
 use reflector::ReflectorClient;
 
-/// Reject a `lastprice` fallback older than this (seconds). A stale oracle
-/// must block settlement (fail-closed), not settle at a wrong price.
+/// How far past expiry a settlement price may come from (seconds): the
+/// first period record after a missing expiry record must fall inside it, and
+/// a live reading used to value collateral must be at most this old. A stale
+/// oracle must block settlement (fail-closed), not settle at a wrong price.
 const MAX_PRICE_STALENESS_SECS: u64 = 3600;
 
 /// How long after expiry a position with no price to settle at stays locked
@@ -1306,7 +1308,7 @@ impl LustyVault {
         let oracle = ReflectorClient::new(env, &cfg.oracle);
         let price = Self::rescale(
             env,
-            Self::oracle_price(&oracle, cfg, ts_norm, expiry, now)?,
+            Self::oracle_price(&oracle, cfg, feed, ts_norm, expiry, now)?,
             oracle.decimals(),
             feed.decimals,
         );
@@ -1316,45 +1318,37 @@ impl LustyVault {
         Ok(price)
     }
 
-    /// Expiry-pinned settlement price, mirroring the off-chain vault's rule:
-    /// the writer's claim timing must not change the outcome. Reads the
-    /// historical price at the expiry period; falls back to `lastprice` only
-    /// while the claim is prompt AND that reading is from at or after expiry.
-    /// A stale or empty feed BLOCKS settlement (fail-closed) rather than
-    /// settling at a wrong price.
+    /// Expiry-pinned settlement price: the oracle's record for the expiry
+    /// period, or, if Reflector skipped that one, the FIRST record after it,
+    /// within `MAX_PRICE_STALENESS_SECS` of expiry.
+    ///
+    /// Only period records are read, never `lastprice`. A record never changes
+    /// once written, so every caller gets the same answer whenever they ask.
+    /// `lastprice` moves every period, and taking it let the first caller wait
+    /// for the print that suited them and pin it for the whole expiry
+    /// (reported 2026-11-08). Before the first record after expiry exists the
+    /// answer is `NoPrice`; past the window with none found it is `StalePrice`.
     fn oracle_price(
         oracle: &ReflectorClient,
         cfg: &Config,
+        feed: &Feed,
         ts_norm: u64,
         expiry: u64,
         now: u64,
     ) -> Result<i128, Error> {
         let asset = reflector::Asset::Other(cfg.feed.clone());
-
-        if let Some(p) = oracle.price(&asset, &ts_norm) {
-            return Ok(p.price);
+        let last = ts_norm.saturating_add(MAX_PRICE_STALENESS_SECS);
+        let mut t = ts_norm;
+        while t <= last && t <= now {
+            if let Some(p) = oracle.price(&asset, &t) {
+                return Ok(p.price);
+            }
+            t += feed.resolution;
         }
-        // No historical record. The live price is a valid proxy for the
-        // expiry price ONLY when the claim is prompt — within the staleness
-        // window of EXPIRY, before the period record is queryable. For a late
-        // claim (Reflector retains ~24h; the record has been pruned) the live
-        // price is just the current market, and settling on it would re-grant
-        // the writer the timing discretion expiry-pinning removes. So gate on
-        // `now - expiry`, not merely on how fresh the lastprice record is.
         if now.saturating_sub(expiry) > MAX_PRICE_STALENESS_SECS {
             return Err(Error::StalePrice);
         }
-        let lp = oracle.lastprice(&asset).ok_or(Error::NoPrice)?;
-        if now.saturating_sub(lp.timestamp) > MAX_PRICE_STALENESS_SECS {
-            return Err(Error::StalePrice);
-        }
-        // And never a reading from before expiry. In the first moments after
-        // expiry the latest record is often the previous period's, and taking
-        // it would let whoever settles first pick between the two prints.
-        if lp.timestamp < ts_norm {
-            return Err(Error::StalePrice);
-        }
-        Ok(lp.price)
+        Err(Error::NoPrice)
     }
 }
 

@@ -131,13 +131,10 @@ export async function reflectorPriceAt(
  * Soroban contract). Returns null when stale or missing — callers fall
  * back to the next source rather than settling on bad data.
  *
- * SECURITY: this is the LIVE price, not an expiry-pinned one. It is only a
- * safe settlement source when the claim happens within the staleness window
- * OF EXPIRY — i.e. the expiry record has not landed yet. For an old expiry
- * (history pruned) the live price is whatever the market is doing now, which
- * would hand the writer exactly the timing discretion expiry-pinning removes.
- * Callers must gate this on `now - expiry`, not just on `now - lastprice.ts`.
- * See settlementPinnedToExpiry() for the safe wrapper.
+ * SECURITY: this is the LIVE price, not an expiry-pinned one, and it is never
+ * a settlement source. It moves every period, so settling on it would let
+ * whoever settles first choose the print; the vault settles on period records
+ * only (the expiry's, else the first one after it within the hour).
  */
 /**
  * Raw latest feed record — price AND its oracle timestamp, with no staleness
@@ -164,34 +161,4 @@ export async function reflectorLastPrice(
     return null
   }
   return rec.price
-}
-
-/**
- * Reflector settlement price for a position expiring at `expiryMs`, with the
- * timing-discretion guard applied:
- *
- *   1. The expiry-pinned historical price, if Reflector still has it.
- *   2. Otherwise the live price, but ONLY if the claim is prompt — within the
- *      staleness window of expiry, before the period record is queryable.
- *
- * Returns null when neither applies (old expiry, history pruned). The caller
- * must then use another expiry-pinned source (Binance kline) and must NOT
- * fall back to any live price. Reflector retains ~24h of history, so a writer
- * who waits longer hits this null path rather than settling at a stale-but-
- * "fresh-looking" live price.
- */
-export async function reflectorSettlementPrice(
-  expiryMs: number,
-  asset?: UnderlyingAsset
-): Promise<number | null> {
-  const pinned = await reflectorPriceAt(expiryMs, asset)
-  if (pinned !== null) return pinned
-
-  const sinceExpirySecs = Math.floor((Date.now() - expiryMs) / 1000)
-  if (sinceExpirySecs > MAX_STALENESS_SECS) {
-    // Claim is late and the expiry record is gone — the live price is no
-    // longer a proxy for the expiry price. Refuse, don't guess.
-    return null
-  }
-  return reflectorLastPrice(asset)
 }
