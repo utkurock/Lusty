@@ -10,8 +10,8 @@ update is 2026-11-08, after the v5 contract went live.
 | | Critical | High | Medium | Low | Total |
 |---|---|---|---|---|---|
 | Found | 1 | 8 | 10 | 40 | 59 |
-| Fixed and live | 1 | 8 | 10 | 39 | 58 |
-| Open | 0 | 0 | 0 | 1 | 1 |
+| Fixed and live | 1 | 8 | 10 | 40 | 59 |
+| Open | 0 | 0 | 0 | 0 | 0 |
 
 Every Critical and High finding is fixed and running on `lusty.finance`. We retested them
 against the live site on 2026-10-25 and 2026-10-26, apart from the few that need a signed,
@@ -20,7 +20,7 @@ funded transaction or a Horizon outage. Our regression tests cover those.
 Every Medium finding is fixed too. 54 and 55 were in the settlement path of the v4 contract
 and closed when both books moved to v5 on 2026-11-08. 59 was in v5's first fix for 54 and
 was reported from outside before v5 took any position; the instances now live include its
-fix. One finding is still open: 58, which is Low and fails closed.
+fix. The last Low finding, 58, is fixed as well, so no finding is open.
 
 One report came from outside the team: 59, by email on 2026-11-08. The private report form
 received nothing (`security_reports` is empty), and no GitHub issue was filed. Every other
@@ -104,7 +104,7 @@ the live site; "test" means a regression test covers it.
 | 55 | On v4, a position not settled within about a day of oracle history is locked for good. | v5, `583ef6a` | fixed, test |
 | 59 | v5's first fix for 54 still took `lastprice`, from any time after expiry within the hour, so the first caller of `settle` or `record_price` could wait for the print that suited them and pin it for the whole expiry. | `718dab4` | fixed, test |
 
-### Low: 39 fixed, one open
+### Low: all fixed
 
 | # | Finding | Fix | Status |
 |---|---|---|---|
@@ -147,7 +147,7 @@ the live site; "test" means a regression test covers it.
 | 53 | One client could use up the faucet's global daily cap. | `93ca969` | fixed |
 | 56 | `hasTrustline` read a Horizon outage as "no trustline" and told writers to open one they already had. Only a 404 now means no trustline, and the co-signature answers an outage with `503 trustline_check_unavailable`. | `f57d560` | fixed, retested |
 | 57 | Report alerts shared an email quota with the risk monitor's critical alerts. Reports now get at most 10 emails a day; past that they still reach Slack and the admin panel. | `1d7d734` | fixed, test |
-| 58 | A position can't be indexed once its opening transaction is past the RPC's event retention. | not a code fix | open |
+| 58 | A position can't be indexed once its opening transaction is past the RPC's event retention. | `6a08abb` | fixed, retested |
 
 `ADVERSARIAL.md` §6 describes findings 1 to 26 in full. Each fix commit includes its
 regression test.
@@ -173,13 +173,14 @@ We replayed each of these against `https://lusty.finance`, at `2e4dffb` on 2026-
 | 54, 59 | `record_price` simulated on the XLM v5 book for the 02:15 UTC period of 2026-11-08 | `15071809198399`, the Reflector record for that period, to the unit |
 | 54, 59 | `record_price` for an expiry an hour ahead | `NotExpired` |
 | 55 | `/api/health` after the redeploy | both books on their v5 instance, limits reconciled, no drift |
+| 58 | `proveOpen` against XLM v4 #21 and #12, opened 2026-09-17 and 2026-08-16, whose `deposit` events the RPC no longer has | each proven from Horizon by exactly one of the owner's 18 contract calls, at its close time |
 
 `node scripts/adversarial/refuse.mjs` simulates contract attacks on both live books without
 submitting anything. Each attempt failed with the expected error: `AlreadySettled`,
 `PositionNotFound`, `LastQuoter`, `InvalidLimit`, or a required admin signature for
 `set_limits` and quoter changes.
 
-`npx vitest run` at `718dab4` passes all 838 tests in 84 files, and `cargo test` in
+`npx vitest run` at `6a08abb` passes all 848 tests in 85 files, and `cargo test` in
 `contracts` passes all 91 contract tests. At `b7b672e` the app suite was 821 tests in 83 files. `trustline-check`,
 `security-report` and `notify-escape` cover 56 and 57, and each of their new tests fails on
 the code before the fix. A Horizon outage (56's other branch) and an alert flood (57) can't be
@@ -216,11 +217,17 @@ position nobody could price as kept 30 days after expiry. The sweep now also wal
 instances (`583ef6a`), so moving a book to a new instance no longer strands what is open on
 the old one.
 
-## Open findings
+## Fixed after the v5 move
 
-58, the one open finding, is Low and moves no funds. It refuses late indexing rather than
-recording anything wrong, and utilization already reads on-chain exposure (12). It comes from
-how long the Soroban RPC keeps events and transactions.
+58: the indexer proves a position's open from the `deposit` event its transaction emitted,
+and the Soroban RPC keeps events and transactions for a few days only, so a position indexed
+later was refused for good. It moved no funds and recorded nothing wrong. Past the RPC's
+retention, `proveOpen` (`6a08abb`) now reads the transaction from Horizon, which keeps the
+history: the envelope must be one successful `open` or `deposit` on this instance whose
+arguments are this position's terms, and the close time stands in for the event's. Horizon
+no longer returns a call's result, so it cannot name the id the call produced; when the owner
+holds another position with identical terms, the claim is refused rather than guessed. Fee
+bumps are refused, as for 27.
 
 ## Remaining risks
 
@@ -243,7 +250,7 @@ announced by a `lim_raise` event the monitor alerts on, and the same holds for w
 ## Reproducing
 
 ```bash
-git checkout 718dab4 && npm ci
+git checkout 6a08abb && npm ci
 npx vitest run
 cargo test --manifest-path contracts/Cargo.toml
 node scripts/adversarial/refuse.mjs
