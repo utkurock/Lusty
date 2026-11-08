@@ -2,8 +2,8 @@
 
 use super::reflector::{Asset, PriceData};
 use super::{
-    DataKey, Kind, Limits, LustyVault, LustyVaultClient, PendingLimits, LIMIT_RAISE_DELAY_SECS,
-    MAX_QUOTERS,
+    DataKey, Kind, Limits, LustyVault, LustyVaultClient, PendingLimits, PendingWithdrawal, Pool,
+    LIMIT_RAISE_DELAY_SECS, MAX_QUOTERS, WITHDRAW_DELAY_SECS,
 };
 use soroban_sdk::testutils::storage::Persistent as _;
 use soroban_sdk::testutils::{Address as _, Events as _, Ledger, MockAuth, MockAuthInvoke};
@@ -1315,4 +1315,165 @@ fn the_constructor_refuses_the_vault_as_its_own_treasury() {
             limits(MAX_POSITION_CALL, MAX_POSITION_PUT),
         ),
     );
+}
+
+// ── Withdrawing free pool liquidity ─────────────────────────────────
+//
+// Only what no position needs can leave, only to the treasury, and only a day
+// after it was requested — so a replaced instance can hand back its idle
+// liquidity without the admin being able to empty a pool unseen.
+
+/// Cash a call at STRIKE reserves for its assignment: 100 XLM × $0.25.
+const CALL_OWED: i128 = 25_0000000;
+
+/// Move past the withdrawal delay, keeping the feed fresh so writes still work.
+fn wait_out_withdrawal(s: &Setup) {
+    let now = START + WITHDRAW_DELAY_SECS;
+    s.env.ledger().with_mut(|l| l.timestamp = now);
+    s.oracle.set_lastprice(&SPOT, &now);
+}
+
+#[test]
+fn free_liquidity_is_the_pool_less_what_positions_need() {
+    let s = setup();
+    assert_eq!(s.vault.free_liquidity(&Pool::Cash), POOL);
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
+    // The premium left and the assignment payout is reserved.
+    assert_eq!(s.vault.free_liquidity(&Pool::Cash), POOL - PREMIUM - CALL_OWED);
+    // The only underlying the vault holds is the call's escrow.
+    assert_eq!(s.vault.free_liquidity(&Pool::Underlying), 0);
+}
+
+#[test]
+fn a_withdrawal_pays_the_treasury_only_after_the_delay() {
+    let s = setup();
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
+    let free = POOL - PREMIUM - CALL_OWED;
+    s.vault.request_withdrawal(&Pool::Cash, &free);
+    assert_eq!(
+        s.vault.pending_withdrawal(&Pool::Cash),
+        Some(PendingWithdrawal { amount: free, executable_at: START + WITHDRAW_DELAY_SECS })
+    );
+
+    s.env.ledger().with_mut(|l| l.timestamp = START + WITHDRAW_DELAY_SECS - 1);
+    let early = s.vault.try_execute_withdrawal(&Pool::Cash);
+    assert_eq!(early, Err(Ok(soroban_sdk::Error::from_contract_error(super::Error::WithdrawalNotDue as u32))));
+    assert_eq!(s.cash.balance(&s.treasury), 0);
+
+    wait_out_withdrawal(&s);
+    assert_eq!(s.vault.execute_withdrawal(&Pool::Cash), free);
+    assert_eq!(s.cash.balance(&s.treasury), free);
+    assert_eq!(s.vault.pending_withdrawal(&Pool::Cash), None);
+    // What is left is exactly what the open call may still be owed.
+    assert_eq!(s.cash.balance(&s.vault.address), CALL_OWED);
+    assert_eq!(s.vault.free_liquidity(&Pool::Cash), 0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")] // InsufficientPool
+fn a_request_above_the_free_balance_is_refused() {
+    let s = setup();
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
+    s.vault
+        .request_withdrawal(&Pool::Cash, &(POOL - PREMIUM - CALL_OWED + 1));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")] // InsufficientPool
+fn escrowed_collateral_can_never_be_withdrawn() {
+    let s = setup();
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
+    // The vault holds 100 XLM, all of it the call writer's.
+    s.vault.request_withdrawal(&Pool::Underlying, &1);
+}
+
+#[test]
+fn positions_opened_during_the_delay_cap_the_payout() {
+    let s = setup();
+    s.vault.request_withdrawal(&Pool::Cash, &POOL);
+    // A position opened meanwhile takes its premium and reserves its payout.
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
+
+    wait_out_withdrawal(&s);
+    let paid = s.vault.execute_withdrawal(&Pool::Cash);
+    assert_eq!(paid, POOL - PREMIUM - CALL_OWED);
+    assert_eq!(s.cash.balance(&s.vault.address), CALL_OWED);
+    // And the position still settles in full if it assigns.
+    let id = 0;
+    s.oracle.set_price(&EXPIRY, &(STRIKE * 2));
+    s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 60);
+    s.vault.settle(&id);
+    assert_eq!(s.cash.balance(&s.writer), PREMIUM + CALL_OWED);
+}
+
+#[test]
+fn a_cancelled_withdrawal_cannot_be_executed() {
+    let s = setup();
+    s.vault.request_withdrawal(&Pool::Cash, &POOL);
+    s.vault.cancel_withdrawal(&Pool::Cash);
+    assert_eq!(s.vault.pending_withdrawal(&Pool::Cash), None);
+
+    wait_out_withdrawal(&s);
+    let refused = s.vault.try_execute_withdrawal(&Pool::Cash);
+    assert_eq!(refused, Err(Ok(soroban_sdk::Error::from_contract_error(super::Error::NoWithdrawal as u32))));
+    assert_eq!(s.cash.balance(&s.vault.address), POOL);
+}
+
+#[test]
+fn a_new_request_restarts_the_delay() {
+    let s = setup();
+    s.vault.request_withdrawal(&Pool::Cash, &1);
+    s.env.ledger().with_mut(|l| l.timestamp = START + 3600);
+    s.vault.request_withdrawal(&Pool::Cash, &POOL);
+    assert_eq!(
+        s.vault.pending_withdrawal(&Pool::Cash).unwrap().executable_at,
+        START + 3600 + WITHDRAW_DELAY_SECS
+    );
+    s.env.ledger().with_mut(|l| l.timestamp = START + WITHDRAW_DELAY_SECS);
+    assert!(s.vault.try_execute_withdrawal(&Pool::Cash).is_err());
+}
+
+#[test]
+fn a_withdrawal_is_announced_when_it_is_requested() {
+    let s = setup();
+    s.vault.request_withdrawal(&Pool::Cash, &POOL);
+    let want = ScVal::Symbol(ScSymbol("wd_req".try_into().unwrap()));
+    let announced = s.env.events().all().events().iter().any(|e| match &e.body {
+        ContractEventBody::V0(v) => v.topics.first() == Some(&want),
+    });
+    assert!(announced);
+}
+
+#[test]
+#[should_panic] // admin did not sign
+fn requesting_a_withdrawal_requires_the_admin() {
+    let s = setup();
+    s.env.mock_auths(&[MockAuth {
+        address: &s.writer,
+        invoke: &MockAuthInvoke {
+            contract: &s.vault.address,
+            fn_name: "request_withdrawal",
+            args: (Pool::Cash, POOL).into_val(&s.env),
+            sub_invokes: &[],
+        },
+    }]);
+    s.vault.request_withdrawal(&Pool::Cash, &POOL);
+}
+
+#[test]
+#[should_panic] // admin did not sign
+fn executing_a_withdrawal_requires_the_admin() {
+    let s = setup();
+    s.vault.request_withdrawal(&Pool::Cash, &POOL);
+    wait_out_withdrawal(&s);
+    s.env.mock_auths(&[MockAuth {
+        address: &s.writer,
+        invoke: &MockAuthInvoke {
+            contract: &s.vault.address,
+            fn_name: "execute_withdrawal",
+            args: (Pool::Cash,).into_val(&s.env),
+            sub_invokes: &[],
+        },
+    }]);
+    s.vault.execute_withdrawal(&Pool::Cash);
 }

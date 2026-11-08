@@ -197,6 +197,42 @@ export function settleableUnderlying(raw: unknown): UnderlyingAsset | null {
 }
 
 /**
+ * Instances a book has been moved off that may still hold open positions,
+ * from `VAULT_RETIRED_<SYMBOL>` (comma-separated, server-only).
+ *
+ * Replacing a book's instance must not take the old one out of the sweep: its
+ * open positions still settle there, against the same feed, and nothing else
+ * releases their collateral. Listing it here keeps it settled and indexed, so
+ * a migration does not have to wait for the old instance to drain.
+ */
+export function retiredVaults(asset: UnderlyingAsset): string[] {
+  const ids = (process.env[`VAULT_RETIRED_${asset.symbol}`] ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter((id) => id && id !== asset.contracts.vault)
+  return [...new Set(ids)]
+}
+
+/**
+ * Every instance the settlement sweep walks: each settleable book's current
+ * vault, then its retired ones. A retired instance is the same underlying with
+ * `contracts.vault` pointing at the old contract, so every read and `settle`
+ * goes to the instance the position actually lives in.
+ */
+export function settlementBooks(): UnderlyingAsset[] {
+  return settleableUnderlyings().flatMap((a) => [
+    a,
+    ...retiredVaults(a).map((vault) => ({ ...a, contracts: { ...a.contracts, vault } })),
+  ])
+}
+
+/** The settlement book whose instance is this contract id, current or retired. */
+export function settlementBookByVault(contractId: unknown): UnderlyingAsset | null {
+  if (typeof contractId !== 'string' || !contractId) return null
+  return settlementBooks().find((a) => a.contracts.vault === contractId) ?? null
+}
+
+/**
  * The underlying a request names. Absent means XLM — the only asset Tranche 1's
  * callers knew about, so an old client keeps working unchanged.
  *

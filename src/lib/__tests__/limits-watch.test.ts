@@ -35,8 +35,8 @@ vi.mock('@/lib/db', () => ({
   }),
 }))
 
-const { limitsChangeAlert, checkLimitsEvents } = await import('../monitor/limits-watch')
-const { parseLimitsEvent } = await import('../contract-events')
+const { limitsChangeAlert, checkLimitsEvents, withdrawalAlert } = await import('../monitor/limits-watch')
+const { parseLimitsEvent, parseWithdrawalEvent } = await import('../contract-events')
 const { underlying } = await import('../assets')
 
 const xlm = underlying('XLM')
@@ -231,5 +231,86 @@ describe('parseLimitsEvent', () => {
       contractId: { contractId: () => XLM_VAULT },
     }
     expect(parseLimitsEvent(raw)).toBeNull()
+  })
+})
+
+describe('withdrawals of free pool liquidity', () => {
+  // `Pool` has explicit discriminants, so it is a u32 on the wire.
+  const POOL = { Cash: 0, Underlying: 1 } as const
+  const raw = (name: string, poolName: keyof typeof POOL, value: xdr.ScVal): any => ({
+    topic: [nativeToScVal(name, { type: 'symbol' }), nativeToScVal(POOL[poolName], { type: 'u32' })],
+    value,
+    contractId: { contractId: () => XLM_VAULT },
+    ledger: 9,
+    ledgerClosedAt: '2026-11-08T00:00:00Z',
+    txHash: 'tx',
+  })
+
+  it('reads a request with its amount and the time it becomes executable', () => {
+    const w = parseWithdrawalEvent(
+      raw(
+        'wd_req',
+        'Cash',
+        xdr.ScVal.scvVec([
+          nativeToScVal(20_000_0000000n, { type: 'i128' }),
+          nativeToScVal(1_794_009_600n, { type: 'u64' }),
+        ]),
+      ),
+    )
+    expect(w).toMatchObject({
+      step: 'requested',
+      pool: 'cash',
+      amount: 20_000,
+      executableAt: new Date(1_794_009_600 * 1000).toISOString(),
+    })
+  })
+
+  it('reads an executed withdrawal and what it paid', () => {
+    const treasury = StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 7))
+    const w = parseWithdrawalEvent(
+      raw(
+        'withdraw',
+        'Underlying',
+        xdr.ScVal.scvVec([
+          nativeToScVal(treasury, { type: 'address' }),
+          nativeToScVal(9_000_0000000n, { type: 'i128' }),
+        ]),
+      ),
+    )
+    expect(w).toMatchObject({ step: 'executed', pool: 'underlying', amount: 9_000 })
+  })
+
+  it('ignores events that are not withdrawals', () => {
+    expect(parseWithdrawalEvent(raw('limits', 'Cash', xdr.ScVal.scvVoid()))).toBeNull()
+  })
+
+  it('is critical when a withdrawal is requested, and names the book', () => {
+    const a = withdrawalAlert(
+      [
+        {
+          contractId: XLM_VAULT,
+          ledger: 9,
+          at: '2026-11-08T00:00:00Z',
+          step: 'requested',
+          pool: 'cash',
+          amount: 100,
+          executableAt: '2026-11-09T00:00:00Z',
+        },
+      ],
+      [xlm],
+    )
+    expect(a?.severity).toBe('critical')
+    expect(a?.title).toBe('Vault pool withdrawal requested')
+    expect(a?.message).toContain('XLM at ledger 9')
+    expect(a?.message).toContain('executable from 2026-11-09T00:00:00Z')
+  })
+
+  it('only warns on a cancellation, and is quiet with nothing to say', () => {
+    expect(withdrawalAlert([], [xlm])).toBeNull()
+    const a = withdrawalAlert(
+      [{ contractId: XLM_VAULT, ledger: 9, at: 'now', step: 'cancelled', pool: 'cash' }],
+      [xlm],
+    )
+    expect(a?.severity).toBe('warning')
   })
 })

@@ -1,5 +1,5 @@
 import { sweepOnce } from '@/lib/settlement-sweep'
-import { positionKey } from '@/lib/settlement'
+import { bookLabel, positionKey } from '@/lib/settlement'
 
 /**
  * The settlement sweep, run by the application itself.
@@ -69,8 +69,8 @@ async function tick() {
     const r = await sweepOnce()
     const parts = r.books.map((b) =>
       b.error
-        ? `${b.underlying} scan failed (${b.error})`
-        : `${b.underlying} ${b.scan.scanned}/${b.scan.nextId} due ${b.due.length}`
+        ? `${bookLabel(b.underlying, b.vault)} scan failed (${b.error})`
+        : `${bookLabel(b.underlying, b.vault)} ${b.scan.scanned}/${b.scan.nextId} due ${b.due.length}`
     )
     parts.push(`settled ${r.settled.length}`, `failed ${r.failed.length}`)
     if (r.pricesRecorded.length > 0) parts.push(`prices recorded ${r.pricesRecorded.length}`)
@@ -84,7 +84,7 @@ async function tick() {
     // Keyed by book and id together: ids restart at 0 in every instance, so a
     // set of bare numbers would silence BTC's #3 because XLM's was reported.
     const fresh = r.books
-      .flatMap((b) => b.pastDeadline.map((id) => positionKey(b.underlying, id)))
+      .flatMap((b) => b.pastDeadline.map((id) => positionKey(b.underlying, id, b.vault)))
       .filter((key) => !reportedPermanent.has(key))
     if (fresh.length > 0) {
       console.error(
@@ -93,7 +93,7 @@ async function tick() {
     }
 
     for (const f of r.failed) {
-      const key = positionKey(f.underlying, f.id)
+      const key = positionKey(f.underlying, f.id, f.vault)
       if (f.permanent) {
         if (reportedPermanent.has(key)) continue
         reportedPermanent.add(key)

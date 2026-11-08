@@ -329,14 +329,24 @@ async function main() {
     if (stranded.length > 0) {
       console.log(`  stranded   : ${stranded.map((p) => `#${p.id} (expired ${p.expiry})`).join(', ')}`)
     }
-    if (live.length > 0) {
+    // Positions still open on the old instance are fine once it is retired:
+    // the sweep walks every instance in VAULT_RETIRED_<SYMBOL> and settles them
+    // where they were written. Without that entry they would be left behind.
+    const retiredKey = `VAULT_RETIRED_${symbol}`
+    const retired = (process.env[retiredKey] ?? '').split(',').map((s) => s.trim())
+    const open = live.map((p) => `#${p.id} (expiry ${p.expiry})`).join(', ')
+    if (live.length > 0 && !retired.includes(replacing)) {
       throw new Error(
-        `${replacing} still has ${live.length} position(s) that can settle: ` +
-          live.map((p) => `#${p.id} (expiry ${p.expiry})`).join(', ') +
-          `.\n  Halt quoting on ${symbol} with the breaker and let the sweep settle them before replacing the instance.`,
+        `${replacing} still has ${live.length} position(s) that can settle: ${open}.\n` +
+          `  Add it to ${retiredKey} (here and on the app) so the sweep keeps settling them, ` +
+          `or let them settle before replacing the instance.`,
       )
     }
-    console.log('  open       : none left to settle')
+    console.log(
+      live.length > 0
+        ? `  open       : ${open} — settled on the old instance via ${retiredKey}`
+        : '  open       : none left to settle',
+    )
   }
   if (!book.token) {
     throw new Error(`${symbol} has no collateral contract: set NEXT_PUBLIC_${symbol}_CONTRACT`)
@@ -352,7 +362,11 @@ async function main() {
   // admin is a constructor argument, not a signer here — which is just as well,
   // because the admin account is behind a 2-of-3 multisig and a single key
   // cannot source a transaction from it at all.
-  const deployer = Keypair.fromSecret(secretOf(process.env.VAULT_DEPLOY_KEY ?? 'lusty-runner'))
+  // VAULT_DEPLOY_SECRET is for a machine without the Stellar CLI; otherwise the
+  // key is read from the CLI's store by alias.
+  const deployer = Keypair.fromSecret(
+    process.env.VAULT_DEPLOY_SECRET || secretOf(process.env.VAULT_DEPLOY_KEY ?? 'lusty-runner'),
+  )
   console.log('→ deployer   :', deployer.publicKey())
 
   const config = await read(reference, 'config', deployer.publicKey())
@@ -464,7 +478,10 @@ async function main() {
   if (process.env[vaultEnvKey(symbol)]) {
     // The instance it replaces keeps its positions, and the indexer and the
     // settlement runner only reach it if it is still listed.
-    console.log(`\nand add the instance it replaces to NEXT_PUBLIC_VAULT_CONTRACTS: ${process.env[vaultEnvKey(symbol)]}`)
+    console.log(
+      `\nand add the instance it replaces to VAULT_RETIRED_${symbol}, so it stays settled and indexed: ` +
+        process.env[vaultEnvKey(symbol)],
+    )
   }
 }
 

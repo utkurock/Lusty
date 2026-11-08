@@ -159,7 +159,7 @@ Most losses are survivable because the contract holds the money, not the key.
 | Key | Lost or stolen → | Not at risk | Recovery |
 | --- | --- | --- | --- |
 | **Quoter** | Attacker can price new positions anywhere inside `max_premium_bps`, overpaying up to 20% of collateral that they must also supply. Bounded, and it costs them collateral to exploit | Every open position. All escrow. Settlement. The cash pool beyond the bounded overpayment | Admin adds a fresh quoter, then removes the compromised one. No redeploy, no interruption to writers |
-| **Admin** | One signer is not enough to act: 2-of-3 means a stolen key buys an attacker nothing on its own. Two signers together can widen `max_premium_bps` and appoint quoters, and combined with a quoter key that is a drain of the escrow via premiums | Collateral already escrowed, since tightening or widening a limit does not reach it. Settlement of existing positions | **One signer: rotate it out** with the surviving two, which is the whole reason for the third. **Two signers: none in-contract.** There is no `upgrade` entrypoint and no way to change the admin address, so recovery means deploying a new vault and migrating the pools |
+| **Admin** | One signer is not enough to act: 2-of-3 means a stolen key buys an attacker nothing on its own. Two signers together can widen `max_premium_bps` (binding 24h later) and appoint quoters, and combined with a quoter key that is a drain of the pools via premiums. On v5 they can also request a withdrawal of free pool liquidity, payable 24h later and only to the treasury | Collateral already escrowed, since tightening or widening a limit does not reach it, and every payout an open position has reserved, since a withdrawal is capped at the free balance when it executes. Settlement of existing positions | **One signer: rotate it out** with the surviving two, which is the whole reason for the third. **Two signers: none in-contract.** There is no `upgrade` entrypoint and no way to change the admin address, so recovery means deploying a new vault and migrating the pools |
 | **Treasury** | Attacker takes assigned collateral that has already been paid out to it | Everything still escrowed. Every open position | Change the treasury address, which needs a redeploy, since it is set at construction |
 | **Runner** | Attacker can settle positions, which anyone can already do, and spend the account's fee balance | Nothing else. It has no privilege to steal | Fund a new account, replace `SETTLE_RUNNER_SECRET`. Meanwhile settlement still works: writers or anyone else can call `settle` |
 | **`CRON_SECRET`** | Attacker can trigger the monitor and settlement sweeps | Nothing. Both endpoints do only what anyone could do | Rotate the value |
@@ -169,6 +169,11 @@ The admin key is the worst case. The contract has no `upgrade` entrypoint
 (deliberately, deferred to Tranche 3) and no way to reassign `admin`, so nobody,
 including us, can change its behaviour under an existing position, and admin
 key management has to be right the first time. That is what U3 is for.
+
+The withdrawal path added in v5 does not change this. It is not an upgrade:
+it can only send the treasury what no position needs, both steps need the
+admin, and the day between them is announced by a `wd_req` event the monitor
+alerts on, which is the time to cancel a request nobody meant.
 
 A stolen quoter key is a bounded overpayment, not a drain: the attacker escrows
 the collateral, and positions still settle honestly to the owner. The pricing

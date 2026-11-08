@@ -13,10 +13,14 @@ deposit(owner, amount, strike, expiry, premium) → id     covered-call alias fo
 settle(id) → "kept" | "assigned"          permissionless, oracle-decided
 fund(from, amount)                        cash pool top-up, permissionless
 fund_underlying(from, amount)             underlying pool top-up, permissionless
-set_limits(limits)                        admin-only
+set_limits(limits)                        admin-only, a raise waits 24h
+request_withdrawal(pool, amount)          admin-only (v5), free liquidity only
+execute_withdrawal(pool) → amount         admin-only, 24h after the request, to the treasury
+cancel_withdrawal(pool)                   admin-only
 
 position(id), position_count(owner), positions_of(owner, start, limit)
 stats(), escrowed(kind), owed(kind), exposure(kind, expiry), limits(), config()
+free_liquidity(pool), pending_withdrawal(pool)                                (v5)
 ```
 
 ### Two legs, one machine
@@ -96,6 +100,18 @@ changes for them until a v5 instance is deployed and the books are pointed at it
   setting the limits again. A limit raised and restored between two readings
   therefore never takes effect, and the monitor alerts a day before a raise
   can be used.
+- **Free pool liquidity can be withdrawn, a day later.** Before v5 `fund` was
+  one-way, so every migration to a new instance left the old pools locked for
+  good. `request_withdrawal(pool, amount)` schedules a withdrawal of at most the
+  pool's free balance: the balance less the other kind's escrow and this
+  kind's outstanding payouts, which is exactly the margin the solvency guard
+  checks. A `wd_req` event announces it, and `execute_withdrawal` pays it
+  `WITHDRAW_DELAY_SECS` (24h) later, always to the treasury, capped again by
+  the free balance at that moment so positions opened in between keep what
+  they reserved. Collateral and reserved payouts can never leave this way.
+  Both steps need the admin; `cancel_withdrawal` drops a request, and a new
+  request replaces the old one and restarts the delay. The monitor alerts on
+  every step (`WithdrawalNotDue` 22, `NoWithdrawal` 23).
 
 ### What the contract refuses
 
@@ -144,10 +160,11 @@ price, and the put leg keeps trading through a feed outage. A call cannot be
 written against a stale or empty feed: with no current price there is no
 honest way to value what is being escrowed, so the write fails closed.
 
-`admin` sets the risk limits and maintains the quoter set, and that is the whole
-of its power: it cannot move collateral, price an option, or settle a position,
-and tightening a limit does not reach collateral already escrowed under the old
-one.
+`admin` sets the risk limits, maintains the quoter set and, on v5, can return
+free pool liquidity to the treasury a day after announcing it. That is the
+whole of its power: it cannot move collateral or a reserved payout, price an
+option, or settle a position, and tightening a limit does not reach collateral
+already escrowed under the old one.
 
 `add_quoter` and `remove_quoter` are how a pricing key is rotated or revoked.
 Rotation is add-then-remove: the contract refuses to empty the set (`LastQuoter`),
@@ -351,7 +368,8 @@ The v3 instance is retired but its pools are not recoverable: `fund` and
 `fund_underlying` are one-way, and collateral leaves only through `settle`. A
 retired instance keeps whatever is left in it, which is the standing cost of
 having no `upgrade` entrypoint — worth pricing in before a deployment, not
-after.
+after. v4 is the same. From v5 on, a retired instance's free liquidity can be
+returned to the treasury with `request_withdrawal` / `execute_withdrawal`.
 
 ### Permissionless settlement, verified on chain (2026-07-30)
 

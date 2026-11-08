@@ -88,6 +88,12 @@ const UNPRICED_RELEASE_SECS: u64 = 30 * 86_400;
 /// act on a raise the admin did not mean to make.
 pub const LIMIT_RAISE_DELAY_SECS: u64 = 86_400;
 
+/// How long a withdrawal of free pool liquidity waits between being requested
+/// and being executable. Same reasoning as a limit raise: it is announced by a
+/// `wd_req` event, anyone watching has a day to see it, and the admin can
+/// cancel it in that time.
+pub const WITHDRAW_DELAY_SECS: u64 = 86_400;
+
 /// Ledger close time assumed when converting seconds into TTL ledgers. Shorter
 /// than the network's real close time, so the TTLs it yields err long.
 const LEDGER_SECS: u64 = 5;
@@ -127,6 +133,10 @@ pub enum Error {
     InvalidTreasury = 20,
     /// The oracle reports a scale or a resolution the vault cannot work in.
     InvalidOracle = 21,
+    /// A withdrawal was executed before its delay ran out.
+    WithdrawalNotDue = 22,
+    /// No withdrawal is scheduled for this pool.
+    NoWithdrawal = 23,
 }
 
 #[contracttype]
@@ -233,6 +243,37 @@ impl Limits {
     }
 }
 
+/// One of the vault's two pools of liquidity: cash (premiums, and what a call
+/// assignment pays) and the underlying (what a put assignment delivers).
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Pool {
+    Cash = 0,
+    Underlying = 1,
+}
+
+impl Pool {
+    /// The kind whose assignments this pool pays out. The pool's free balance
+    /// is what is left after that kind's obligations and the other kind's
+    /// escrow, which sits in the same token.
+    fn pays(&self) -> Kind {
+        match self {
+            Pool::Cash => Kind::Call,
+            Pool::Underlying => Kind::Put,
+        }
+    }
+}
+
+/// A withdrawal the admin requested, waiting out `WITHDRAW_DELAY_SECS`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingWithdrawal {
+    /// The most it will pay; capped again by the free balance when executed.
+    pub amount: i128,
+    /// Unix seconds from which it may be executed.
+    pub executable_at: u64,
+}
+
 /// Which option the writer is selling. Both legs share the escrow, premium and
 /// oracle-settlement machinery; they differ only in the token escrowed and the
 /// side of the strike that assigns.
@@ -329,6 +370,8 @@ enum DataKey {
     /// The price every position on this expiry settles at, at the pinned
     /// scale, recorded the first time anyone reads it from the oracle.
     ExpiryPrice(u64),
+    /// A withdrawal of this pool's free liquidity, scheduled by the admin.
+    PendingWithdrawal(Pool),
 }
 
 /// Vault-wide totals, in one read, for verifying solvency from outside. The
@@ -532,6 +575,91 @@ impl LustyVault {
     pub fn fund_underlying(env: Env, from: Address, amount: i128) {
         let cfg: Config = env.storage().instance().get(&DataKey::Config).unwrap();
         Self::fund_pool(&env, &cfg.token, symbol_short!("under"), from, amount);
+    }
+
+    /// Schedule a withdrawal of a pool's free liquidity to the treasury.
+    /// Admin-only, and only what no position needs: the pool's balance less
+    /// the other kind's escrow and this kind's outstanding payouts, which is
+    /// exactly the margin the solvency guard checks. Collateral and reserved
+    /// payouts can never leave this way.
+    ///
+    /// Nothing moves now. The request is announced by a `wd_req` event and
+    /// becomes executable `WITHDRAW_DELAY_SECS` later, so a vault that is
+    /// replaced by a new instance can hand its idle liquidity back instead of
+    /// keeping it forever, without the admin being able to empty a pool
+    /// unseen. A new request replaces the pending one and restarts the delay.
+    pub fn request_withdrawal(env: Env, pool: Pool, amount: i128) {
+        let cfg: Config = env.storage().instance().get(&DataKey::Config).unwrap();
+        cfg.admin.require_auth();
+        if amount <= 0 {
+            panic_with_error!(&env, Error::InvalidAmount);
+        }
+        if amount > Self::free_in(&env, &cfg, pool.pays()) {
+            panic_with_error!(&env, Error::InsufficientPool);
+        }
+        let executable_at = env.ledger().timestamp() + WITHDRAW_DELAY_SECS;
+        env.storage().instance().set(
+            &DataKey::PendingWithdrawal(pool),
+            &PendingWithdrawal { amount, executable_at },
+        );
+        Self::extend_instance(&env);
+        env.events()
+            .publish((symbol_short!("wd_req"), pool), (amount, executable_at));
+    }
+
+    /// Drop a scheduled withdrawal. Admin-only.
+    pub fn cancel_withdrawal(env: Env, pool: Pool) {
+        let cfg: Config = env.storage().instance().get(&DataKey::Config).unwrap();
+        cfg.admin.require_auth();
+        let key = DataKey::PendingWithdrawal(pool);
+        if !env.storage().instance().has(&key) {
+            panic_with_error!(&env, Error::NoWithdrawal);
+        }
+        env.storage().instance().remove(&key);
+        env.events().publish((symbol_short!("wd_cancel"), pool), ());
+    }
+
+    /// Pay out a scheduled withdrawal once its delay has run. Admin-only, and
+    /// always to the treasury. The free balance is read again here and caps
+    /// the payout: positions opened during the delay keep what they reserved.
+    /// Returns the amount paid.
+    pub fn execute_withdrawal(env: Env, pool: Pool) -> i128 {
+        let cfg: Config = env.storage().instance().get(&DataKey::Config).unwrap();
+        cfg.admin.require_auth();
+        let key = DataKey::PendingWithdrawal(pool);
+        let pending: PendingWithdrawal = env
+            .storage()
+            .instance()
+            .get(&key)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NoWithdrawal));
+        if env.ledger().timestamp() < pending.executable_at {
+            panic_with_error!(&env, Error::WithdrawalNotDue);
+        }
+        let amount = pending.amount.min(Self::free_in(&env, &cfg, pool.pays()));
+        if amount <= 0 {
+            panic_with_error!(&env, Error::InsufficientPool);
+        }
+        env.storage().instance().remove(&key);
+        token::Client::new(&env, pool.pays().payout(&cfg)).transfer(
+            &env.current_contract_address(),
+            &cfg.treasury,
+            &amount,
+        );
+        Self::extend_instance(&env);
+        env.events()
+            .publish((symbol_short!("withdraw"), pool), (cfg.treasury, amount));
+        amount
+    }
+
+    /// The withdrawal scheduled for this pool, if any.
+    pub fn pending_withdrawal(env: Env, pool: Pool) -> Option<PendingWithdrawal> {
+        env.storage().instance().get(&DataKey::PendingWithdrawal(pool))
+    }
+
+    /// What could leave this pool without touching anything a position needs.
+    pub fn free_liquidity(env: Env, pool: Pool) -> i128 {
+        let cfg: Config = env.storage().instance().get(&DataKey::Config).unwrap();
+        Self::free_in(&env, &cfg, pool.pays()).max(0)
     }
 
     /// Write a covered call — a thin wrapper over [`Self::open`] for the leg
@@ -1085,11 +1213,17 @@ impl LustyVault {
     /// collateral, which is held for its writers and must not be lent against
     /// — hence `balance - escrowed(opposite)` rather than the raw balance.
     fn require_solvent(env: &Env, cfg: &Config, kind: Kind) {
-        let balance = token::Client::new(env, kind.payout(cfg)).balance(&env.current_contract_address());
-        let free = balance - Self::escrow_of(env, kind.opposite());
-        if free < Self::owed_of(env, kind) {
+        if Self::free_in(env, cfg, kind) < 0 {
             panic_with_error!(env, Error::InsufficientPool);
         }
+    }
+
+    /// The payout token's balance left once the other kind's escrow (held in
+    /// the same token) and every payout `kind` may still owe are set aside.
+    /// Negative means the vault is short; `require_solvent` refuses that.
+    fn free_in(env: &Env, cfg: &Config, kind: Kind) -> i128 {
+        let balance = token::Client::new(env, kind.payout(cfg)).balance(&env.current_contract_address());
+        balance - Self::escrow_of(env, kind.opposite()) - Self::owed_of(env, kind)
     }
 
     fn escrow_of(env: &Env, kind: Kind) -> i128 {

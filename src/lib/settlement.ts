@@ -2,6 +2,7 @@ import { Keypair } from '@stellar/stellar-sdk'
 import { ORACLE_HISTORY_SECS } from './oracle-window'
 import {
   settleableUnderlying,
+  settlementBookByVault,
   type UnderlyingAsset,
   type UnderlyingSymbol,
 } from './assets'
@@ -56,8 +57,19 @@ export { ORACLE_HISTORY_SECS }
  * and a different one in BTC's. Anything that remembers a position — a report,
  * a retry, a "do not warn about this twice" set — has to key on both.
  */
-export function positionKey(underlying: UnderlyingSymbol, id: number): string {
-  return `${underlying}#${id}`
+export function positionKey(underlying: UnderlyingSymbol, id: number, vault?: string): string {
+  return `${bookLabel(underlying, vault)}#${id}`
+}
+
+/**
+ * A book's name: the symbol for its current instance, the symbol and a short
+ * contract id for a retired one. A retired instance numbers from 0 too, so its
+ * #29 is not the current book's #29.
+ */
+export function bookLabel(underlying: UnderlyingSymbol, vault?: string): string {
+  const current = settleableUnderlying(underlying)?.contracts.vault
+  if (!vault || vault === current) return underlying
+  return `${underlying}@${vault.slice(0, 4)}…${vault.slice(-4)}`
 }
 
 export interface SettlementCandidate {
@@ -65,6 +77,9 @@ export interface SettlementCandidate {
   /** The book this id belongs to. Travels with the candidate so a settlement
    *  cannot be submitted against the instance that happened to be default. */
   underlying: UnderlyingSymbol
+  /** The instance the position lives in: the book's current vault or a
+   *  retired one. `settle` goes here, never to whatever is current. */
+  vault: string
   owner: string
   side: OptionSide
   strike: number
@@ -79,6 +94,8 @@ export interface SettlementCandidate {
 export interface ScanResult {
   /** Which book was walked. Every id below is scoped to it. */
   underlying: UnderlyingSymbol
+  /** The instance walked, current or retired. */
+  vault: string
   /** First id examined this run. */
   cursor: number
   /** How many ids were read. */
@@ -151,6 +168,7 @@ export async function scanForSettlement(opts: {
       candidates.push({
         id: p.id,
         underlying: asset.symbol,
+        vault: asset.contracts.vault,
         owner: p.owner,
         side: p.side,
         strike: p.strike,
@@ -160,7 +178,7 @@ export async function scanForSettlement(opts: {
         pastDeadline,
       })
     } catch (err) {
-      console.warn(`settlement: could not read ${positionKey(asset.symbol, id)}`, err)
+      console.warn(`settlement: could not read ${positionKey(asset.symbol, id, asset.contracts.vault)}`, err)
       unreadable.push(id)
       if (firstOpen === null) firstOpen = id
     }
@@ -169,6 +187,7 @@ export async function scanForSettlement(opts: {
   const scanned = Math.max(0, end - cursor)
   return {
     underlying: asset.symbol,
+    vault: asset.contracts.vault,
     cursor,
     scanned,
     nextId,
@@ -184,6 +203,7 @@ export async function scanForSettlement(opts: {
 export interface SettlementOutcome {
   id: number
   underlying: UnderlyingSymbol
+  vault: string
   txHash: string
   outcome: string
 }
@@ -191,6 +211,7 @@ export interface SettlementOutcome {
 export interface SettlementFailure {
   id: number
   underlying: UnderlyingSymbol
+  vault: string
   error: string
   /**
    * The oracle can no longer price this expiry, so no later run will do
@@ -204,7 +225,7 @@ export interface SettlementRun {
   settled: SettlementOutcome[]
   failed: SettlementFailure[]
   /** Candidates left for the next run because the submit cap was reached. */
-  deferred: { id: number; underlying: UnderlyingSymbol }[]
+  deferred: { id: number; underlying: UnderlyingSymbol; vault: string }[]
   /**
    * Expiries whose price this run wrote onto a v5 instance, because a position
    * on them failed to settle while the oracle still had the reading.
@@ -238,7 +259,7 @@ export function resetSettlementMemory(): void {
 export function prioritize(
   candidates: SettlementCandidate[],
   failedBefore: (c: SettlementCandidate) => number = (c) =>
-    failures.get(positionKey(c.underlying, c.id)) ?? 0,
+    failures.get(positionKey(c.underlying, c.id, c.vault)) ?? 0,
 ): SettlementCandidate[] {
   return candidates
     .map((c, i) => ({ c, i, f: failedBefore(c) }))
@@ -275,7 +296,7 @@ export async function runSettlement(
   const take = ordered.slice(0, cap)
   const deferred = ordered
     .slice(cap)
-    .map((c) => ({ id: c.id, underlying: c.underlying }))
+    .map((c) => ({ id: c.id, underlying: c.underlying, vault: c.vault }))
 
   const settled: SettlementOutcome[] = []
   const failed: SettlementFailure[] = []
@@ -285,26 +306,28 @@ export async function runSettlement(
     // book cannot be resolved is refused: submitting it would settle whatever
     // position happens to hold that id in XLM's vault, against XLM's feed and
     // XLM's price — which is not a degraded settlement, it is somebody else's.
-    const asset = settleableUnderlying(c.underlying)
-    if (!asset) {
+    const asset = settlementBookByVault(c.vault)
+    if (!asset || asset.symbol !== c.underlying) {
       failed.push({
         id: c.id,
         underlying: c.underlying,
-        error: `${c.underlying} has no settleable vault — refusing rather than settling elsewhere`,
+        vault: c.vault,
+        error: `${c.underlying} has no settleable vault ${c.vault} — refusing rather than settling elsewhere`,
         permanent: true,
       })
       continue
     }
     try {
       const { txHash, outcome } = await settlePosition(c.id, signer, asset)
-      settled.push({ id: c.id, underlying: c.underlying, txHash, outcome })
-      failures.delete(positionKey(c.underlying, c.id))
+      settled.push({ id: c.id, underlying: c.underlying, vault: c.vault, txHash, outcome })
+      failures.delete(positionKey(c.underlying, c.id, c.vault))
     } catch (err: any) {
-      const key = positionKey(c.underlying, c.id)
+      const key = positionKey(c.underlying, c.id, c.vault)
       failures.set(key, (failures.get(key) ?? 0) + 1)
       failed.push({
         id: c.id,
         underlying: c.underlying,
+        vault: c.vault,
         error: err?.message ?? 'unknown',
         permanent: c.pastDeadline,
       })
@@ -320,10 +343,10 @@ export async function runSettlement(
   const seen = new Set<string>()
   for (const f of failed) {
     if (f.permanent) continue
-    const c = take.find((t) => t.id === f.id && t.underlying === f.underlying)
-    const asset = c && settleableUnderlying(c.underlying)
+    const c = take.find((t) => t.id === f.id && t.vault === f.vault)
+    const asset = c && settlementBookByVault(c.vault)
     if (!c || !asset) continue
-    const key = `${c.underlying}@${c.expiry.getTime()}`
+    const key = `${c.vault}@${c.expiry.getTime()}`
     if (seen.has(key)) continue
     seen.add(key)
     try {

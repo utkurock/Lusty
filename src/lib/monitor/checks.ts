@@ -3,16 +3,17 @@ import { getPool, ensureSchema } from '@/lib/db'
 import {
   enabledUnderlyings,
   settleableUnderlyings,
+  settlementBooks,
   type UnderlyingAsset,
 } from '@/lib/assets'
-import { scanForSettlement, positionKey } from '@/lib/settlement'
+import { scanForSettlement, positionKey, bookLabel } from '@/lib/settlement'
 import { computeOpenBuckets, callEpochCap } from '@/lib/vault-state'
 import { getVaultStats } from '@/lib/vault-contract'
 import { LUSD_DISTRIBUTOR } from '@/lib/lusd'
 import { inFlight } from '@/lib/routing/budget'
 import { summarise } from '@/lib/routing/journal'
 import type { Alert } from './notify'
-import { checkLimitsEvents } from './limits-watch'
+import { checkLimitsEvents, checkWithdrawalEvents } from './limits-watch'
 
 /**
  * Risk-monitoring checks (P1-7). Each check is independent and best-effort:
@@ -297,7 +298,9 @@ async function checkVolSpike(asset: UnderlyingAsset): Promise<Alert | null> {
  * collateral needs a decision, and no amount of retrying will produce one.
  */
 async function checkSettlementBacklog(asset: UnderlyingAsset): Promise<Alert | null> {
-  const unit = asset.symbol
+  // A retired instance is named with its contract, so its alert is not
+  // mistaken for the book's current one.
+  const unit = bookLabel(asset.symbol, asset.contracts.vault)
   try {
     const scan = await scanForSettlement({ asset })
     if (scan.candidates.length === 0) return null
@@ -313,7 +316,7 @@ async function checkSettlementBacklog(asset: UnderlyingAsset): Promise<Alert | n
           `${stranded.length} expired ${unit} position(s) are past the oracle's history window. ` +
           `The contract can no longer price them, there is no admin path to release escrow, ` +
           `and their collateral is locked permanently. ` +
-          `${stranded.map((id) => positionKey(unit, id)).join(', ')}.`,
+          `${stranded.map((id) => positionKey(asset.symbol, id, asset.contracts.vault)).join(', ')}.`,
         fields: [
           { label: 'underlying', value: unit },
           { label: 'stranded', value: String(stranded.length) },
@@ -444,8 +447,10 @@ export async function runMonitorChecks(): Promise<Alert[]> {
     ...written.map((a) => checkVolSpike(a)),
     ...written.map((a) => checkRouting(a)),
     ...held.map((a) => checkSolvency(a)),
-    ...held.map((a) => checkSettlementBacklog(a)),
+    // Retired instances too: their open positions still settle there.
+    ...settlementBooks().map((a) => checkSettlementBacklog(a)),
     checkLimitsEvents(),
+    checkWithdrawalEvents(),
   ])
   return settled.filter((a): a is Alert => a !== null)
 }

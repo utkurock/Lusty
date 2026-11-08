@@ -1,6 +1,11 @@
 import { getPool, ensureSchema } from '@/lib/db'
 import { allUnderlyings, type UnderlyingAsset } from '@/lib/assets'
-import { scanLimitsChanges, type LimitsChange } from '@/lib/contract-events'
+import {
+  scanLimitsChanges,
+  scanWithdrawals,
+  type LimitsChange,
+  type WithdrawalEvent,
+} from '@/lib/contract-events'
 import { resetLimitsCache } from '@/lib/vault-limits'
 import type { Alert } from './notify'
 
@@ -101,17 +106,17 @@ export function limitsChangeAlert(
   }
 }
 
-async function readCursor(): Promise<string | undefined> {
+async function readCursor(name = CURSOR_NAME): Promise<string | undefined> {
   await ensureSchema()
-  const { rows } = await getPool().query(`select cursor from event_cursors where name = $1`, [CURSOR_NAME])
+  const { rows } = await getPool().query(`select cursor from event_cursors where name = $1`, [name])
   return rows[0]?.cursor ?? undefined
 }
 
-async function writeCursor(cursor: string): Promise<void> {
+async function writeCursor(cursor: string, name = CURSOR_NAME): Promise<void> {
   await getPool().query(
     `insert into event_cursors (name, cursor) values ($1, $2)
      on conflict (name) do update set cursor = excluded.cursor, updated_at = now()`,
-    [CURSOR_NAME, cursor],
+    [name, cursor],
   )
 }
 
@@ -136,6 +141,67 @@ export async function checkLimitsEvents(): Promise<Alert | null> {
         (cursor
           ? 'If the cursor has aged out of the RPC retention window, delete it from event_cursors to restart from the lookback.'
           : ''),
+    }
+  }
+}
+
+// Withdrawals of free pool liquidity (v5). The other thing the admin can do
+// that moves money, so it is watched the same way: a request is announced a
+// day before it can be executed, and that day is the time to cancel one
+// nobody meant. Retired instances are watched too, since draining one is the
+// reason the call exists.
+
+const WITHDRAWALS_CURSOR = 'vault-withdrawals'
+
+/** The alert for a batch of withdrawal steps, or null when there were none. */
+export function withdrawalAlert(
+  withdrawals: WithdrawalEvent[],
+  books: UnderlyingAsset[],
+): Alert | null {
+  if (withdrawals.length === 0) return null
+  const byVault = new Map(books.filter((b) => b.contracts.vault).map((b) => [b.contracts.vault, b]))
+  const lines = withdrawals.map((w) => {
+    const name = byVault.get(w.contractId)?.symbol ?? `instance ${w.contractId.slice(0, 8)}…`
+    const what =
+      w.step === 'requested'
+        ? `withdrawal of up to ${w.amount} from the ${w.pool} pool requested, executable from ${w.executableAt}`
+        : w.step === 'executed'
+          ? `${w.amount} withdrawn from the ${w.pool} pool to the treasury`
+          : `withdrawal from the ${w.pool} pool cancelled`
+    return `${name} at ledger ${w.ledger}: ${what}`
+  })
+  const moving = withdrawals.some((w) => w.step !== 'cancelled')
+  return {
+    severity: moving ? 'critical' : 'warning',
+    title: withdrawals.some((w) => w.step === 'requested')
+      ? 'Vault pool withdrawal requested'
+      : moving
+        ? 'Vault pool withdrawal executed'
+        : 'Vault pool withdrawal cancelled',
+    message:
+      `${lines.join('. ')}. Only free liquidity can leave, and only to the treasury; ` +
+      'a request nobody announced should be cancelled before it becomes executable.',
+    fields: withdrawals.map((w, i) => ({
+      label: `withdrawal_${i + 1}`,
+      value: `${w.step} ${w.at} tx ${w.txHash ?? '—'}`,
+    })),
+  }
+}
+
+export async function checkWithdrawalEvents(): Promise<Alert | null> {
+  let cursor: string | undefined
+  try {
+    cursor = await readCursor(WITHDRAWALS_CURSOR)
+    const scan = await scanWithdrawals(cursor)
+    if (scan.cursor && scan.cursor !== cursor) await writeCursor(scan.cursor, WITHDRAWALS_CURSOR)
+    return withdrawalAlert(scan.withdrawals, allUnderlyings())
+  } catch (e: any) {
+    return {
+      severity: 'critical',
+      title: 'Vault withdrawal watch failed',
+      message:
+        `Could not read withdrawal events: ${e?.message ?? 'unknown'}. ` +
+        'Withdrawals requested since the last run are unknown until this recovers.',
     }
   }
 }

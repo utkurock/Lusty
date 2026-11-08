@@ -9,7 +9,7 @@ import {
 import {
   settleableUnderlying,
   settleableUnderlyings,
-  underlyingByVault,
+  settlementBookByVault,
 } from '@/lib/assets'
 import { getRecentDeposits } from '@/lib/db-queries'
 import { clientRateLimit } from '@/lib/rate-limit'
@@ -149,7 +149,7 @@ export async function GET(req: Request) {
             // Read from the instance that emitted the event, not from the one
             // this application started with: the id is only meaningful there,
             // and the payout is named in that book's own token.
-            const asset = underlyingByVault(e.contractId)
+            const asset = settlementBookByVault(e.contractId)
             if (!asset) return
             const p = await getPosition(Number(e.id), asset)
             e.side = p.side

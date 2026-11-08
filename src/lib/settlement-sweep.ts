@@ -1,6 +1,6 @@
 import { Keypair } from '@stellar/stellar-sdk'
 import {
-  settleableUnderlyings,
+  settlementBooks,
   type UnderlyingAsset,
   type UnderlyingSymbol,
 } from '@/lib/assets'
@@ -33,6 +33,8 @@ import {
 /** One underlying's half of a sweep. */
 export interface BookSweep {
   underlying: UnderlyingSymbol
+  /** The instance this row walked: the book's current vault or a retired one. */
+  vault: string
   scan: {
     cursor: number
     scanned: number
@@ -67,7 +69,7 @@ export interface SweepReport {
   /** Across every book; each entry names the one it came from. */
   settled: SettlementOutcome[]
   failed: SettlementFailure[]
-  deferred: { id: number; underlying: UnderlyingSymbol }[]
+  deferred: { id: number; underlying: UnderlyingSymbol; vault: string }[]
   pricesRecorded: { underlying: UnderlyingSymbol; expiry: string }[]
   /** Set when the sweep could only scan — no signing key configured. */
   note?: string
@@ -77,7 +79,8 @@ export interface SweepReport {
 // settled, and settlement is final, so a sweep may start here instead of at 0.
 // In-process only: a restart starts again from 0, which is slower and not
 // wrong.
-const lowWater = new Map<UnderlyingSymbol, number>()
+// Keyed by instance: a retired vault and its replacement are walked apart.
+const lowWater = new Map<string, number>()
 
 // Per book, where the next sweep picks up. Not the same thing as the floor
 // above: a run that spends its budget stops partway, and restarting at the
@@ -86,7 +89,7 @@ const lowWater = new Map<UnderlyingSymbol, number>()
 // position low in the book was enough to pin every sweep to its first 2000
 // ids. So a run resumes where the last one stopped, and only wraps back to the
 // floor once it has reached the end.
-const resume = new Map<UnderlyingSymbol, number>()
+const resume = new Map<string, number>()
 
 /** Forget every book's low-water mark and resume point. Tests only. */
 export function resetSweepMemory(): void {
@@ -107,8 +110,9 @@ async function scanBook(
   pageSize: number,
   budget: number,
 ): Promise<BookScan> {
-  const floor = lowWater.get(asset.symbol) ?? 0
-  const start = Math.max(floor, resume.get(asset.symbol) ?? floor)
+  const book = asset.contracts.vault
+  const floor = lowWater.get(book) ?? 0
+  const start = Math.max(floor, resume.get(book) ?? floor)
   let cursor: number | null = start
   let scanned = 0
   let firstOpen: number | null = null
@@ -137,9 +141,9 @@ async function scanBook(
   const nextCursor = last?.nextCursor ?? null
   // Advance only over ids read and found settled. A run that started above the
   // floor did not read the ids below it, so it has nothing to say about them.
-  if (start === floor) lowWater.set(asset.symbol, firstOpen ?? nextCursor ?? nextId)
+  if (start === floor) lowWater.set(book, firstOpen ?? nextCursor ?? nextId)
   // Carry on past the budget next time; wrap to the floor once at the end.
-  resume.set(asset.symbol, nextCursor ?? lowWater.get(asset.symbol) ?? 0)
+  resume.set(book, nextCursor ?? lowWater.get(book) ?? 0)
   if (nextCursor !== null) {
     console.warn(
       `settlement-sweep: ${asset.symbol} scan stopped at ${nextCursor} of ${nextId} ` +
@@ -149,6 +153,7 @@ async function scanBook(
 
   return {
     underlying: asset.symbol,
+    vault: book,
     cursor: start,
     scanned,
     nextId,
@@ -184,7 +189,10 @@ export async function sweepOnce(opts: {
   //
   // One book failing to scan must not hide the others. A vault whose RPC is
   // unwell says so in its own row and the rest of the sweep still runs.
-  for (const asset of settleableUnderlyings()) {
+  //
+  // Retired instances are walked too (`VAULT_RETIRED_<SYMBOL>`): replacing a
+  // book's vault leaves its open positions where they were written.
+  for (const asset of settlementBooks()) {
     try {
       const pageSize = opts.scanLimit ?? DEFAULT_SCAN_LIMIT
       const scan: BookScan =
@@ -194,6 +202,7 @@ export async function sweepOnce(opts: {
       candidates.push(...scan.candidates)
       books.push({
         underlying: scan.underlying,
+        vault: scan.vault,
         scan: {
           cursor: scan.cursor,
           scanned: scan.scanned,
@@ -216,6 +225,7 @@ export async function sweepOnce(opts: {
     } catch (err: any) {
       books.push({
         underlying: asset.symbol,
+        vault: asset.contracts.vault,
         scan: {
           cursor: opts.from ?? 0,
           scanned: 0,
@@ -252,7 +262,7 @@ export async function sweepOnce(opts: {
     // so rather than reporting a clean sweep that never happened.
     return {
       ...report,
-      deferred: candidates.map((c) => ({ id: c.id, underlying: c.underlying })),
+      deferred: candidates.map((c) => ({ id: c.id, underlying: c.underlying, vault: c.vault })),
       note: 'SETTLE_RUNNER_SECRET not configured — scanned only, nothing submitted',
     }
   }

@@ -9,7 +9,7 @@
 // Reads only — getEvents submits nothing, signs nothing, costs nothing.
 
 import { rpc as sorobanRpc, nativeToScVal, scValToNative, xdr } from '@stellar/stellar-sdk'
-import { vaultInstances } from './assets'
+import { retiredVaults, settleableUnderlyings, vaultInstances } from './assets'
 
 const RPC_URL =
   process.env.SOROBAN_RPC_URL ?? 'https://soroban-testnet.stellar.org'
@@ -23,7 +23,15 @@ const RETIRED_VAULT_IDS = (process.env.NEXT_PUBLIC_VAULT_CONTRACTS ?? '')
   .map((s) => s.trim())
   .filter(Boolean)
 
-const VAULT_IDS = [...new Set([...vaultInstances(), ...RETIRED_VAULT_IDS])]
+// Instances a book was moved off (`VAULT_RETIRED_<SYMBOL>`) are still settled
+// by the sweep, so their settlements belong in the index as well.
+const VAULT_IDS = [
+  ...new Set([
+    ...vaultInstances(),
+    ...settleableUnderlyings().flatMap((a) => retiredVaults(a)),
+    ...RETIRED_VAULT_IDS,
+  ]),
+]
 
 // A single getEvents call scans a fixed slice of ledgers — 10,000 on the public
 // RPC — and returns whatever it found in THAT slice, plus a cursor to continue
@@ -488,4 +496,94 @@ export async function scanLimitsChanges(
     .map(parseLimitsEvent)
     .filter((c): c is LimitsChange => c !== null)
   return { changes, cursor: page.cursor ?? cursor }
+}
+
+/** A step in withdrawing a pool's free liquidity to the treasury (v5). */
+export interface WithdrawalEvent {
+  contractId: string
+  ledger: number
+  at: string
+  txHash?: string
+  step: 'requested' | 'cancelled' | 'executed'
+  pool: 'cash' | 'underlying'
+  /** Requested: the most it will pay. Executed: what it paid. */
+  amount?: number
+  /** Requested only: when it may be executed. */
+  executableAt?: string
+}
+
+const POOLS: Record<number, WithdrawalEvent['pool']> = { 0: 'cash', 1: 'underlying' }
+
+const WITHDRAWAL_STEPS = {
+  wd_req: 'requested',
+  wd_cancel: 'cancelled',
+  withdraw: 'executed',
+} as const
+
+/**
+ * Read a `wd_req`, `wd_cancel` or `withdraw` event. The pool is the second
+ * topic. `Pool` has explicit discriminants, so it travels as a u32 (0 cash,
+ * 1 underlying), the same way `Kind` does.
+ */
+export function parseWithdrawalEvent(e: sorobanRpc.Api.EventResponse): WithdrawalEvent | null {
+  try {
+    const topics = e.topic.map((t: xdr.ScVal) => scValToNative(t))
+    const step = WITHDRAWAL_STEPS[String(topics[0]) as keyof typeof WITHDRAWAL_STEPS]
+    if (!step) return null
+    const pool = POOLS[Number(topics[1])]
+    if (!pool) return null
+    const base = {
+      contractId: e.contractId?.contractId() ?? '',
+      ledger: e.ledger,
+      at: e.ledgerClosedAt,
+      txHash: e.txHash,
+      step,
+      pool,
+    } as const
+    if (step === 'cancelled') return base
+    const value = scValToNative(e.value) as [bigint, bigint] | [string, bigint]
+    if (step === 'requested') {
+      const [amount, executableAt] = value as [bigint, bigint]
+      return {
+        ...base,
+        amount: Number(amount) / TOKEN_SCALE,
+        executableAt: new Date(Number(executableAt) * 1000).toISOString(),
+      }
+    }
+    return { ...base, amount: Number((value as [string, bigint])[1]) / TOKEN_SCALE }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Every withdrawal step since `cursor`, oldest first, and the cursor to resume
+ * from. Throws on an RPC failure, like `scanLimitsChanges`, for the same
+ * reason: a monitor must not read an outage as a quiet admin.
+ */
+export async function scanWithdrawals(
+  cursor?: string,
+): Promise<{ withdrawals: WithdrawalEvent[]; cursor?: string }> {
+  if (VAULT_IDS.length === 0) return { withdrawals: [], cursor }
+  const server = new sorobanRpc.Server(RPC_URL)
+  const topic = (name: string) => nativeToScVal(name, { type: 'symbol' }).toXDR('base64')
+
+  let start: { startLedger: number } | { cursor: string }
+  if (cursor) {
+    start = { cursor }
+  } else {
+    const { sequence } = await server.getLatestLedger()
+    start = { startLedger: Math.max(sequence - LIMITS_LOOKBACK_LEDGERS, 1) }
+  }
+
+  const page = await scanForward(
+    server,
+    start,
+    Object.keys(WITHDRAWAL_STEPS).map((name) => [topic(name), '*']),
+    cursor ? 3 : LIMITS_LOOKBACK_LEDGERS / LEDGERS_PER_PAGE,
+  )
+  const withdrawals = page.events
+    .map(parseWithdrawalEvent)
+    .filter((w): w is WithdrawalEvent => w !== null)
+  return { withdrawals, cursor: page.cursor ?? cursor }
 }

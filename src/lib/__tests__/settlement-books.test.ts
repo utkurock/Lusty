@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
 import { Keypair, StrKey } from '@stellar/stellar-sdk'
 import type { VaultPosition } from '../vault-contract'
 
@@ -103,6 +103,7 @@ describe('a settlement goes to the book its candidate names', () => {
     const candidates = [assets.XLM, assets.BTC].map((a) => ({
       id: 3,
       underlying: a.symbol,
+      vault: a.contracts.vault,
       owner: 'GWRITER',
       side: 'call' as const,
       strike: 0.25,
@@ -125,6 +126,7 @@ describe('a settlement goes to the book its candidate names', () => {
         {
           id: 3,
           underlying: 'ETH' as any,
+          vault: '',
           owner: 'GWRITER',
           side: 'call',
           strike: 1,
@@ -259,5 +261,68 @@ describe('the sweep reaches the whole book', () => {
 describe('position identity', () => {
   it('distinguishes the same id in two books', () => {
     expect(settlement.positionKey('XLM', 3)).not.toBe(settlement.positionKey('BTC', 3))
+  })
+})
+
+describe('a retired instance keeps being settled', () => {
+  // Replacing a book's vault used to take the old one out of the sweep, so a
+  // migration had to wait for it to drain or strand what was still open there.
+  const OLD_XLM_VAULT = StrKey.encodeContract(Buffer.alloc(32, 0x55))
+
+  beforeEach(() => {
+    process.env.VAULT_RETIRED_XLM = OLD_XLM_VAULT
+  })
+  afterEach(() => {
+    delete process.env.VAULT_RETIRED_XLM
+  })
+
+  it('walks the retired vault as its own book and settles there, not on the current one', async () => {
+    // Both instances hold a #0; only the retired one's is due.
+    getVaultStats.mockImplementation(async (asset: any) => ({
+      nextId: asset.symbol === 'XLM' ? 1 : 0,
+    }))
+    getPosition.mockImplementation(async (id: number, asset: any) =>
+      asset.contracts.vault === OLD_XLM_VAULT
+        ? expired(id)
+        : { ...expired(id), expiry: new Date(Date.now() + 30 * DAY) },
+    )
+    settlePosition.mockImplementation(async (id: number, _s: any, asset: any) => ({
+      txHash: `${asset.contracts.vault}-${id}`,
+      outcome: 'kept',
+    }))
+
+    const report = await sweep.sweepOnce({ runnerSecret: signer.secret() })
+
+    expect(report.books.map((b) => b.vault)).toEqual([XLM_VAULT, OLD_XLM_VAULT, BTC_VAULT])
+    expect(report.settled).toHaveLength(1)
+    expect(report.settled[0]).toMatchObject({ underlying: 'XLM', vault: OLD_XLM_VAULT, id: 0 })
+    expect(settlePosition.mock.calls[0][2].contracts.vault).toBe(OLD_XLM_VAULT)
+  })
+
+  it('keeps the two #0s apart in its keys', () => {
+    expect(settlement.positionKey('XLM', 0, XLM_VAULT)).toBe('XLM#0')
+    expect(settlement.positionKey('XLM', 0, OLD_XLM_VAULT)).not.toBe('XLM#0')
+  })
+
+  it('refuses a candidate naming an instance that is neither current nor retired', async () => {
+    const run = await settlement.runSettlement(
+      [
+        {
+          id: 0,
+          underlying: 'XLM',
+          vault: StrKey.encodeContract(Buffer.alloc(32, 0x66)),
+          owner: 'GWRITER',
+          side: 'call',
+          strike: 1,
+          collateral: 1,
+          expiry: new Date(NOW.getTime() - DAY),
+          settleBy: new Date(NOW.getTime()),
+          pastDeadline: false,
+        },
+      ],
+      signer,
+    )
+    expect(settlePosition).not.toHaveBeenCalled()
+    expect(run.failed[0].error).toMatch(/refusing/)
   })
 })

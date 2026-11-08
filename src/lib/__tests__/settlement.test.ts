@@ -233,6 +233,7 @@ describe('runSettlement', () => {
     id,
     owner: 'GWRITER',
     underlying: 'XLM' as const,
+    vault: XLM.contracts.vault,
     side: 'call' as const,
     strike: 0.25,
     collateral: 1000,
@@ -268,6 +269,7 @@ describe('runSettlement', () => {
       {
         id: 1,
         underlying: 'XLM',
+        vault: XLM.contracts.vault,
         error: 'Oracle price is stale — settlement is blocked',
         permanent: false,
       },
@@ -305,7 +307,7 @@ describe('runSettlement', () => {
 
     const run = await runSettlement(candidates, signer, 2)
     expect(run.settled.map((s) => s.id)).toEqual([0, 1])
-    expect(run.deferred).toEqual([{ id: 2, underlying: 'XLM' }])
+    expect(run.deferred).toEqual([{ id: 2, underlying: 'XLM', vault: XLM.contracts.vault }])
     expect(settlePosition).toHaveBeenCalledTimes(2)
   })
 
@@ -313,9 +315,9 @@ describe('runSettlement', () => {
     const run = await runSettlement(candidates, signer, 0)
     expect(run.settled).toEqual([])
     expect(run.deferred).toEqual([
-      { id: 0, underlying: 'XLM' },
-      { id: 1, underlying: 'XLM' },
-      { id: 2, underlying: 'XLM' },
+      { id: 0, underlying: 'XLM', vault: XLM.contracts.vault },
+      { id: 1, underlying: 'XLM', vault: XLM.contracts.vault },
+      { id: 2, underlying: 'XLM', vault: XLM.contracts.vault },
     ])
     expect(settlePosition).not.toHaveBeenCalled()
   })
@@ -326,6 +328,7 @@ describe('the order a run submits in', () => {
     id,
     owner: 'GWRITER',
     underlying: 'XLM' as const,
+    vault: XLM.contracts.vault,
     side: 'call' as const,
     strike: 0.25,
     collateral: 1000,
@@ -371,6 +374,7 @@ describe('a failure inside the oracle window records its expiry s price', () => 
     id,
     owner: 'GWRITER',
     underlying: 'XLM' as const,
+    vault: XLM.contracts.vault,
     side: 'call' as const,
     strike: 0.25,
     collateral: 1000,
