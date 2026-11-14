@@ -33,7 +33,6 @@ import {
   Address,
   Contract,
   Keypair,
-  Networks,
   Operation,
   TransactionBuilder,
   BASE_FEE,
@@ -44,6 +43,7 @@ import {
   xdr,
 } from '@stellar/stellar-sdk'
 import { execFileSync } from 'node:child_process'
+import { PASSPHRASE, RPC_URL } from './lib/network.mjs'
 
 try {
   process.loadEnvFile('.env.local')
@@ -51,8 +51,6 @@ try {
   // Rely on an already-exported environment.
 }
 
-const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL ?? 'https://soroban-testnet.stellar.org'
-const PASSPHRASE = Networks.TESTNET
 const server = new rpc.Server(RPC_URL)
 
 const [, , symbolArg, cmd, ...rest] = process.argv

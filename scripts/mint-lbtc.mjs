@@ -23,21 +23,15 @@ import {
   TransactionBuilder,
   Operation,
   Asset,
-  Networks,
   BASE_FEE,
   rpc,
 } from '@stellar/stellar-sdk'
+import { HORIZON_URL, PASSPHRASE, RPC_URL, friendbot, requireTestnet } from './lib/network.mjs'
 
-const HORIZON = 'https://horizon-testnet.stellar.org'
-const RPC_URL = 'https://soroban-testnet.stellar.org'
-const FRIENDBOT = 'https://friendbot.stellar.org'
-const server = new Horizon.Server(HORIZON)
+requireTestnet('mint-lbtc.mjs')
+
+const server = new Horizon.Server(HORIZON_URL)
 const soroban = new rpc.Server(RPC_URL)
-
-async function friendbot(pub) {
-  const r = await fetch(`${FRIENDBOT}/?addr=${pub}`)
-  if (!r.ok) throw new Error(`friendbot ${r.status}: ${await r.text()}`)
-}
 
 async function submit(tx) {
   try {
@@ -94,7 +88,7 @@ async function main() {
   const distAccount = await server.loadAccount(distributor.publicKey())
   const trustTx = new TransactionBuilder(distAccount, {
     fee: BASE_FEE,
-    networkPassphrase: Networks.TESTNET,
+    networkPassphrase: PASSPHRASE,
   })
     .addOperation(Operation.changeTrust({ asset, limit: '1000000' }))
     .setTimeout(60)
@@ -107,7 +101,7 @@ async function main() {
   const issuerAccount = await server.loadAccount(issuer.publicKey())
   const homeTx = new TransactionBuilder(issuerAccount, {
     fee: BASE_FEE,
-    networkPassphrase: Networks.TESTNET,
+    networkPassphrase: PASSPHRASE,
   })
     .addOperation(Operation.setOptions({ homeDomain: 'lusty.finance' }))
     .setTimeout(60)
@@ -120,7 +114,7 @@ async function main() {
   const issuerAccount2 = await server.loadAccount(issuer.publicKey())
   const mintTx = new TransactionBuilder(issuerAccount2, {
     fee: BASE_FEE,
-    networkPassphrase: Networks.TESTNET,
+    networkPassphrase: PASSPHRASE,
   })
     .addOperation(
       Operation.payment({
@@ -138,12 +132,12 @@ async function main() {
   //    so the classic asset alone is not enough: the registry's `token` is this
   //    address. The id is derived from asset + network, so it is the same
   //    address whoever deploys it — deploying only makes it exist.
-  const sacId = asset.contractId(Networks.TESTNET)
+  const sacId = asset.contractId(PASSPHRASE)
   console.log('→ deploying SAC', sacId)
   const sacAccount = await soroban.getAccount(issuer.publicKey())
   const sacTx = new TransactionBuilder(sacAccount, {
     fee: '1000000',
-    networkPassphrase: Networks.TESTNET,
+    networkPassphrase: PASSPHRASE,
   })
     .addOperation(Operation.createStellarAssetContract({ asset: asset.toString() }))
     .setTimeout(60)

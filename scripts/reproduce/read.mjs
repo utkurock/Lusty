@@ -17,7 +17,8 @@
 // docs/DEPLOYMENTS.md otherwise, so this runs against a checkout with no
 // .env.local at all.
 
-import { Contract, Networks, TransactionBuilder, BASE_FEE, nativeToScVal, scValToNative, rpc } from '@stellar/stellar-sdk'
+import { Contract, TransactionBuilder, BASE_FEE, nativeToScVal, scValToNative, rpc } from '@stellar/stellar-sdk'
+import { PASSPHRASE, RPC_URL } from '../lib/network.mjs'
 
 try {
   process.loadEnvFile('.env.local')
@@ -25,8 +26,6 @@ try {
   // Nothing local: fall through to the published addresses below.
 }
 
-const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL ?? 'https://soroban-testnet.stellar.org'
-const PASSPHRASE = Networks.TESTNET
 // Reads are simulated, never sent, so this account only has to exist.
 const PROBE = 'GCXVANOIFHM7IAAZTDEEOYW7WUDO7ETVJYVEO74LA23JSXQJP4TAJVUX'
 const server = new rpc.Server(RPC_URL)

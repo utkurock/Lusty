@@ -38,11 +38,11 @@ import {
   BASE_FEE,
   Horizon,
   Keypair,
-  Networks,
   Operation,
   TransactionBuilder,
 } from '@stellar/stellar-sdk'
 import pg from 'pg'
+import { HORIZON_URL, PASSPHRASE } from './lib/network.mjs'
 
 const PLAN_FILE = 'scripts/.wind-down-plan.json'
 const OPS_PER_TX = 90 // Stellar allows 100; leave room and stay under the fee cap.
@@ -54,11 +54,10 @@ const env = Object.fromEntries(
     .map((l) => [l.slice(0, l.indexOf('=')).trim(), l.slice(l.indexOf('=') + 1).trim()])
 )
 
-const HORIZON = env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
 const LUSD_CODE = env.NEXT_PUBLIC_LUSD_CODE ?? 'LUSD'
 const LUSD_ISSUER = env.NEXT_PUBLIC_LUSD_ISSUER
 const DISTRIBUTOR = env.NEXT_PUBLIC_LUSD_DISTRIBUTOR
-const horizon = new Horizon.Server(HORIZON)
+const horizon = new Horizon.Server(HORIZON_URL)
 const lusd = new Asset(LUSD_CODE, LUSD_ISSUER)
 
 const round7 = (n) => Math.floor(n * 1e7) / 1e7
@@ -251,7 +250,7 @@ async function execute() {
     const account = await horizon.loadAccount(signer.publicKey())
     const builder = new TransactionBuilder(account, {
       fee: String(Number(BASE_FEE) * 10),
-      networkPassphrase: Networks.TESTNET,
+      networkPassphrase: PASSPHRASE,
     })
     for (const p of batch) {
       builder.addOperation(

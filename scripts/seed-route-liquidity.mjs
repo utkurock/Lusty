@@ -24,10 +24,12 @@ import {
   BASE_FEE,
   Horizon,
   Keypair,
-  Networks,
   Operation,
   TransactionBuilder,
 } from '@stellar/stellar-sdk'
+import { HORIZON_URL, PASSPHRASE, requireTestnet } from './lib/network.mjs'
+
+requireTestnet('seed-route-liquidity.mjs')
 
 // Minimal .env.local loader so the script runs without dotenv.
 const envPath = path.resolve('.env.local')
@@ -38,7 +40,6 @@ if (fs.existsSync(envPath)) {
   }
 }
 
-const HORIZON = process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
 const LUSD_ISSUER =
   process.env.NEXT_PUBLIC_LUSD_ISSUER ?? 'GBCMRD6NDL2RAJUOFQ25EHZVO3IRIGNESWE4QDRFB4AVFIP7IT5BRCJ6'
 const USDC_CODE = process.env.NEXT_PUBLIC_ANCHOR_ASSET_CODE ?? 'USDC'
@@ -59,7 +60,7 @@ if (!isFinite(AMOUNT) || AMOUNT < 0) {
   process.exit(1)
 }
 
-const server = new Horizon.Server(HORIZON)
+const server = new Horizon.Server(HORIZON_URL)
 const dist = Keypair.fromSecret(DIST_SECRET)
 const lusd = new Asset('LUSD', LUSD_ISSUER)
 const usdc = new Asset(USDC_CODE, USDC_ISSUER)
@@ -79,7 +80,7 @@ async function main() {
   }
 
   const account = await server.loadAccount(dist.publicKey())
-  const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: Networks.TESTNET })
+  const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: PASSPHRASE })
     .addOperation(
       Operation.manageSellOffer({
         selling: lusd,

@@ -13,18 +13,13 @@ import {
   TransactionBuilder,
   Operation,
   Asset,
-  Networks,
   BASE_FEE,
 } from '@stellar/stellar-sdk'
+import { HORIZON_URL, PASSPHRASE, friendbot, requireTestnet } from './lib/network.mjs'
 
-const HORIZON = 'https://horizon-testnet.stellar.org'
-const FRIENDBOT = 'https://friendbot.stellar.org'
-const server = new Horizon.Server(HORIZON)
+requireTestnet('mint-lusd.mjs')
 
-async function friendbot(pub) {
-  const r = await fetch(`${FRIENDBOT}/?addr=${pub}`)
-  if (!r.ok) throw new Error(`friendbot ${r.status}: ${await r.text()}`)
-}
+const server = new Horizon.Server(HORIZON_URL)
 
 async function submit(tx) {
   try {
@@ -57,7 +52,7 @@ async function main() {
   const distAccount = await server.loadAccount(distributor.publicKey())
   const trustTx = new TransactionBuilder(distAccount, {
     fee: BASE_FEE,
-    networkPassphrase: Networks.TESTNET,
+    networkPassphrase: PASSPHRASE,
   })
     .addOperation(Operation.changeTrust({ asset, limit: '10000000' }))
     .setTimeout(60)
@@ -71,7 +66,7 @@ async function main() {
   const issuerAccount = await server.loadAccount(issuer.publicKey())
   const homeTx = new TransactionBuilder(issuerAccount, {
     fee: BASE_FEE,
-    networkPassphrase: Networks.TESTNET,
+    networkPassphrase: PASSPHRASE,
   })
     .addOperation(Operation.setOptions({ homeDomain: 'lusty.finance' }))
     .setTimeout(60)
@@ -85,7 +80,7 @@ async function main() {
   const issuerAccount2 = await server.loadAccount(issuer.publicKey())
   const mintTx = new TransactionBuilder(issuerAccount2, {
     fee: BASE_FEE,
-    networkPassphrase: Networks.TESTNET,
+    networkPassphrase: PASSPHRASE,
   })
     .addOperation(
       Operation.payment({

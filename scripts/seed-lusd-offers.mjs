@@ -19,9 +19,11 @@ import {
   TransactionBuilder,
   Operation,
   Asset,
-  Networks,
   BASE_FEE,
 } from '@stellar/stellar-sdk'
+import { HORIZON_URL, PASSPHRASE, requireTestnet } from './lib/network.mjs'
+
+requireTestnet('seed-lusd-offers.mjs')
 
 // Minimal .env.local loader so the script runs without dotenv.
 const envPath = path.resolve('.env.local')
@@ -32,7 +34,6 @@ if (fs.existsSync(envPath)) {
   }
 }
 
-const HORIZON = process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
 const ISSUER = process.env.NEXT_PUBLIC_LUSD_ISSUER
 const DIST_SECRET = process.env.LUSD_DISTRIBUTOR_SECRET
 
@@ -52,7 +53,7 @@ async function fetchXlmUsd() {
 }
 
 async function main() {
-  const server = new Horizon.Server(HORIZON)
+  const server = new Horizon.Server(HORIZON_URL)
   const dist = Keypair.fromSecret(DIST_SECRET)
   const lusd = new Asset('LUSD', ISSUER)
   const xlm = Asset.native()
@@ -75,7 +76,7 @@ async function main() {
     const acc = await server.loadAccount(dist.publicKey())
     const b = new TransactionBuilder(acc, {
       fee: String(Number(BASE_FEE) * Math.max(existing.length, 1)),
-      networkPassphrase: Networks.TESTNET,
+      networkPassphrase: PASSPHRASE,
     })
     for (const o of existing) {
       b.addOperation(
@@ -124,7 +125,7 @@ async function main() {
 
   const tx = new TransactionBuilder(account, {
     fee: String(Number(BASE_FEE) * 2),
-    networkPassphrase: Networks.TESTNET,
+    networkPassphrase: PASSPHRASE,
   })
     .addOperation(
       Operation.manageSellOffer({

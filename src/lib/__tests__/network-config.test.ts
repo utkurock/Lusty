@@ -1,4 +1,5 @@
-import { readdirSync, readFileSync, statSync } from 'fs'
+import { execFileSync } from 'child_process'
+import { readFileSync } from 'fs'
 import path from 'path'
 import { Networks } from '@stellar/stellar-sdk'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -81,29 +82,23 @@ describe('the module as the app loads it', () => {
 })
 
 // The point of the module is that nothing else decides the network. A
-// passphrase, a testnet endpoint or a hand-built explorer link anywhere else in
-// the app is a place a public deployment would still be on testnet.
+// passphrase, a network endpoint or a hand-built explorer link anywhere else —
+// in the app or in an operator script — is a place a public deployment would
+// still be on testnet, or a script signing for a network the app is not on.
 describe('no other source names a network', () => {
-  const SRC = path.resolve(__dirname, '../..')
-  const OWNER = path.join(SRC, 'lib/stellar.ts')
+  const ROOT = path.resolve(__dirname, '../../..')
+  const OWNERS = new Set(['src/lib/network.mjs', 'scripts/lib/network.mjs'])
   const FORBIDDEN =
     /horizon-testnet|soroban-testnet|horizon\.stellar\.org|Networks\.(TESTNET|PUBLIC)|stellar\.expert\/explorer|stellarchain\.io/
 
-  function* sources(dir: string): Generator<string> {
-    for (const name of readdirSync(dir)) {
-      const p = path.join(dir, name)
-      if (statSync(p).isDirectory()) {
-        if (name !== '__tests__') yield* sources(p)
-      } else if (/\.(ts|tsx)$/.test(name) && p !== OWNER) {
-        yield p
-      }
-    }
-  }
+  // Tracked files only: an operator's scratch script is not the repository's.
+  const tracked = execFileSync('git', ['ls-files', 'src', 'scripts'], { cwd: ROOT, encoding: 'utf8' })
+    .split('\n')
+    .filter((p) => /\.(ts|tsx|mjs)$/.test(p) && !p.includes('__tests__/') && !OWNERS.has(p))
 
-  it('finds every one of them in lib/stellar', () => {
-    const offenders = [...sources(SRC)].filter((p) =>
-      FORBIDDEN.test(readFileSync(p, 'utf8')),
-    )
-    expect(offenders.map((p) => path.relative(SRC, p))).toEqual([])
+  it('finds every one of them in the two network modules', () => {
+    expect(tracked.length).toBeGreaterThan(50)
+    const offenders = tracked.filter((p) => FORBIDDEN.test(readFileSync(path.join(ROOT, p), 'utf8')))
+    expect(offenders).toEqual([])
   })
 })

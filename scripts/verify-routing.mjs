@@ -23,11 +23,11 @@ import {
   BASE_FEE,
   Horizon,
   Keypair,
-  Networks,
   Operation,
   TransactionBuilder,
 } from '@stellar/stellar-sdk'
 import { execFileSync } from 'node:child_process'
+import { HORIZON_URL, PASSPHRASE } from './lib/network.mjs'
 
 try {
   process.loadEnvFile('.env.local')
@@ -35,7 +35,6 @@ try {
   // Rely on an already-exported environment.
 }
 
-const HORIZON = process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
 const BASE_URL = process.env.BASE_URL ?? 'http://localhost:3999'
 const LUSD = new Asset(
   'LUSD',
@@ -50,7 +49,7 @@ const USDC = new Asset(
 const secretOf = (alias) =>
   execFileSync('stellar', ['keys', 'show', alias], { encoding: 'utf8' }).trim()
 const writer = Keypair.fromSecret(secretOf('lusty-writer'))
-const horizon = new Horizon.Server(HORIZON)
+const horizon = new Horizon.Server(HORIZON_URL)
 
 const [, , cmd, arg] = process.argv
 
@@ -99,7 +98,7 @@ async function fund(amount) {
   const account = await horizon.loadAccount(writer.publicKey())
   if (!balances(account).usdc) {
     await send(
-      new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: Networks.TESTNET })
+      new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: PASSPHRASE })
         .addOperation(Operation.changeTrust({ asset: USDC }))
         .setTimeout(120)
         .build(),
@@ -110,7 +109,7 @@ async function fund(amount) {
   await send(
     new TransactionBuilder(await horizon.loadAccount(distributor.publicKey()), {
       fee: BASE_FEE,
-      networkPassphrase: Networks.TESTNET,
+      networkPassphrase: PASSPHRASE,
     })
       .addOperation(Operation.payment({ destination: writer.publicKey(), asset: USDC, amount: amount.toFixed(7) }))
       .setTimeout(120)
@@ -130,7 +129,7 @@ async function swap(amount) {
   const { id, xdr, quoted, sendMax } = prepared.body
   console.log(`  prepared ${id}: ${amount} LUSD quoted at ${quoted} USDC, sendMax ${sendMax}`)
 
-  const tx = TransactionBuilder.fromXDR(xdr, Networks.TESTNET)
+  const tx = TransactionBuilder.fromXDR(xdr, PASSPHRASE)
   const sent = await send(tx, writer, `routed swap ${amount} LUSD`)
   const settled = await api(
     sent.ok ? { action: 'settle', id, txHash: sent.hash } : { action: 'settle', id, reason: JSON.stringify(sent.codes) },
@@ -147,7 +146,7 @@ async function refuse() {
   await show('before')
   const account = await horizon.loadAccount(writer.publicKey())
   await send(
-    new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: Networks.TESTNET })
+    new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: PASSPHRASE })
       .addOperation(
         Operation.pathPaymentStrictReceive({
           sendAsset: USDC,

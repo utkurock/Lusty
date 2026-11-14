@@ -21,11 +21,13 @@ import {
   BASE_FEE,
   Horizon,
   Keypair,
-  Networks,
   Operation,
   TransactionBuilder,
   WebAuth,
 } from '@stellar/stellar-sdk'
+import { HORIZON_URL, PASSPHRASE, requireTestnet } from './lib/network.mjs'
+
+requireTestnet('anchor-bridge-setup.mjs')
 
 // Minimal .env.local loader so the script runs without dotenv.
 const envPath = path.resolve('.env.local')
@@ -36,7 +38,6 @@ if (fs.existsSync(envPath)) {
   }
 }
 
-const HORIZON = process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
 const HOME_DOMAIN = process.env.NEXT_PUBLIC_ANCHOR_HOME_DOMAIN ?? 'tr-mock-anchor.fly.dev'
 const ASSET_CODE = process.env.NEXT_PUBLIC_ANCHOR_ASSET_CODE ?? 'USDC'
 const DIST_SECRET = process.env.LUSD_DISTRIBUTOR_SECRET
@@ -52,7 +53,7 @@ const deposits = Number(
     : 0
 )
 
-const server = new Horizon.Server(HORIZON)
+const server = new Horizon.Server(HORIZON_URL)
 const distributor = Keypair.fromSecret(DIST_SECRET)
 const PUB = distributor.publicKey()
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -96,13 +97,13 @@ async function discover() {
 async function login(auth, signingKey) {
   if (!signingKey) throw new Error(`${HOME_DOMAIN}/.well-known/stellar.toml has no SIGNING_KEY`)
   const challenge = await json(`${auth}?account=${PUB}&home_domain=${HOME_DOMAIN}`)
-  if (challenge.network_passphrase && challenge.network_passphrase !== Networks.TESTNET) {
+  if (challenge.network_passphrase && challenge.network_passphrase !== PASSPHRASE) {
     throw new Error('the SEP-10 challenge is not for testnet; refusing to sign it')
   }
   const { tx, clientAccountID } = WebAuth.readChallengeTx(
     challenge.transaction,
     signingKey,
-    Networks.TESTNET,
+    PASSPHRASE,
     HOME_DOMAIN,
     new URL(auth).host,
   )
@@ -150,7 +151,7 @@ async function main() {
   } else {
     const tx = new TransactionBuilder(account, {
       fee: BASE_FEE,
-      networkPassphrase: Networks.TESTNET,
+      networkPassphrase: PASSPHRASE,
     })
       .addOperation(Operation.changeTrust({ asset }))
       .setTimeout(60)

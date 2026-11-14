@@ -11,73 +11,10 @@
 // The generic invoke/read helpers that used to live here are gone. Contract
 // access goes through lib/vault-contract, which knows the vault's own encoding.
 
-import { Networks } from '@stellar/stellar-sdk'
+import { resolveNetwork } from './network.mjs'
 
-export type StellarNetworkName = 'testnet' | 'public'
-
-export interface StellarNetwork {
-  name: StellarNetworkName
-  passphrase: string
-  rpcUrl: string
-  horizonUrl: string
-  /** stellar.expert's path segment for this network. */
-  explorerBase: string
-}
-
-const DEFAULTS: Record<
-  StellarNetworkName,
-  { passphrase: string; rpcUrl?: string; horizonUrl: string }
-> = {
-  testnet: {
-    passphrase: Networks.TESTNET,
-    rpcUrl: 'https://soroban-testnet.stellar.org',
-    horizonUrl: 'https://horizon-testnet.stellar.org',
-  },
-  // SDF runs no public-network RPC, so there is no default to fall back on:
-  // the provider is a deployment choice and has to be named.
-  public: {
-    passphrase: Networks.PUBLIC,
-    horizonUrl: 'https://horizon.stellar.org',
-  },
-}
-
-export interface NetworkEnv {
-  network?: string
-  /** NEXT_PUBLIC_RPC_URL — the RPC both the browser and the server see. */
-  rpcUrl?: string
-  /** SOROBAN_RPC_URL — a server-only override of it. */
-  serverRpcUrl?: string
-  horizonUrl?: string
-}
-
-/**
- * Resolves the network from its configuration. Unset means testnet, which is
- * what every deployment before the variable existed ran on; anything that is
- * neither name throws.
- */
-export function resolveNetwork(env: NetworkEnv): StellarNetwork {
-  const raw = (env.network ?? '').trim()
-  const name = raw === '' ? 'testnet' : raw
-  if (name !== 'testnet' && name !== 'public') {
-    throw new Error(
-      `NEXT_PUBLIC_STELLAR_NETWORK is "${raw}"; expected "testnet" or "public"`,
-    )
-  }
-  const d = DEFAULTS[name]
-  const sharedRpcUrl = env.rpcUrl?.trim() || d.rpcUrl
-  if (!sharedRpcUrl) {
-    throw new Error(
-      `the ${name} network has no default RPC; set NEXT_PUBLIC_RPC_URL`,
-    )
-  }
-  return {
-    name,
-    passphrase: d.passphrase,
-    rpcUrl: env.serverRpcUrl?.trim() || sharedRpcUrl,
-    horizonUrl: env.horizonUrl?.trim() || d.horizonUrl,
-    explorerBase: `https://stellar.expert/explorer/${name}`,
-  }
-}
+export { resolveNetwork }
+export type { StellarNetwork, StellarNetworkName } from './network.mjs'
 
 // Each variable is read by its literal name: Next inlines NEXT_PUBLIC_ values
 // into the browser bundle only where they are written out in full. That is

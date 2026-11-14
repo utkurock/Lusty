@@ -8,7 +8,10 @@
 // Usage: node scripts/fund-distributor.mjs <count>
 
 import { readFileSync } from 'node:fs'
-import { Horizon, Keypair, Networks, Operation, TransactionBuilder, BASE_FEE } from '@stellar/stellar-sdk'
+import { Horizon, Keypair, Operation, TransactionBuilder, BASE_FEE } from '@stellar/stellar-sdk'
+import { HORIZON_URL, PASSPHRASE, friendbot, requireTestnet } from './lib/network.mjs'
+
+requireTestnet('fund-distributor.mjs')
 
 const env = Object.fromEntries(
   readFileSync('.env.local', 'utf8')
@@ -17,7 +20,7 @@ const env = Object.fromEntries(
     .map((l) => [l.slice(0, l.indexOf('=')).trim(), l.slice(l.indexOf('=') + 1).trim()])
 )
 
-const horizon = new Horizon.Server(env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org')
+const horizon = new Horizon.Server(HORIZON_URL)
 const DEST = env.NEXT_PUBLIC_LUSD_DISTRIBUTOR
 const count = Number(process.argv[2] ?? 1)
 
@@ -28,10 +31,14 @@ console.log(`distributor before: ${before.toLocaleString('en-US')} XLM`)
 
 for (let i = 0; i < count; i++) {
   const kp = Keypair.random()
-  const res = await fetch(`https://friendbot.stellar.org/?addr=${kp.publicKey()}`)
-  if (!res.ok) { console.error(`  ${i + 1}: friendbot refused`); continue }
+  try {
+    await friendbot(kp.publicKey())
+  } catch {
+    console.error(`  ${i + 1}: friendbot refused`)
+    continue
+  }
   const acc = await horizon.loadAccount(kp.publicKey())
-  const tx = new TransactionBuilder(acc, { fee: BASE_FEE, networkPassphrase: Networks.TESTNET })
+  const tx = new TransactionBuilder(acc, { fee: BASE_FEE, networkPassphrase: PASSPHRASE })
     .addOperation(Operation.accountMerge({ destination: DEST }))
     .setTimeout(60)
     .build()

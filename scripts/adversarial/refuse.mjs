@@ -22,7 +22,6 @@
 
 import {
   Contract,
-  Networks,
   TransactionBuilder,
   BASE_FEE,
   Keypair,
@@ -32,6 +31,7 @@ import {
   rpc,
   xdr,
 } from '@stellar/stellar-sdk'
+import { PASSPHRASE, RPC_URL } from '../lib/network.mjs'
 
 try {
   process.loadEnvFile('.env.local')
@@ -39,8 +39,6 @@ try {
   // Published addresses below are the defaults.
 }
 
-const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL ?? 'https://soroban-testnet.stellar.org'
-const PASSPHRASE = Networks.TESTNET
 const PROBE = 'GCXVANOIFHM7IAAZTDEEOYW7WUDO7ETVJYVEO74LA23JSXQJP4TAJVUX'
 const server = new rpc.Server(RPC_URL)
 

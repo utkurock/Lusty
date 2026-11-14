@@ -29,7 +29,6 @@ import {
   Address,
   Contract,
   Keypair,
-  Networks,
   Operation,
   TransactionBuilder,
   BASE_FEE,
@@ -41,6 +40,7 @@ import {
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
+import { HORIZON_URL, PASSPHRASE, RPC_URL } from './lib/network.mjs'
 
 // The app's own configuration, read the same way the app reads it. A script
 // run by hand has no framework loading it, and a deploy that silently fell back
@@ -51,11 +51,8 @@ try {
   // No local file: rely on the environment already exported.
 }
 
-const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL ?? 'https://soroban-testnet.stellar.org'
-const HORIZON_URL = process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
 // Reads are simulated, never sent, so the account named here only has to exist.
 const PROBE_ACCOUNT = 'GCXVANOIFHM7IAAZTDEEOYW7WUDO7ETVJYVEO74LA23JSXQJP4TAJVUX'
-const PASSPHRASE = Networks.TESTNET
 const server = new rpc.Server(RPC_URL)
 
 /** Read a secret out of the Stellar CLI's local identity store. */
