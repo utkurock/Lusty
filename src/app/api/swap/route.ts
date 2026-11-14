@@ -37,6 +37,7 @@ import { reflectorPriceAt } from '@/lib/reflector'
 import { getPool, ensureSchema } from '@/lib/db'
 import { readJsonCapped, BodyTooLargeError } from '@/lib/request-body'
 import { HORIZON_URL, NETWORK_PASSPHRASE } from '@/lib/stellar'
+import { testnetOnly } from '@/lib/testnet-only'
 
 const DISTRIBUTOR_SECRET = process.env.LUSD_DISTRIBUTOR_SECRET ?? ''
 const FEE_WALLET = process.env.FEE_WALLET ?? ''
@@ -111,6 +112,8 @@ interface SwapBody {
  * a balance can change in between. It closes the window; it cannot remove it.
  */
 export async function GET(req: Request) {
+  const off = testnetOnly()
+  if (off) return off
   // Every preflight costs a database round trip, an oracle read and a Horizon
   // account load, and asks for nothing in return. Bounded per client so one
   // caller cannot spend those on everyone's behalf.
@@ -221,6 +224,8 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  const off = testnetOnly()
+  if (off) return off
   // Hoisted so the catch below can name the funding transaction it failed on.
   let bodyHashForLog: string | undefined
   try {

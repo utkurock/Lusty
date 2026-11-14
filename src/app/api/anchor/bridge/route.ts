@@ -32,6 +32,7 @@ import { isValidStellarAddress } from '@/lib/utils'
 import { ensureSchema, getPool } from '@/lib/db'
 import { readJsonCapped, BodyTooLargeError } from '@/lib/request-body'
 import { HORIZON_URL, NETWORK_PASSPHRASE } from '@/lib/stellar'
+import { testnetOnly } from '@/lib/testnet-only'
 
 /** The one crossing this route pays out on; see below for why. */
 const SERVED_DIRECTION: BridgeDirection = 'anchor_to_cash'
@@ -88,6 +89,8 @@ function configured(): string | null {
  * writes to, and the float the payout comes out of.
  */
 export async function GET(req: Request) {
+  const off = testnetOnly()
+  if (off) return off
   // A database round trip and a Horizon account load per call, for anyone:
   // bounded per client so one caller cannot spend them for everyone.
   const rl = await durableRateLimit(`anchor-bridge-preflight:ip:${getClientIp(req) ?? 'anon'}`, 60_000, 30)
@@ -149,6 +152,8 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  const off = testnetOnly()
+  if (off) return off
   // Hoisted so the catch below can name the funding transaction it failed on.
   let fundingHashForLog: string | undefined
   try {

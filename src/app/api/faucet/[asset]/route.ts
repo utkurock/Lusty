@@ -21,6 +21,7 @@ import {
   type Drip,
 } from '@/lib/faucet'
 import { HORIZON_URL, NETWORK_PASSPHRASE } from '@/lib/stellar'
+import { testnetOnly } from '@/lib/testnet-only'
 
 // The testnet faucet, one asset per request.
 // =========================================
@@ -96,6 +97,8 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ asset: string }> },
 ) {
+  const off = testnetOnly()
+  if (off) return off
   // A cross-site form can post text/plain without a preflight; requiring JSON
   // puts every claim behind CORS, which this API does not grant.
   if (!isJsonRequest(req)) {

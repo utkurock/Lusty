@@ -7,10 +7,12 @@ import { WalletButton } from '@/components/shared/WalletButton'
 import { FaucetButton } from '@/components/shared/FaucetButton'
 import { ThemeToggle } from '@/components/shared/ThemeToggle'
 import { cn } from '@/lib/utils'
+import { IS_TESTNET } from '@/lib/stellar'
 
+// The swap desk trades the testnet cash token; the public network has none.
 const LINKS = [
   { href: '/earn', label: 'Earn' },
-  { href: '/swap', label: 'Swap' },
+  ...(IS_TESTNET ? [{ href: '/swap', label: 'Swap' }] : []),
   { href: '/dashboard', label: 'Dashboard' },
   { href: '/research', label: 'Research' },
   { href: '/leaderboard', label: 'Leaderboard' },
@@ -59,7 +61,7 @@ export function Navbar() {
 
         <div className="hidden md:flex items-center gap-2">
           <ThemeToggle />
-          <FaucetButton />
+          {IS_TESTNET && <FaucetButton />}
           <WalletButton />
         </div>
 
