@@ -10,9 +10,7 @@
 
 import { rpc as sorobanRpc, nativeToScVal, scValToNative, xdr } from '@stellar/stellar-sdk'
 import { retiredVaults, settleableUnderlyings, vaultInstances } from './assets'
-
-const RPC_URL =
-  process.env.SOROBAN_RPC_URL ?? 'https://soroban-testnet.stellar.org'
+import { RPC_URL } from './stellar'
 
 // The instances to stream come off the registry — a separate env list would
 // drift, and an asset missing from it settles on chain while its writers watch

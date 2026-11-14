@@ -2,6 +2,7 @@
 import { useEffect } from 'react'
 import { X, Loader2, ExternalLink } from 'lucide-react'
 import { useWalletContext } from '@/providers/WalletProvider'
+import { IS_TESTNET } from '@/lib/stellar'
 
 export function WalletConnectModal() {
   const { modalOpen, closeModal, supportedWallets, selectWallet, loading } =
@@ -110,7 +111,7 @@ export function WalletConnectModal() {
 
         {/* Footer */}
         <div className="px-5 py-3 border-t border-line bg-surface flex items-center justify-between font-mono text-tiny text-ink-2">
-          <span>Stellar testnet only</span>
+          <span>Stellar {IS_TESTNET ? 'testnet' : 'public network'} only</span>
           {loading && (
             <span className="flex items-center gap-1.5 text-ink">
               <Loader2 size={12} className="animate-spin" />

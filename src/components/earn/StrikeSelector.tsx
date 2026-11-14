@@ -26,8 +26,9 @@ import { activeQuoter, cosignWithQuoter } from '@/lib/quoter'
 import { fetchLadder, fetchStrikeQuote, type QuotedRung } from '@/lib/quote-client'
 import { recordDeposit } from '@/lib/deposit-client'
 import { resolveUnderlying, type StellarAsset } from '@/lib/assets'
-import { TransactionBuilder, Networks } from '@stellar/stellar-sdk'
+import { TransactionBuilder } from '@stellar/stellar-sdk'
 import { ChevronDown, TrendingUp, TrendingDown } from 'lucide-react'
+import { HORIZON_URL, NETWORK_PASSPHRASE, explorerTxUrl } from '@/lib/stellar'
 
 // Wallet-facing labels for each leg of the open. The user is signing one
 // transaction; these say what the app is doing while it prepares it.
@@ -457,8 +458,8 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
         setSuccess(`Opening ${code} trustline: confirm in wallet`)
         const trustXdr = await buildTrustlineTx(address, needed)
         const signedTrust = await signTransaction(trustXdr)
-        const trustTx = TransactionBuilder.fromXDR(signedTrust, Networks.TESTNET)
-        const trustRes = await fetch('https://horizon-testnet.stellar.org/transactions', {
+        const trustTx = TransactionBuilder.fromXDR(signedTrust, NETWORK_PASSPHRASE)
+        const trustRes = await fetch(`${HORIZON_URL}/transactions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: `tx=${encodeURIComponent(trustTx.toXDR())}`,
@@ -868,7 +869,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
           <span>{success}</span>
           {successHash && (
             <a
-              href={`https://stellarchain.io/tx/${successHash}`}
+              href={explorerTxUrl(successHash)}
               target="_blank"
               rel="noopener noreferrer"
               className="underline hover:text-ink truncate"

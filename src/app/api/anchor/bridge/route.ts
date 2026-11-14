@@ -5,7 +5,6 @@ import {
   BASE_FEE,
   Horizon,
   Keypair,
-  Networks,
   Operation,
   TransactionBuilder,
 } from '@stellar/stellar-sdk'
@@ -32,6 +31,7 @@ import { getClientIp } from '@/lib/anti-spam'
 import { isValidStellarAddress } from '@/lib/utils'
 import { ensureSchema, getPool } from '@/lib/db'
 import { readJsonCapped, BodyTooLargeError } from '@/lib/request-body'
+import { HORIZON_URL, NETWORK_PASSPHRASE } from '@/lib/stellar'
 
 /** The one crossing this route pays out on; see below for why. */
 const SERVED_DIRECTION: BridgeDirection = 'anchor_to_cash'
@@ -54,7 +54,6 @@ const SERVED_DIRECTION: BridgeDirection = 'anchor_to_cash'
  * money path at risk for a feature that is not on it.
  */
 
-const HORIZON = process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
 const DISTRIBUTOR_SECRET = process.env.LUSD_DISTRIBUTOR_SECRET ?? ''
 
 interface BridgeBody {
@@ -121,7 +120,7 @@ export async function GET(req: Request) {
     await getPool().query('select 1')
 
     const { receives } = legsOf(direction)
-    const server = new Horizon.Server(HORIZON)
+    const server = new Horizon.Server(HORIZON_URL)
     const dist = await server.loadAccount(Keypair.fromSecret(DISTRIBUTOR_SECRET).publicKey())
     const float = balanceOf(dist, receives)
 
@@ -201,7 +200,7 @@ export async function POST(req: Request) {
       )
     }
 
-    const server = new Horizon.Server(HORIZON)
+    const server = new Horizon.Server(HORIZON_URL)
     const fetched = await server.transactions().transaction(txHash).call().catch(() => null)
     // The record must name the transaction asked for, by its own hash.
     const tx = fetched && (fetched as ProofTransaction).hash === txHash ? fetched : null
@@ -268,7 +267,7 @@ export async function POST(req: Request) {
 
     const payout = new TransactionBuilder(distAccount, {
       fee: BASE_FEE,
-      networkPassphrase: Networks.TESTNET,
+      networkPassphrase: NETWORK_PASSPHRASE,
     })
       .addOperation(
         Operation.payment({

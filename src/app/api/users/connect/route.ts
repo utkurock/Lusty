@@ -5,8 +5,8 @@ import { upsertUser } from '@/lib/db-queries'
 import { clientRateLimit } from '@/lib/rate-limit'
 import { isValidStellarAddress } from '@/lib/utils'
 import { BodyTooLargeError, readJsonCapped } from '@/lib/request-body'
+import { HORIZON_URL } from '@/lib/stellar'
 
-const HORIZON = process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
 
 // Records that a wallet connected. Nothing proves the caller holds the key, so
 // what bounds this is who is asking and what they name. The limit used to be
@@ -32,7 +32,7 @@ export async function POST(req: Request) {
       )
     }
 
-    const exists = await new Horizon.Server(HORIZON)
+    const exists = await new Horizon.Server(HORIZON_URL)
       .loadAccount(address)
       .then(() => true)
       .catch(() => false)

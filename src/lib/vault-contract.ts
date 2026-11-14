@@ -19,7 +19,6 @@ import {
   Address,
   Contract,
   Keypair,
-  Networks,
   Operation,
   StrKey,
   TransactionBuilder,
@@ -35,13 +34,7 @@ import {
   describeMismatch,
   type ExpectedInvocation,
 } from './vault-auth'
-
-export const RPC_URL =
-  process.env.SOROBAN_RPC_URL ??
-  process.env.NEXT_PUBLIC_RPC_URL ??
-  'https://soroban-testnet.stellar.org'
-
-export const NETWORK_PASSPHRASE = Networks.TESTNET
+import { NETWORK_PASSPHRASE, RPC_URL } from './stellar'
 
 /**
  * XLM's instance — the one a read addresses when no asset is named. It is a

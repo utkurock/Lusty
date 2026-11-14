@@ -10,6 +10,8 @@
  * the monitor should keep running even if only one channel is wired up.
  */
 
+import { NETWORK } from '@/lib/stellar'
+
 export type Severity = 'info' | 'warning' | 'critical'
 
 export interface AlertField {
@@ -48,7 +50,7 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY ?? ''
 const EMAIL_TO = process.env.MONITOR_ALERT_EMAIL_TO ?? ''
 const EMAIL_FROM =
   process.env.MONITOR_ALERT_EMAIL_FROM ?? 'Lusty Monitor <alerts@lusty.finance>'
-const ENV_LABEL = process.env.MONITOR_ENV_LABEL ?? 'testnet'
+const ENV_LABEL = process.env.MONITOR_ENV_LABEL ?? NETWORK.name
 
 function plainText(a: Alert): string {
   const head = `${SEVERITY_EMOJI[a.severity]} [${a.severity.toUpperCase()}] [Lusty ${ENV_LABEL}] ${a.title}`

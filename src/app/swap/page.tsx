@@ -11,7 +11,8 @@ import {
   SwapQuote,
 } from '@/lib/swap'
 import { buildSwapPaymentTx, submitUserTx } from '@/lib/vault'
-import { TransactionBuilder, Networks } from '@stellar/stellar-sdk'
+import { TransactionBuilder } from '@stellar/stellar-sdk'
+import { HORIZON_URL, NETWORK_PASSPHRASE } from '@/lib/stellar'
 
 const ASSETS: AssetCode[] = ['XLM', 'LUSD']
 
@@ -119,8 +120,8 @@ export default function SwapPage() {
           setStatus('Opening LUSD trustline: confirm in wallet')
           const trustXdr = await buildTrustlineTx(address)
           const signedTrust = await signTransaction(trustXdr)
-          const tx = TransactionBuilder.fromXDR(signedTrust, Networks.TESTNET)
-          const res = await fetch('https://horizon-testnet.stellar.org/transactions', {
+          const tx = TransactionBuilder.fromXDR(signedTrust, NETWORK_PASSPHRASE)
+          const res = await fetch(`${HORIZON_URL}/transactions`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: `tx=${encodeURIComponent(tx.toXDR())}`,

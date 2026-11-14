@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useWalletContext } from '@/providers/WalletProvider'
 import { formatAddress } from '@/lib/utils'
+import { explorerAccountUrl } from '@/lib/stellar'
 import { Loader2, Wallet, Copy, LogOut, ExternalLink, Check } from 'lucide-react'
 
 export function WalletButton() {
@@ -78,7 +79,7 @@ export function WalletButton() {
               )}
             </button>
             <a
-              href={`https://stellarchain.io/accounts/${address}`}
+              href={explorerAccountUrl(address)}
               target="_blank"
               rel="noopener noreferrer"
               className="w-full flex items-center gap-2 px-4 py-2.5 font-mono text-caption text-ink hover:bg-raised transition"

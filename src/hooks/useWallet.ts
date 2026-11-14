@@ -2,13 +2,14 @@
 import { useState, useCallback, useEffect } from 'react'
 import {
   StellarWalletsKit,
-  Networks,
+  type Networks,
   type ISupportedWallet,
 } from '@creit.tech/stellar-wallets-kit'
 import { FreighterModule, FREIGHTER_ID } from '@creit.tech/stellar-wallets-kit/modules/freighter'
 import { xBullModule } from '@creit.tech/stellar-wallets-kit/modules/xbull'
 import { AlbedoModule } from '@creit.tech/stellar-wallets-kit/modules/albedo'
 import { LobstrModule } from '@creit.tech/stellar-wallets-kit/modules/lobstr'
+import { NETWORK_PASSPHRASE } from '@/lib/stellar'
 
 // What we remember between visits. The wallet ID belongs next to the address:
 // restoring an address while defaulting the wallet back to Freighter points the
@@ -24,7 +25,8 @@ let _inited = false
 function ensureInit() {
   if (_inited || typeof window === 'undefined') return
   StellarWalletsKit.init({
-    network: Networks.TESTNET,
+    // The kit's Networks enum is the passphrases themselves.
+    network: NETWORK_PASSPHRASE as Networks,
     selectedWalletId: localStorage.getItem(SAVED_WALLET_ID) ?? FREIGHTER_ID,
     modules: [
       new FreighterModule(),
@@ -158,7 +160,7 @@ export function useWallet(): WalletState {
       if (!address) throw new Error('Wallet not connected')
       ensureInit()
       const { signedTxXdr } = await StellarWalletsKit.signTransaction(xdr, {
-        networkPassphrase: Networks.TESTNET,
+        networkPassphrase: NETWORK_PASSPHRASE,
         address,
       })
       return signedTxXdr

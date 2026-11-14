@@ -6,7 +6,6 @@ import {
   TransactionBuilder,
   Operation,
   Asset,
-  Networks,
   BASE_FEE,
 } from '@stellar/stellar-sdk'
 import { logTransaction } from '@/lib/db-queries'
@@ -37,9 +36,8 @@ import { fetchXlmUsd } from '@/lib/spot'
 import { reflectorPriceAt } from '@/lib/reflector'
 import { getPool, ensureSchema } from '@/lib/db'
 import { readJsonCapped, BodyTooLargeError } from '@/lib/request-body'
+import { HORIZON_URL, NETWORK_PASSPHRASE } from '@/lib/stellar'
 
-const HORIZON =
-  process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
 const DISTRIBUTOR_SECRET = process.env.LUSD_DISTRIBUTOR_SECRET ?? ''
 const FEE_WALLET = process.env.FEE_WALLET ?? ''
 const SPREAD = 0.001 // 0.1% spread
@@ -161,7 +159,7 @@ export async function GET(req: Request) {
     const destAmount = gross * (1 - SPREAD)
 
     // 3. Can the distributor cover the payout?
-    const server = new Horizon.Server(HORIZON)
+    const server = new Horizon.Server(HORIZON_URL)
     const dist = await server.loadAccount(
       Keypair.fromSecret(DISTRIBUTOR_SECRET).publicKey()
     )
@@ -276,7 +274,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: missing }, { status: 500 })
     }
 
-    const server = new Horizon.Server(HORIZON)
+    const server = new Horizon.Server(HORIZON_URL)
 
     // Verify the user's payment tx on Horizon.
     //
@@ -368,7 +366,7 @@ export async function POST(req: Request) {
     const distAccount = await server.loadAccount(distributor.publicKey())
     const txBuilder = new TransactionBuilder(distAccount, {
       fee: BASE_FEE,
-      networkPassphrase: Networks.TESTNET,
+      networkPassphrase: NETWORK_PASSPHRASE,
     })
       .addOperation(
         Operation.payment({

@@ -14,6 +14,7 @@ import { inFlight } from '@/lib/routing/budget'
 import { summarise } from '@/lib/routing/journal'
 import type { Alert } from './notify'
 import { checkLimitsEvents, checkWithdrawalEvents } from './limits-watch'
+import { HORIZON_URL } from '@/lib/stellar'
 
 /**
  * Risk-monitoring checks (P1-7). Each check is independent and best-effort:
@@ -22,8 +23,6 @@ import { checkLimitsEvents, checkWithdrawalEvents } from './limits-watch'
  * of alerts that should fire this run — empty means all-clear.
  */
 
-const HORIZON =
-  process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
 
 // Cap utilization at/above this percent fires a warning; at/above 100 a
 // critical. Horizon/DB latency above the budget fires a warning.
@@ -41,7 +40,7 @@ const ROUTING_REFUSAL_WARN_PCT = Number(process.env.MONITOR_ROUTING_REFUSAL_WARN
 async function checkHorizon(): Promise<Alert | null> {
   const t0 = Date.now()
   try {
-    const server = new Horizon.Server(HORIZON)
+    const server = new Horizon.Server(HORIZON_URL)
     if (LUSD_DISTRIBUTOR) {
       await server.loadAccount(LUSD_DISTRIBUTOR)
     } else {
@@ -62,7 +61,7 @@ async function checkHorizon(): Promise<Alert | null> {
       severity: 'critical',
       title: 'Horizon unreachable',
       message: `Horizon ping failed: ${e?.message ?? 'unknown'}. Deposits and claims will fail closed.`,
-      fields: [{ label: 'horizon', value: HORIZON }],
+      fields: [{ label: 'horizon', value: HORIZON_URL }],
     }
   }
 }

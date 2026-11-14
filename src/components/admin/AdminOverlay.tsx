@@ -18,6 +18,7 @@ import {
   ShieldAlert,
 } from 'lucide-react'
 import { ATTACK_CLASSES, SEVERITY_LABEL, reportRef, type ReportSeverity } from '@/lib/adversarial'
+import { explorerTxUrl } from '@/lib/stellar'
 
 type Tab = 'overview' | 'users' | 'transactions' | 'analytics' | 'feedback' | 'reports'
 
@@ -586,7 +587,7 @@ export function AdminOverlay() {
                           <div className="font-mono text-tiny text-ink-2 truncate">
                             {tx.txHash ? (
                               <a
-                                href={`https://stellar.expert/explorer/testnet/tx/${tx.txHash}`}
+                                href={explorerTxUrl(tx.txHash)}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="hover:text-ink underline"

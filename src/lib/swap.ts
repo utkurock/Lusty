@@ -3,7 +3,6 @@ import {
   Operation,
   TransactionBuilder,
   BASE_FEE,
-  Networks,
   Horizon,
 } from '@stellar/stellar-sdk'
 import { HORIZON_URL, NETWORK_PASSPHRASE } from './stellar'
@@ -209,7 +208,7 @@ export async function buildSwapTx(
 }
 
 export async function submitSignedTx(signedXdr: string): Promise<string> {
-  const tx = TransactionBuilder.fromXDR(signedXdr, Networks.TESTNET)
+  const tx = TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASE)
   const res = await horizon.submitTransaction(tx as any)
   return (res as any).hash
 }

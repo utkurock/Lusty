@@ -5,7 +5,6 @@ import {
   TransactionBuilder,
   Operation,
   Asset,
-  Networks,
   BASE_FEE,
 } from '@stellar/stellar-sdk'
 import { logTransaction } from '@/lib/db-queries'
@@ -21,6 +20,7 @@ import {
   FaucetRejection,
   type Drip,
 } from '@/lib/faucet'
+import { HORIZON_URL, NETWORK_PASSPHRASE } from '@/lib/stellar'
 
 // The testnet faucet, one asset per request.
 // =========================================
@@ -33,7 +33,6 @@ import {
 // What every asset shares is the policy: one claim a day, a lifetime bound per
 // address, and a daily bound across everyone. That lives in lib/faucet.
 
-const HORIZON = process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
 const FRIENDBOT = process.env.FRIENDBOT_URL ?? 'https://friendbot.stellar.org'
 const DISTRIBUTORS: Record<string, string | undefined> = {
   LUSD: process.env.LUSD_DISTRIBUTOR_SECRET,
@@ -63,7 +62,7 @@ async function payFromDistributor(address: string, drip: Drip): Promise<string> 
   if (!secret || !drip.issuer) {
     throw new UserFacingError(`The ${drip.symbol} faucet is not configured on this server.`)
   }
-  const server = new Horizon.Server(HORIZON)
+  const server = new Horizon.Server(HORIZON_URL)
   const asset = new Asset(drip.code, drip.issuer)
 
   // A payment to an account that cannot hold the asset fails inside Horizon
@@ -83,7 +82,7 @@ async function payFromDistributor(address: string, drip: Drip): Promise<string> 
   const account = await server.loadAccount(distributor.publicKey())
   const tx = new TransactionBuilder(account, {
     fee: BASE_FEE,
-    networkPassphrase: Networks.TESTNET,
+    networkPassphrase: NETWORK_PASSPHRASE,
   })
     .addOperation(Operation.payment({ destination: address, asset, amount: drip.amount }))
     .setTimeout(60)

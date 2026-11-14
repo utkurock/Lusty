@@ -14,7 +14,6 @@ import {
   Account,
   BASE_FEE,
   Contract,
-  Networks,
   rpc as sorobanRpc,
   StrKey,
   TransactionBuilder,
@@ -22,13 +21,16 @@ import {
   nativeToScVal,
   xdr,
 } from '@stellar/stellar-sdk'
+import { IS_TESTNET, NETWORK, NETWORK_PASSPHRASE, RPC_URL } from './stellar'
 
-const RPC_URL =
-  process.env.SOROBAN_RPC_URL ?? 'https://soroban-testnet.stellar.org'
-// Reflector "external CEX & DEX" feed on testnet.
+// Reflector "external CEX & DEX" feed. The default is the testnet
+// deployment; any other network names its oracle in REFLECTOR_ORACLE_ID.
 const ORACLE_ID =
   process.env.REFLECTOR_ORACLE_ID ??
-  'CCYOZJCOPG34LLQQ7N24YXBM7LL62R7ONMZ3G6WZAAYPB5OYKOMJRN63'
+  (IS_TESTNET ? 'CCYOZJCOPG34LLQQ7N24YXBM7LL62R7ONMZ3G6WZAAYPB5OYKOMJRN63' : '')
+if (!ORACLE_ID) {
+  throw new Error(`the ${NETWORK.name} network has no default oracle; set REFLECTOR_ORACLE_ID`)
+}
 // Default feed for callers that do not name an underlying. Per-asset feeds
 // live in the registry (lib/assets) — this stays only so the XLM rails read
 // exactly as they did before the registry existed.
@@ -68,7 +70,7 @@ async function simulateOracleCall(
   const source = new Account(SIM_SOURCE, '0')
   const tx = new TransactionBuilder(source, {
     fee: BASE_FEE,
-    networkPassphrase: Networks.TESTNET,
+    networkPassphrase: NETWORK_PASSPHRASE,
   })
     .addOperation(contract.call(fn, ...args))
     .setTimeout(30)

@@ -1,12 +1,13 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import { Loader2, Droplet, ChevronDown } from 'lucide-react'
-import { TransactionBuilder, Networks } from '@stellar/stellar-sdk'
+import { TransactionBuilder } from '@stellar/stellar-sdk'
 import { useWalletContext } from '@/providers/WalletProvider'
 import { buildTrustlineTx, hasTrustline } from '@/lib/swap'
 import { LUSD_CODE, LUSD_ISSUER } from '@/lib/lusd'
 import { BTC } from '@/lib/assets'
 import type { StellarAsset } from '@/lib/assets'
+import { HORIZON_URL, NETWORK_PASSPHRASE } from '@/lib/stellar'
 
 // What the faucet offers, and what a claim needs before it can land.
 //
@@ -87,8 +88,8 @@ export function FaucetButton() {
         showToast('ok', `Opening ${code} trustline: confirm in wallet`)
         const xdr = await buildTrustlineTx(address, asset.trustline)
         const signed = await signTransaction(xdr)
-        const tx = TransactionBuilder.fromXDR(signed, Networks.TESTNET)
-        const res = await fetch('https://horizon-testnet.stellar.org/transactions', {
+        const tx = TransactionBuilder.fromXDR(signed, NETWORK_PASSPHRASE)
+        const res = await fetch(`${HORIZON_URL}/transactions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: `tx=${encodeURIComponent(tx.toXDR())}`,

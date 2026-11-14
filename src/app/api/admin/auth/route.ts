@@ -3,7 +3,6 @@ import {
   Keypair,
   TransactionBuilder,
   Operation,
-  Networks,
   BASE_FEE,
   Account,
 } from '@stellar/stellar-sdk'
@@ -19,6 +18,7 @@ import {
   createSession,
   revokeSession,
 } from '@/lib/admin-sessions'
+import { NETWORK_PASSPHRASE } from '@/lib/stellar'
 
 export const dynamic = 'force-dynamic'
 
@@ -79,7 +79,7 @@ export async function POST(req: Request) {
       const account = new Account(address, '0')
       const tx = new TransactionBuilder(account, {
         fee: BASE_FEE,
-        networkPassphrase: Networks.TESTNET,
+        networkPassphrase: NETWORK_PASSPHRASE,
       })
         .addOperation(
           Operation.manageData({ name: 'lusty_admin_auth', value: nonce })
@@ -106,7 +106,7 @@ export async function POST(req: Request) {
       }
 
       // Parse the signed transaction and verify signature
-      const tx = TransactionBuilder.fromXDR(signedXdr, Networks.TESTNET)
+      const tx = TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASE)
       const keypair = Keypair.fromPublicKey(challenge.address)
 
       // Verify at least one signature matches the admin's public key

@@ -10,12 +10,11 @@ import {
 } from '@/lib/vault-state'
 import { XLM, settleableUnderlying } from '@/lib/assets'
 import { LUSD_CODE, LUSD_ISSUER, LUSD_DISTRIBUTOR } from '@/lib/lusd'
+import { HORIZON_URL } from '@/lib/stellar'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
-const HORIZON =
-  process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
 
 // Informational only — the distributor's seed XLM. No longer part of the
 // utilization metric (see vault-state.ts / BUG-1); kept for the UI's debug
@@ -92,7 +91,7 @@ export async function GET(req: Request) {
     let xlmBalance = 0
     let lusdBalance = 0
     try {
-      const server = new Horizon.Server(HORIZON)
+      const server = new Horizon.Server(HORIZON_URL)
       const acc = await server.loadAccount(LUSD_DISTRIBUTOR)
       xlmBalance = parseFloat(
         acc.balances.find((b: any) => b.asset_type === 'native')?.balance ?? '0'

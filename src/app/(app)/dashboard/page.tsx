@@ -23,6 +23,7 @@ import {
   type UnderlyingSymbol,
 } from '@/lib/assets'
 import { withinOracleWindow } from '@/lib/oracle-window'
+import { explorerTxUrl } from '@/lib/stellar'
 
 // Mirrors DbPosition from the /api/vault/positions response. Positions are read
 // from contract state and mirrored in the shared DB, so they show from any
@@ -394,7 +395,7 @@ function Settlement({ position }: { position: Position }) {
       </span>
       {position.settleHash && (
         <a
-          href={`https://stellarchain.io/tx/${position.settleHash}`}
+          href={explorerTxUrl(position.settleHash)}
           target="_blank"
           rel="noopener noreferrer"
           className="font-mono text-caption flex items-center gap-1 text-ink-2 hover:text-ink"
@@ -578,7 +579,7 @@ function PositionRow({ p }: { p: Position }) {
             </span>
           )}
           <a
-            href={`https://stellarchain.io/tx/${p.depositHash}`}
+            href={explorerTxUrl(p.depositHash)}
             target="_blank"
             rel="noopener noreferrer"
             className="font-mono text-caption flex items-center gap-1 text-ink-2 hover:text-ink"

@@ -6,6 +6,7 @@ import { allUnderlyings, enabledUnderlyings, type AssetIssue } from '@/lib/asset
 import { routingExposure } from '@/lib/routing/budget'
 import { reconcileAll } from '@/lib/vault-limits'
 import { isAdminRequest } from '@/lib/admin-auth'
+import { HORIZON_URL } from '@/lib/stellar'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -27,8 +28,6 @@ export const revalidate = 0
 // asset the vault will actually write counts toward the overall status — a
 // declared-but-gated one reports its state without failing the probe.
 
-const HORIZON =
-  process.env.NEXT_PUBLIC_HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
 
 interface ComponentStatus {
   ok: boolean
@@ -58,7 +57,7 @@ async function checkHorizon(): Promise<ComponentStatus> {
     return { ok: false, latencyMs: 0, error: 'distributor not configured' }
   }
   const r = await timed(async () => {
-    const server = new Horizon.Server(HORIZON)
+    const server = new Horizon.Server(HORIZON_URL)
     return server.loadAccount(LUSD_DISTRIBUTOR)
   })
   return { ok: r.ok, latencyMs: r.latencyMs, error: r.error }

@@ -15,8 +15,8 @@ import { getBreakerState } from '@/lib/circuit-breaker'
 import { requestedUnderlying } from '@/lib/assets'
 import { limitsRefusal } from '@/lib/vault-limits'
 import { hasTrustline } from '@/lib/swap'
+import { NETWORK_PASSPHRASE } from '@/lib/stellar'
 import {
-  NETWORK_PASSPHRASE,
   expectedOpenInvocation,
   vaultServer,
   coveredUnits,

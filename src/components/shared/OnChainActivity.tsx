@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { ExternalLink } from 'lucide-react'
 import { useContractEvents, type VaultEvent } from '@/hooks/useContractEvents'
 import { Pager } from '@/components/shared/Pager'
+import { explorerTxUrl } from '@/lib/stellar'
 
 // Five rows at a time. The feed is a thing you scan, not a wall you scroll
 // past on the way to the rest of the page.
@@ -165,7 +166,7 @@ export function OnChainActivity({ address }: { address?: string | null }) {
               <span className="text-ink-2 shrink-0">{timeAgo(e.at)}</span>
               {e.txHash && (
                 <a
-                  href={`https://stellarchain.io/tx/${e.txHash}`}
+                  href={explorerTxUrl(e.txHash)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-ink-2 hover:text-ink shrink-0"

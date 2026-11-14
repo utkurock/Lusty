@@ -1,5 +1,6 @@
 'use client'
 import { usePathname } from 'next/navigation'
+import { IS_TESTNET } from '@/lib/stellar'
 
 export function Footer() {
   const pathname = usePathname()
@@ -29,7 +30,7 @@ export function Footer() {
             </a>
           ))}
         </div>
-        <div className="chip">testnet</div>
+        {IS_TESTNET && <div className="chip">testnet</div>}
       </div>
     </footer>
   )
