@@ -94,6 +94,13 @@ function termsKey(side: string, collateral: number, strike: number, expiryMs: nu
  * a position or never will: 'opened' if the contract holds a position on those
  * terms that no other reservation already accounts for, 'unused' otherwise.
  *
+ * One that opened goes to 'indexed' instead when a deposit row already counts
+ * that position and no reservation was handed to it: the deposit route writes
+ * the row and then hands the reservation over, and a process that dies between
+ * the two leaves the reservation pending beside a row counting the same
+ * position. Only rows that count in dollars take a reservation, the same rule
+ * the deposit route hands over by.
+ *
  * If the chain cannot be read they stay pending, and pending counts — an
  * allowance that cannot be checked is not handed back.
  */
@@ -111,7 +118,7 @@ async function settleLapsed(
   address: string,
   underlying: string,
   readPositions: () => Promise<OnChainPosition[]>
-): Promise<{ opened: number; unused: number } | null> {
+): Promise<{ opened: number; indexed: number; unused: number } | null> {
   const pool = getPool()
   const lapsed = await pool.query(
     `select id, subtype, collateral::float8 as collateral, strike_price, expiry_iso
@@ -121,7 +128,7 @@ async function settleLapsed(
       order by id`,
     [address, underlying]
   )
-  if (!lapsed.rows?.length) return { opened: 0, unused: 0 }
+  if (!lapsed.rows?.length) return { opened: 0, indexed: 0, unused: 0 }
 
   let positions: OnChainPosition[]
   try {
@@ -136,8 +143,25 @@ async function settleLapsed(
     const k = termsKey(p.side, p.collateral, p.strike, p.expiry.getTime())
     available.set(k, (available.get(k) ?? 0) + 1)
   }
+  // Deposit rows with no reservation handed to them yet, by terms.
+  const unhanded = new Map<string, number>()
+  const deposits = await pool.query(
+    `select subtype, (metadata->>'collateralAmount')::float8 as collateral,
+            (metadata->>'strikePrice')::float8 as strike_price, metadata->>'expiryIso' as expiry_iso
+       from transactions
+      where address = $1 and underlying = $2
+        and type = 'deposit' and subtype in ('call','put')
+        and (subtype = 'put' or jsonb_typeof(metadata->'spotAtOpen') = 'number')
+        and metadata ? 'collateralAmount' and metadata ? 'strikePrice' and metadata ? 'expiryIso'`,
+    [address, underlying]
+  )
+  for (const d of deposits.rows ?? []) {
+    const k = termsKey(d.subtype, Number(d.collateral), Number(d.strike_price), Date.parse(d.expiry_iso))
+    unhanded.set(k, (unhanded.get(k) ?? 0) + 1)
+  }
+
   const claimed = await pool.query(
-    `select subtype, collateral::float8 as collateral, strike_price, expiry_iso
+    `select subtype, collateral::float8 as collateral, strike_price, expiry_iso, state
        from quote_reservations
       where address = $1 and underlying = $2 and state in ('opened','indexed')`,
     [address, underlying]
@@ -145,27 +169,37 @@ async function settleLapsed(
   for (const r of claimed.rows ?? []) {
     const k = termsKey(r.subtype, Number(r.collateral), Number(r.strike_price), Date.parse(r.expiry_iso))
     available.set(k, (available.get(k) ?? 0) - 1)
+    if (r.state === 'indexed') unhanded.set(k, (unhanded.get(k) ?? 0) - 1)
   }
 
   const opened: number[] = []
+  const indexed: number[] = []
   const unused: number[] = []
   for (const r of lapsed.rows) {
     const k = termsKey(r.subtype, Number(r.collateral), Number(r.strike_price), Date.parse(r.expiry_iso))
     const left = available.get(k) ?? 0
     if (left > 0) {
-      opened.push(Number(r.id))
       available.set(k, left - 1)
+      const rowsLeft = unhanded.get(k) ?? 0
+      if (rowsLeft > 0) {
+        indexed.push(Number(r.id))
+        unhanded.set(k, rowsLeft - 1)
+      } else {
+        opened.push(Number(r.id))
+      }
     } else {
       unused.push(Number(r.id))
     }
   }
   await pool.query(
     `update quote_reservations
-        set state = case when id = any($1::bigint[]) then 'opened' else 'unused' end
-      where id = any($2::bigint[]) and state = 'pending'`,
-    [opened, [...opened, ...unused]]
+        set state = case when id = any($1::bigint[]) then 'opened'
+                         when id = any($2::bigint[]) then 'indexed'
+                         else 'unused' end
+      where id = any($3::bigint[]) and state = 'pending'`,
+    [opened, indexed, [...opened, ...indexed, ...unused]]
   )
-  return { opened: opened.length, unused: unused.length }
+  return { opened: opened.length, indexed: indexed.length, unused: unused.length }
 }
 
 /** Owners settled per sweep. Each costs one owner-index read on chain. */
@@ -183,13 +217,14 @@ const SWEEP_MAX_OWNERS = Number(process.env.QUOTE_SWEEP_MAX_OWNERS ?? 50)
  *
  * Same chain check, same fail-closed rule: an owner whose positions cannot be
  * read keeps its reservations pending, and a lapsed signature that did open a
- * position becomes 'opened' and keeps counting. Bounded per run, oldest lapse
+ * position becomes 'opened' and keeps counting, unless a deposit row already
+ * counts that position and takes it over. Bounded per run, oldest lapse
  * first, so a backlog drains over several sweeps rather than in one long one.
  */
 export async function sweepLapsedReservations(
   readPositions: (address: string, underlying: string) => Promise<OnChainPosition[]>,
   maxOwners: number = SWEEP_MAX_OWNERS
-): Promise<{ owners: number; opened: number; unused: number; kept: number }> {
+): Promise<{ owners: number; opened: number; indexed: number; unused: number; kept: number }> {
   await ensureSchema()
   const owners = await getPool().query(
     `select address, underlying
@@ -200,7 +235,7 @@ export async function sweepLapsedReservations(
       limit $1`,
     [Math.max(1, Math.floor(maxOwners) || 1)]
   )
-  const out = { owners: 0, opened: 0, unused: 0, kept: 0 }
+  const out = { owners: 0, opened: 0, indexed: 0, unused: 0, kept: 0 }
   // One owner at a time: each is a chain read, and the sweep has no one
   // waiting on it that would be served by spending the RPC faster.
   for (const o of owners.rows ?? []) {
@@ -213,6 +248,7 @@ export async function sweepLapsedReservations(
       continue
     }
     out.opened += settled.opened
+    out.indexed += settled.indexed
     out.unused += settled.unused
   }
   return out

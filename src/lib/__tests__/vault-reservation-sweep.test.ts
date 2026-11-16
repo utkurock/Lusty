@@ -22,8 +22,18 @@ interface Row {
   state: 'pending' | 'opened' | 'indexed' | 'unused'
 }
 
+/** A row in `transactions`, as the deposit route writes one. */
+interface Deposit {
+  address: string
+  underlying: string
+  subtype: 'call' | 'put'
+  amount: number
+  metadata: { collateralAmount: number; strikePrice: number; expiryIso: string; spotAtOpen?: number }
+}
+
 const EXPIRY = '2026-10-16T08:00:00.000Z'
 let rows: Row[] = []
+let deposits: Deposit[] = []
 let nextId = 1
 const queries: { sql: string; params: any[] }[] = []
 /** Replaces the fake store for a test that only needs canned rows. */
@@ -78,12 +88,44 @@ function answer(sql: string, params: any[]): { rows: any[] } {
       ),
     }
   }
-  if (sql.includes('update quote_reservations') && sql.includes("then 'opened' else 'unused'")) {
-    const [opened, all] = params as [number[], number[]]
+  if (sql.includes('from transactions') && sql.includes("jsonb_typeof(metadata->'spotAtOpen') = 'number'")) {
+    return {
+      rows: deposits
+        .filter(
+          (d) =>
+            d.address === params[0] &&
+            d.underlying === params[1] &&
+            (d.subtype === 'put' || typeof d.metadata.spotAtOpen === 'number'),
+        )
+        .map((d) => ({
+          subtype: d.subtype,
+          collateral: d.metadata.collateralAmount,
+          strike_price: d.metadata.strikePrice,
+          expiry_iso: d.metadata.expiryIso,
+        })),
+    }
+  }
+  if (sql.includes('update quote_reservations') && sql.includes("then 'indexed'")) {
+    const [opened, indexed, all] = params as [number[], number[], number[]]
     for (const r of rows) {
-      if (all.includes(r.id) && r.state === 'pending') r.state = opened.includes(r.id) ? 'opened' : 'unused'
+      if (all.includes(r.id) && r.state === 'pending')
+        r.state = opened.includes(r.id) ? 'opened' : indexed.includes(r.id) ? 'indexed' : 'unused'
     }
     return { rows: [] }
+  }
+  if (sql.includes("(t.metadata->>'strikePrice')::float8 between")) {
+    const [lo, hi, underlying] = params
+    const usd = (d: Deposit) =>
+      d.subtype === 'put' ? d.amount : d.metadata.spotAtOpen != null ? d.amount * d.metadata.spotAtOpen : 0
+    return {
+      rows: [
+        {
+          sum: deposits
+            .filter((d) => d.underlying === underlying && d.metadata.strikePrice >= lo && d.metadata.strikePrice <= hi)
+            .reduce((a, d) => a + usd(d), 0),
+        },
+      ],
+    }
   }
   if (sql.includes('as strike_notional')) {
     const [address, underlying, dateKey, lo, hi] = params
@@ -155,6 +197,7 @@ const position = (over: Partial<OnChainPosition> = {}): OnChainPosition => ({
 beforeEach(() => {
   canned = null
   rows = []
+  deposits = []
   nextId = 1
   queries.length = 0
 })
@@ -228,6 +271,77 @@ describe('a lapsed reservation stops holding the strike once swept', () => {
     expect(swept.owners).toBe(2)
     expect(seen).toEqual(['GOLDEST', 'GOLDER'])
     expect(rows.find((r) => r.address === 'GNEWER')!.state).toBe('pending')
+  })
+})
+
+// The deposit route writes the row that counts a position, then hands the
+// quote's reservation over to it. A process that dies between the two leaves
+// the reservation pending beside a row that already counts the same position,
+// and once its signature lapses the sweep finds that position on chain.
+describe('a deposit row written before a crash takes its reservation in the sweep', () => {
+  const deposit = (over: Partial<Deposit> & { spotAtOpen?: number | null } = {}): Deposit => {
+    const { spotAtOpen = 0.6, ...rest } = over
+    return {
+      address: 'GCRASH',
+      underlying: 'XLM',
+      subtype: 'call',
+      amount: 10_000,
+      metadata: {
+        collateralAmount: 10_000,
+        strikePrice: 0.3,
+        expiryIso: EXPIRY,
+        ...(spotAtOpen == null ? {} : { spotAtOpen }),
+      },
+      ...rest,
+    }
+  }
+
+  it('counts the position once, as the deposit row', async () => {
+    deposits.push(deposit()) // $6,000 at the quoted spot
+    add({ address: 'GCRASH', notional_usd: 6_000 })
+
+    // Both count it: $12,000 against a $10,000 strike.
+    await expect(assertQuoteAllowed(policy())).rejects.toMatchObject({ code: 'strike_limit_exceeded' })
+
+    const swept = await sweepLapsedReservations(async () => [position()])
+    expect(swept).toMatchObject({ opened: 0, indexed: 1, unused: 0 })
+    expect(rows[0].state).toBe('indexed')
+
+    // Only the row does: $6,000 + $2,500 fits.
+    await expect(assertQuoteAllowed(policy())).resolves.toBeUndefined()
+  })
+
+  it('keeps counting a reservation whose row cannot count the position in dollars', async () => {
+    // An unpriced call adds nothing to a USD sum; the deposit route keeps its
+    // reservation for the same reason.
+    deposits.push(deposit({ spotAtOpen: null }))
+    add({ address: 'GCRASH', notional_usd: 6_000 })
+
+    const swept = await sweepLapsedReservations(async () => [position()])
+    expect(swept).toMatchObject({ opened: 1, indexed: 0 })
+    expect(rows[0].state).toBe('opened')
+  })
+
+  it('hands each row one reservation, and only a row nobody took', async () => {
+    // One row was handed over properly; a second identical position opened
+    // and its client never reported it.
+    deposits.push(deposit())
+    add({ address: 'GCRASH', state: 'indexed' })
+    add({ address: 'GCRASH' })
+
+    const swept = await sweepLapsedReservations(async () => [position(), position()])
+    expect(swept).toMatchObject({ opened: 1, indexed: 0 })
+    expect(rows[1].state).toBe('opened')
+  })
+
+  it('splits two lapsed reservations between a crashed row and an unreported position', async () => {
+    deposits.push(deposit())
+    add({ address: 'GCRASH' })
+    add({ address: 'GCRASH' })
+
+    const swept = await sweepLapsedReservations(async () => [position(), position()])
+    expect(swept).toMatchObject({ opened: 1, indexed: 1, unused: 0 })
+    expect(rows.map((r) => r.state).sort()).toEqual(['indexed', 'opened'])
   })
 })
 

@@ -109,7 +109,7 @@ describe('a lapsed signature is settled against the chain', () => {
     await assertQuoteAllowed(input({ readPositions }))
 
     const update = calls.find((c) => c.sql.includes('update quote_reservations'))!
-    expect(update.params).toEqual([[1], [1, 2]])
+    expect(update.params).toEqual([[1], [], [1, 2]])
   })
 
   it('does not let a position already accounted for open a second reservation', async () => {
@@ -126,7 +126,7 @@ describe('a lapsed signature is settled against the chain', () => {
     await assertQuoteAllowed(input({ readPositions }))
 
     const update = calls.find((c) => c.sql.includes('update quote_reservations'))!
-    expect(update.params).toEqual([[], [2]])
+    expect(update.params).toEqual([[], [], [2]])
   })
 
   it('keeps them counting when the chain cannot be read', async () => {
