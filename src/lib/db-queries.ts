@@ -1,5 +1,5 @@
 import { getPool, ensureSchema, COLLATERAL_USD_SQL } from './db'
-import type { UnderlyingAsset } from './assets'
+import { CASH, type UnderlyingAsset } from './assets'
 
 // Rows written before `transactions.underlying` existed were backfilled to
 // 'XLM' for options and left null for everything else, so a null here means
@@ -88,7 +88,7 @@ export interface DbPosition {
   asset: string
   /**
    * The book this position belongs to. Distinct from `asset`, which names a
-   * token: a BTC put escrows cash, so its `asset` is LUSD and only this says
+   * token: a BTC put escrows cash, so its `asset` is the cash and only this says
    * which vault it settles in.
    */
   underlying: string
@@ -178,7 +178,7 @@ export async function getPositionsForAddress(
       id: r.tx_hash,
       address,
       type: r.subtype as 'call' | 'put',
-      asset: r.asset ?? (r.subtype === 'call' ? 'XLM' : 'LUSD'),
+      asset: r.asset ?? (r.subtype === 'call' ? 'XLM' : CASH.code),
       underlying: r.underlying ?? DEFAULT_BOOK,
       collateralAmount: collateral !== null ? collateral : parseFloat(r.amount),
       strikePrice,
@@ -271,7 +271,7 @@ export async function getRecentDeposits(
       txHash: r.tx_hash ?? null,
       address: r.address,
       side: r.subtype as 'call' | 'put',
-      asset: r.asset ?? (r.subtype === 'call' ? 'XLM' : 'LUSD'),
+      asset: r.asset ?? (r.subtype === 'call' ? 'XLM' : CASH.code),
       underlying: r.underlying ?? DEFAULT_BOOK,
       collateral: num(meta.collateralAmount) ?? parseFloat(r.amount),
       premium: r.premium_amount !== null ? parseFloat(r.premium_amount) : 0,

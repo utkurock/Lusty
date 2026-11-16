@@ -11,9 +11,9 @@ import { useVaultStats } from '@/hooks/useVaultStats'
 import { getExpiryOptions, ExpiryOption } from '@/lib/expiries'
 import { StablePicker, Stable } from '@/components/shared/StablePicker'
 import { savePosition } from '@/lib/positions'
-import { buildTrustlineTx, hasTrustline, trustlinesRequired, LUSD_CODE, LUSD_ISSUER } from '@/lib/swap'
+import { buildTrustlineTx, hasTrustline, trustlinesRequired } from '@/lib/swap'
 import { useBalance } from '@/hooks/useBalance'
-import { USDC_CODE, USDC_ISSUER } from '@/lib/usdc'
+import { USDC_CODE, USDC_ISSUER, USDC_ROUTES_TO_CASH } from '@/lib/usdc'
 import {
   CashConversionOwed,
   convertToCash,
@@ -25,7 +25,7 @@ import { openPosition, coveredUnits } from '@/lib/vault-contract'
 import { activeQuoter, cosignWithQuoter } from '@/lib/quoter'
 import { fetchLadder, fetchStrikeQuote, type QuotedRung } from '@/lib/quote-client'
 import { recordDeposit } from '@/lib/deposit-client'
-import { resolveUnderlying, type StellarAsset } from '@/lib/assets'
+import { CASH, resolveUnderlying, type StellarAsset } from '@/lib/assets'
 import { TransactionBuilder } from '@stellar/stellar-sdk'
 import { ChevronDown, TrendingUp, TrendingDown } from 'lucide-react'
 import { HORIZON_URL, NETWORK_PASSPHRASE, explorerTxUrl } from '@/lib/stellar'
@@ -109,7 +109,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
   useEffect(() => setExpiries(baseExpiries), [baseExpiries])
 
   const [selectedExpiryIdx, setSelectedExpiryIdx] = useState(0)
-  const [stable, setStable] = useState<Stable>('LUSD')
+  const [stable, setStable] = useState<Stable>(CASH.code)
   const [expiryOpen, setExpiryOpen] = useState(false)
   const [selectedIdx, setSelectedIdx] = useState(1)
   const [amountStr, setAmountStr] = useState('')
@@ -322,13 +322,14 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
    * how a screen ends up reporting a stranger's token as the user's cash —
    * anyone can issue something called USDC.
    */
+  const routesUsdc = USDC_ROUTES_TO_CASH && stable === USDC_CODE
   const depositAsset = useMemo<StellarAsset | null>(() => {
     if (!asset) return null
     if (type === 'call') return asset.stellarAsset
-    return stable === 'USDC'
+    return routesUsdc
       ? { kind: 'issued', code: USDC_CODE, issuer: USDC_ISSUER }
-      : { kind: 'issued', code: LUSD_CODE, issuer: LUSD_ISSUER }
-  }, [asset, type, stable])
+      : { kind: 'issued', code: asset.cash.code, issuer: asset.cash.issuer }
+  }, [asset, type, routesUsdc])
 
   const depositCode = type === 'call' ? assetSymbol : stable
   const {
@@ -508,7 +509,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
       //
       //     The contract escrows one cash token and it is fixed at init, so a
       //     put opened with USDC selected would otherwise quietly pull the
-      //     LUSD this account happens to hold — a different balance from the
+      //     cash this account happens to hold — a different balance from the
       //     one on screen, which is the whole complaint. Instead the USDC is
       //     spent here and comes back as cash one for one, and the position is
       //     escrowed with that.
@@ -522,7 +523,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
       //     trustline step too, because the payout lands in a cash trustline
       //     that has to already exist.
       let fundedWith: string | undefined
-      if (type === 'put' && stable === 'USDC') {
+      if (type === 'put' && routesUsdc) {
         const onProgress = (message: string) => setSuccess(message)
         try {
           // A route first: atomic, through the network's own liquidity. Only a
@@ -613,9 +614,9 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
         // What the position is ESCROWED in, which on a put is the vault's
         // cash whatever funded it. A USDC deposit is converted before the open
         // (step 1b), so recording USDC here would label a position that
-        // settles back in LUSD — and the dashboard reads this field for both
-        // the collateral's name and its icon.
-        asset: type === 'call' ? assetSymbol : LUSD_CODE,
+        // settles back in the cash — and the dashboard reads this field for
+        // both the collateral's name and its icon.
+        asset: type === 'call' ? assetSymbol : asset.cash.code,
         collateralAmount: amount,
         strikePrice: selectedStrike.strike,
         strikeIndex: selectedIdx,
@@ -851,7 +852,7 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
                 const claimed = await reclaimCash({ address, ...owed })
                 setOwed(null)
                 setError(null)
-                setSuccess(`✓ ${claimed.amount} LUSD received for your USDC. Deposit again to open the position.`)
+                setSuccess(`✓ ${claimed.amount} ${CASH.code} received for your USDC. Deposit again to open the position.`)
                 refreshBalance()
               } catch (e) {
                 setError((e as Error)?.message ?? 'the claim was refused')

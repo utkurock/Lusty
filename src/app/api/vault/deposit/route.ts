@@ -281,8 +281,8 @@ export async function POST(req: Request) {
 
     try {
       // Recognised stables only, and only when it differs from what was
-      // escrowed — "funded with LUSD" on an LUSD position is noise.
-      const collateralCode = position.side === 'call' ? asset.symbol : 'LUSD'
+      // escrowed — "funded with USDC" on a USDC position is noise.
+      const collateralCode = position.side === 'call' ? asset.symbol : asset.cash.code
       const fundedWith =
         body.fundedWith === USDC_CODE && body.fundedWith !== collateralCode
           ? USDC_CODE
@@ -296,7 +296,7 @@ export async function POST(req: Request) {
         // The token the amount is denominated in: a call escrows the
         // underlying, a put escrows cash. Which book the row belongs to is a
         // separate question, and `underlying` is the only one that answers it.
-        asset: position.side === 'call' ? asset.symbol : 'LUSD',
+        asset: position.side === 'call' ? asset.symbol : asset.cash.code,
         underlying: asset.symbol,
         txHash,
         // Escrow and premium are one transaction now; there is no separate

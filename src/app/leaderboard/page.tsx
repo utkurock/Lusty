@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState, useCallback } from 'react'
+import { CASH } from '@/lib/assets'
 import { useWalletContext } from '@/providers/WalletProvider'
 import { formatAddress } from '@/lib/utils'
 import { Trophy, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
@@ -205,7 +206,7 @@ export default function LeaderboardPage() {
               Season 0 <span className="text-brand">points</span>
             </h1>
             <p className="mt-3 font-mono text-body text-cream/70 max-w-md">
-              Every deposit and every LUSD upfront you earn feeds a single
+              Every deposit and every {CASH.code} upfront you earn feeds a single
               leaderboard.
             </p>
             <a

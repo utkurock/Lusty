@@ -23,6 +23,8 @@
 // could change between two reads is not something the money path should be
 // asking twice.
 
+import { Asset } from '@stellar/stellar-sdk'
+import { NETWORK_PASSPHRASE } from '../stellar'
 import { validateAsset, type ResolvedAsset } from './validate'
 
 /**
@@ -38,12 +40,28 @@ export type StellarAsset =
   | { kind: 'native' }
   | { kind: 'issued'; code: string; issuer: string | null }
 
+/**
+ * The classic asset premiums are paid in and a put escrows. Named by code and
+ * issuer, because a code is not an identity: anyone can issue a USDC.
+ */
+export interface CashAsset {
+  code: string
+  issuer: string
+  /** Path under `public/` to its mark. */
+  logo: string
+}
+
 /** The three addresses this underlying's vault instance was constructed with. */
 export interface UnderlyingContracts {
   vault: string
   /** SAC for the collateral a call escrows — the contract's `token`. */
   token: string
-  /** SAC premiums are paid in and a put escrows — the contract's `cash`. */
+  /**
+   * SAC premiums are paid in and a put escrows — the contract's `cash`.
+   * Derived from `cash`'s code and issuer, never declared: a SAC's address is
+   * a function of the asset and the network, so a second record of it could
+   * only ever disagree.
+   */
   cash: string
 }
 
@@ -151,6 +169,8 @@ export interface UnderlyingAsset {
    */
   issues: AssetIssue[]
   contracts: UnderlyingContracts
+  /** What a put escrows and every premium is paid in. */
+  cash: CashAsset
   /** Reflector `Other(Symbol)` feed name — THE settlement price source. */
   feedSymbol: string
   /**
@@ -253,8 +273,8 @@ export interface AssetDeclaration {
   contracts: {
     vault: DeclaredText
     token: DeclaredText
-    cash: DeclaredText
   }
+  cash: CashAsset
   feedSymbol: DeclaredText
   binanceSymbol: string
   coingeckoId: string
@@ -368,6 +388,15 @@ export function resolveIssuer(
   return readEnv(declared.env, inlined) ?? declared.fallback
 }
 
+/** The cash's SAC on this network, or '' when the cash is not a valid asset. */
+function cashContract(cash: CashAsset): string {
+  try {
+    return new Asset(cash.code, cash.issuer).contractId(NETWORK_PASSPHRASE)
+  } catch {
+    return ''
+  }
+}
+
 /**
  * Resolve a declaration against the environment and check it, in that order:
  * the environment is where most of the holes are, so a declaration cannot be
@@ -398,8 +427,9 @@ export function declare(
     contracts: {
       vault: text(d.contracts.vault),
       token: text(d.contracts.token),
-      cash: text(d.contracts.cash),
+      cash: cashContract(d.cash),
     },
+    cash: d.cash,
     feedSymbol: text(d.feedSymbol),
     binanceSymbol: d.binanceSymbol,
     coingeckoId: d.coingeckoId,

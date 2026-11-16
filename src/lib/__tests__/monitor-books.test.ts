@@ -47,7 +47,7 @@ vi.mock('@/lib/db', () => ({
   ensureSchema: async () => {},
   getPool: () => ({ query: async () => ({ rows: [{}] }) }),
 }))
-vi.mock('@/lib/lusd', () => ({ LUSD_DISTRIBUTOR: '' }))
+vi.mock('@/lib/lusd', async (orig) => ({ ...(await orig<typeof import('@/lib/lusd')>()), LUSD_DISTRIBUTOR: '' }))
 vi.mock('@/lib/monitor/limits-watch', () => ({
   checkLimitsEvents: async () => null,
   checkWithdrawalEvents: async () => null,

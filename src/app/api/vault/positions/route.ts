@@ -253,7 +253,7 @@ function merge(
     positionId: position.id,
     address,
     type: position.side,
-    asset: position.side === 'call' ? asset.symbol : 'LUSD',
+    asset: position.side === 'call' ? asset.symbol : asset.cash.code,
     underlying: asset.symbol,
     collateralAmount: position.collateral,
     strikePrice: position.strike,

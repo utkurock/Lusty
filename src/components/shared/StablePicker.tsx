@@ -1,12 +1,16 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
+import { CASH } from '@/lib/assets'
+import { USDC_CODE, USDC_ROUTES_TO_CASH } from '@/lib/usdc'
 
-export type Stable = 'LUSD' | 'USDC'
+/** An asset code a put can be paid in. */
+export type Stable = string
 
+/** The cash a put escrows, and USDC routed into it unless the cash is USDC. */
 export const STABLES: { code: Stable; icon: string }[] = [
-  { code: 'LUSD', icon: '/lusd.png' },
-  { code: 'USDC', icon: '/usdc.png' },
+  { code: CASH.code, icon: CASH.logo },
+  ...(USDC_ROUTES_TO_CASH ? [{ code: USDC_CODE, icon: '/usdc.png' }] : []),
 ]
 
 interface StablePickerProps {

@@ -23,7 +23,7 @@ import { pricingDaysFor } from '../quote-inputs'
 
 const VAULT = StrKey.encodeContract(Buffer.alloc(32, 0x41))
 const TOKEN = StrKey.encodeContract(Buffer.alloc(32, 0x42))
-const CASH = StrKey.encodeContract(Buffer.alloc(32, 0x43))
+const CASH = { code: 'ZUSD', issuer: StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 0x43)), logo: '/zusd.png' }
 
 /** A declared book whose schedule nothing else in the repo uses. */
 function book(symbol: string, expiry: ExpiryParams) {
@@ -33,7 +33,8 @@ function book(symbol: string, expiry: ExpiryParams) {
     slug: symbol.toLowerCase(),
     icon: '◆',
     logo: `/${symbol.toLowerCase()}.png`,
-    contracts: { vault: VAULT, token: TOKEN, cash: CASH },
+    contracts: { vault: VAULT, token: TOKEN },
+    cash: CASH,
     feedSymbol: symbol,
     binanceSymbol: `${symbol}USDT`,
     coingeckoId: symbol.toLowerCase(),

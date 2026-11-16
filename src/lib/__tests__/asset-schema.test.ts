@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { StrKey } from '@stellar/stellar-sdk'
+import { Asset, Networks, StrKey } from '@stellar/stellar-sdk'
 import {
   declare,
   resolveNumber,
@@ -10,7 +10,9 @@ import {
 // Synthetic addresses: well-formed strkeys naming nothing deployed.
 const VAULT = StrKey.encodeContract(Buffer.alloc(32, 0x21))
 const TOKEN = StrKey.encodeContract(Buffer.alloc(32, 0x22))
-const CASH = StrKey.encodeContract(Buffer.alloc(32, 0x23))
+const CASH = { code: 'ZUSD', issuer: StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 0x23)), logo: '/zusd.png' }
+/** The SAC a vault constructed with that cash holds it at, on testnet. */
+const CASH_SAC = new Asset(CASH.code, CASH.issuer).contractId(Networks.TESTNET)
 const ISSUER = StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 0x24))
 
 const touched: string[] = []
@@ -36,7 +38,8 @@ function declaration(
     slug: 'zzz',
     icon: '◆',
     logo: '/zzz.png',
-    contracts: { vault: VAULT, token: TOKEN, cash: CASH },
+    contracts: { vault: VAULT, token: TOKEN },
+    cash: CASH,
     feedSymbol: 'ZZZ',
     binanceSymbol: 'ZZZUSDT',
     coingeckoId: 'test-underlying',
@@ -72,7 +75,8 @@ describe('declare — an asset is data, not a type edit', () => {
     const a = declare(declaration())
     expect(a.symbol).toBe('ZZZ')
     expect(a.enabled).toBe(true)
-    expect(a.contracts).toEqual({ vault: VAULT, token: TOKEN, cash: CASH })
+    expect(a.contracts).toEqual({ vault: VAULT, token: TOKEN, cash: CASH_SAC })
+    expect(a.cash).toEqual(CASH)
   })
 
   it('normalizes the symbol so a lookup cannot miss on case or spacing', () => {
@@ -93,10 +97,17 @@ describe('declare — an asset is data, not a type edit', () => {
 
 describe('declare — gating', () => {
   it('gates an asset with nowhere to settle', () => {
-    for (const missing of ['vault', 'token', 'cash'] as const) {
-      const contracts = { vault: VAULT, token: TOKEN, cash: CASH, [missing]: '' }
+    for (const missing of ['vault', 'token'] as const) {
+      const contracts = { vault: VAULT, token: TOKEN, [missing]: '' }
       expect(declare(declaration({ contracts })).enabled).toBe(false)
     }
+  })
+
+  it('derives the cash SAC from the cash it names, and gates a cash that is no asset', () => {
+    const bad = declare(declaration({ cash: { ...CASH, issuer: 'GNOTANACCOUNT' } }))
+    expect(bad.contracts.cash).toBe('')
+    expect(bad.enabled).toBe(false)
+    expect(bad.issues.map((i) => i.field)).toContain('cash.issuer')
   })
 
   it('gates issued collateral until somebody anchors it', () => {
@@ -162,7 +173,6 @@ describe('resolving a declared field against the environment', () => {
         contracts: {
           vault: { env: 'LUSTY_TEST_VAULT', fallback: '' },
           token: TOKEN,
-          cash: CASH,
         },
         envelope: {
           ...declaration().envelope,

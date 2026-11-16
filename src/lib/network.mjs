@@ -17,6 +17,7 @@ import { Networks } from '@stellar/stellar-sdk'
  * @property {string} rpcUrl
  * @property {string} horizonUrl
  * @property {string} explorerBase stellar.expert's root for this network
+ * @property {{ code: string, issuer: string }} usdc Circle's USDC on this network
  */
 
 /**
@@ -27,18 +28,20 @@ import { Networks } from '@stellar/stellar-sdk'
  * @property {string} [horizonUrl] NEXT_PUBLIC_HORIZON_URL
  */
 
-/** @type {Record<StellarNetworkName, { passphrase: string, rpcUrl?: string, horizonUrl: string }>} */
+/** @type {Record<StellarNetworkName, { passphrase: string, rpcUrl?: string, horizonUrl: string, usdcIssuer: string }>} */
 const DEFAULTS = {
   testnet: {
     passphrase: Networks.TESTNET,
     rpcUrl: 'https://soroban-testnet.stellar.org',
     horizonUrl: 'https://horizon-testnet.stellar.org',
+    usdcIssuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
   },
   // SDF runs no public-network RPC, so there is no default to fall back on:
   // the provider is a deployment choice and has to be named.
   public: {
     passphrase: Networks.PUBLIC,
     horizonUrl: 'https://horizon.stellar.org',
+    usdcIssuer: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
   },
 }
 
@@ -70,5 +73,6 @@ export function resolveNetwork(env) {
     rpcUrl: env.serverRpcUrl?.trim() || sharedRpcUrl,
     horizonUrl: env.horizonUrl?.trim() || d.horizonUrl,
     explorerBase: `https://stellar.expert/explorer/${name}`,
+    usdc: { code: 'USDC', issuer: d.usdcIssuer },
   }
 }

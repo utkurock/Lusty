@@ -143,11 +143,20 @@ export function validateAsset(a: ResolvedAsset): AssetIssue[] {
     issues.invalid('logo', `must be a path under public/, got "${a.logo}"`)
   }
 
-  // Where it settles. No vault means no book; no cash means no premium can be
-  // paid; no token means a call has nothing to escrow.
+  // Where it settles. No vault means no book; no token means a call has
+  // nothing to escrow; a cash that is not an asset means no premium can be
+  // paid, and its SAC is derived from it.
   checkContract(issues, 'contracts.vault', a.contracts.vault, 'no vault instance is deployed for this book')
   checkContract(issues, 'contracts.token', a.contracts.token, 'the collateral a call escrows has no SAC')
-  checkContract(issues, 'contracts.cash', a.contracts.cash, 'the asset premiums are paid in has no SAC')
+  if (!/^[A-Za-z0-9]{1,12}$/.test(a.cash.code)) {
+    issues.invalid('cash.code', `must be a 1-12 character asset code, got "${a.cash.code}"`)
+  }
+  if (!StrKey.isValidEd25519PublicKey(a.cash.issuer)) {
+    issues.invalid('cash.issuer', `is not an account address: ${a.cash.issuer}`)
+  }
+  if (!a.cash.logo.startsWith('/')) {
+    issues.invalid('cash.logo', `must be a path under public/, got "${a.cash.logo}"`)
+  }
 
   // What it escrows.
   if (a.stellarAsset.kind === 'issued') {

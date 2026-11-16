@@ -416,10 +416,8 @@ export function settlementPayout(
   // Which token the writer is handed. The underlying leg is the instance's
   // own — a BTC put that assigns pays BTC, and naming it XLM would tell the
   // writer their collateral came back as something it is not. The cash leg is
-  // LUSD for every instance today; it is the registry's `cash` SAC, and an
-  // asset settling in something else changes here and in the registry
-  // together.
-  const CASH = 'LUSD'
+  // the book's declared cash.
+  const CASH = asset.cash.code
 
   if (p.outcome === 'kept') {
     // The escrow comes back untouched, in the token it went in as.

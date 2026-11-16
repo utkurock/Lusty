@@ -21,7 +21,7 @@ export interface VaultEvent {
   outcome?: string
   priceUsd?: number
   /** What settlement paid the writer, in the token it paid in. */
-  payout?: { amount: number; asset: 'XLM' | 'LUSD' }
+  payout?: { amount: number; asset: string }
   /** Collateral released by settlement — to the writer, or to the treasury. */
   releasedAmount?: number
   from?: string

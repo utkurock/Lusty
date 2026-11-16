@@ -32,6 +32,8 @@ export const IS_TESTNET = NETWORK.name === 'testnet'
 export const NETWORK_PASSPHRASE = NETWORK.passphrase
 export const RPC_URL = NETWORK.rpcUrl
 export const HORIZON_URL = NETWORK.horizonUrl
+/** Circle's USDC on this network, by code and issuer. */
+export const CIRCLE_USDC = NETWORK.usdc
 
 export const explorerTxUrl = (hash: string) => `${NETWORK.explorerBase}/tx/${hash}`
 export const explorerAccountUrl = (address: string) =>

@@ -17,6 +17,7 @@ import { StatStrip } from '@/components/shared/StatStrip'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { PageHeader } from '@/components/shared/PageHeader'
 import {
+  CASH,
   enabledUnderlyings,
   displayDecimalsOf,
   logoOf,
@@ -341,7 +342,7 @@ function ExposurePanel({
 /** Token-tagged, because which token arrived is the point of the whole line. */
 function payoutAmount(payout: { amount: number; asset: string }): string {
   // Cash pays to four places; an underlying to whatever its own book shows.
-  const digits = payout.asset === 'LUSD' ? 4 : displayDecimalsOf(payout.asset)
+  const digits = payout.asset === CASH.code ? 4 : displayDecimalsOf(payout.asset)
   return `${payout.amount.toLocaleString('en-US', {
     minimumFractionDigits: 2,
     maximumFractionDigits: digits,

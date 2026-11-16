@@ -4,15 +4,16 @@
  * Turning the writer's stablecoin into the cash the vault escrows.
  * ===============================================================
  * A cash-secured put escrows ONE token — the `cash` address its vault instance
- * was constructed with (contracts/vault, `Config.cash`), which is LUSD on both
- * books. That is fixed at init, so "escrow my USDC instead" is not something
+ * was constructed with (contracts/vault, `Config.cash`), the cash every book
+ * declares (lib/assets). That is fixed at init, so "escrow my USDC instead" is not something
  * the contract can be asked for.
  *
  * What the writer means by it, though, is answerable: the balance that leaves
  * their wallet should be the stablecoin they picked, not a different one they
  * happen to hold. So when USDC is selected, the deposit spends USDC — it is
  * paid to the distributor and comes back as cash one for one, and the position
- * is escrowed with that. Their LUSD is not touched.
+ * is escrowed with that. The cash they already hold is not touched. Where the
+ * cash is USDC itself, as on the public network, the picker never offers it.
  *
  * Two ways across, tried in order. First a ROUTE: the writer's own path
  * payment through Stellar's liquidity (lib/routing, app/api/routing/swap),
@@ -27,6 +28,7 @@
  */
 
 import { buildBridgePaymentTx, checkBridge, claimBridge, submitSigned } from './anchor/bridge'
+import { CASH } from './assets'
 
 /** Stellar carries seven decimals; an amount with more is not representable. */
 const STELLAR_DECIMALS = 7
@@ -82,7 +84,7 @@ export async function routeToCash(params: {
   const { address, asset, amount, signTransaction, onProgress } = params
   const exact = Number(amount.toFixed(STELLAR_DECIMALS))
 
-  onProgress?.('Quoting USDC → LUSD on the network…')
+  onProgress?.(`Quoting USDC → ${CASH.code} on the network…`)
   const prepared = await routingCall({ action: 'prepare', address, asset, destAmount: exact })
   if (!prepared.body?.ok) {
     throw new RouteUnavailable(
@@ -94,7 +96,7 @@ export async function routeToCash(params: {
 
   let hash: string
   try {
-    onProgress?.(`Swapping at most ${sendMax} USDC for ${exact} LUSD — confirm in wallet`)
+    onProgress?.(`Swapping at most ${sendMax} USDC for ${exact} ${CASH.code} — confirm in wallet`)
     hash = await submitSigned(await signTransaction(xdr))
   } catch (e) {
     const reason = (e as any)?.response?.data?.extras?.result_codes?.operations?.join(', ')
@@ -168,7 +170,7 @@ export async function convertToCash(params: {
   if (!ready.ready) {
     throw new Error(
       ready.reason ??
-        'the USDC conversion cannot be honoured right now — switch to LUSD or try again later',
+        `the USDC conversion cannot be honoured right now — switch to ${CASH.code} or try again later`,
     )
   }
 

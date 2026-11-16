@@ -43,7 +43,9 @@ const LUSD_TRUSTLINE: StellarAsset = {
  * is the whole reason it never came up before BTC.
  */
 export function trustlinesRequired(asset: UnderlyingAsset): StellarAsset[] {
-  const needed = [LUSD_TRUSTLINE]
+  const needed: StellarAsset[] = [
+    { kind: 'issued', code: asset.cash.code, issuer: asset.cash.issuer },
+  ]
   // Only what can actually be trusted. A half-configured entry — issued, no
   // issuer — is gated by the registry long before this, and returning it here
   // would hand the wallet a changeTrust to nothing.

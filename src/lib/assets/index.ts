@@ -18,13 +18,16 @@
 // and limits of one asset out of another's. An asset stays gated until
 // everything it needs to settle is named.
 
-import { BROWSER_ENV, DECLARATIONS } from './config'
+import { BROWSER_ENV, CASH, DECLARATIONS } from './config'
 import { declare, type UnderlyingAsset, type UnderlyingSymbol } from './schema'
 import { describeIssues } from './validate'
+
+export { CASH }
 
 export type {
   AssetDeclaration,
   AssetIssue,
+  CashAsset,
   ExpiryParams,
   OnchainLimits,
   StellarAsset,

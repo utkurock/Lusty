@@ -158,7 +158,7 @@ async function checkSolvency(asset: UnderlyingAsset): Promise<Alert | null> {
         // Calls pay cash; puts escrow cash.
         free: s.cashBalance - s.escrowedPut,
         owed: s.owedCall,
-        token: 'LUSD',
+        token: asset.cash.code,
       },
       {
         kind: 'put',

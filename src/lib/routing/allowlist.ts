@@ -1,7 +1,7 @@
 // The routes the vault is allowed to take.
 // =======================================
 // A cash-secured put escrows ONE token — the `cash` address its instance was
-// constructed with, which is LUSD on every book. That is fixed at init, so
+// constructed with, the cash every book declares. That is fixed at init, so
 // "escrow my USDC instead" is not something the contract can be asked for.
 // What the writer means by it is answerable: the balance that leaves their
 // wallet should be the stablecoin they picked. Crossing it is what routing is.
@@ -25,8 +25,8 @@
 // trustworthy asset in it, and the path finder will happily route through a
 // token somebody minted this morning if the price is good.
 
-import { LUSD_CODE, LUSD_ISSUER } from '../lusd'
-import { USDC_CODE, USDC_ISSUER } from '../usdc'
+import { CASH } from '../assets'
+import { USDC_CODE, USDC_ISSUER, USDC_ROUTES_TO_CASH } from '../usdc'
 
 /** An asset a route may send, receive or pass through. Null issuer is native. */
 export interface RoutedAsset {
@@ -70,7 +70,7 @@ export interface Route {
   maxParDeviationBps?: number
 }
 
-const LUSD: RoutedAsset = { code: LUSD_CODE, issuer: LUSD_ISSUER }
+const CASH_ASSET: RoutedAsset = { code: CASH.code, issuer: CASH.issuer }
 const USDC: RoutedAsset = { code: USDC_CODE, issuer: USDC_ISSUER }
 
 function num(raw: string | undefined, fallback: number): number {
@@ -94,11 +94,15 @@ const MAX_PAR_DEVIATION_BPS = num(process.env.ROUTING_MAX_PAR_DEVIATION_BPS, 100
 // and the right answer to that is to not trade rather than to go around.
 const MAX_HOPS = Math.max(0, Math.floor(num(process.env.ROUTING_MAX_HOPS, 0)))
 
-const ROUTES: Route[] = [
+const routeId = (send: RoutedAsset, receive: RoutedAsset) =>
+  `${send.code}->${receive.code}`.toLowerCase()
+
+// None where the cash is USDC: there is nothing to cross.
+const ROUTES: Route[] = !USDC_ROUTES_TO_CASH ? [] : [
   {
-    id: 'usdc->lusd',
+    id: routeId(USDC, CASH_ASSET),
     send: USDC,
-    receive: LUSD,
+    receive: CASH_ASSET,
     maxHops: MAX_HOPS,
     maxSlippageBps: MAX_SLIPPAGE_BPS,
     quoteMaxAgeMs: QUOTE_MAX_AGE_MS,
@@ -106,8 +110,8 @@ const ROUTES: Route[] = [
     maxParDeviationBps: MAX_PAR_DEVIATION_BPS,
   },
   {
-    id: 'lusd->usdc',
-    send: LUSD,
+    id: routeId(CASH_ASSET, USDC),
+    send: CASH_ASSET,
     receive: USDC,
     maxHops: MAX_HOPS,
     maxSlippageBps: MAX_SLIPPAGE_BPS,

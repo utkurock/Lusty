@@ -4,6 +4,7 @@ import { ExternalLink } from 'lucide-react'
 import { useContractEvents, type VaultEvent } from '@/hooks/useContractEvents'
 import { Pager } from '@/components/shared/Pager'
 import { explorerTxUrl } from '@/lib/stellar'
+import { CASH } from '@/lib/assets'
 
 // Five rows at a time. The feed is a thing you scan, not a wall you scroll
 // past on the way to the rest of the page.
@@ -20,7 +21,7 @@ function timeAgo(iso: string): string {
 }
 
 /** Token-tagged: which token arrived is the point of a settlement row. */
-function amountOf(payout: { amount: number; asset: 'XLM' | 'LUSD' }): string {
+function amountOf(payout: { amount: number; asset: string }): string {
   return `${payout.amount.toLocaleString('en-US', {
     minimumFractionDigits: 2,
     maximumFractionDigits: payout.asset === 'XLM' ? 2 : 4,
@@ -32,7 +33,7 @@ function collateralOf(e: VaultEvent): string {
   const n = (e.releasedAmount ?? 0).toLocaleString('en-US', {
     maximumFractionDigits: 2,
   })
-  return e.side === 'put' ? `${n} LUSD` : `${n} XLM`
+  return e.side === 'put' ? `${n} ${CASH.code}` : `${n} XLM`
 }
 
 function label(e: VaultEvent): { tag: string; tone: string; text: string } {

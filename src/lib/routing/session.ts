@@ -29,8 +29,8 @@
 import { randomUUID } from 'crypto'
 import { Horizon } from '@stellar/stellar-sdk'
 import { HORIZON_URL } from '../stellar'
-import { LUSD_CODE, LUSD_ISSUER } from '../lusd'
-import { USDC_CODE, USDC_ISSUER } from '../usdc'
+import { CASH } from '../assets'
+import { USDC_CODE, USDC_ISSUER, USDC_ROUTES_TO_CASH } from '../usdc'
 import type { UnderlyingAsset } from '../assets'
 import { routeFor, type Route } from './allowlist'
 import { quoteRoute, RouteRefused, type RouteRefusalCode } from './quote'
@@ -42,10 +42,10 @@ import { record } from './journal'
 export function cashRoute(): Route {
   const route = routeFor(
     { code: USDC_CODE, issuer: USDC_ISSUER },
-    { code: LUSD_CODE, issuer: LUSD_ISSUER },
+    { code: CASH.code, issuer: CASH.issuer },
   )
   // A missing route is a broken allowlist, not a market condition.
-  if (!route) throw new Error('usdc->lusd is not on the routing allowlist')
+  if (!route) throw new Error(`usdc->${CASH.code.toLowerCase()} is not on the routing allowlist`)
   return route
 }
 
@@ -118,6 +118,9 @@ export async function prepareRoutedSwap(params: {
 }): Promise<PreparedSwap> {
   const { address, book, destAmount } = params
   const now = params.now ?? Date.now()
+  if (!USDC_ROUTES_TO_CASH) {
+    throw new RoutedSwapRefused('the cash puts escrow is USDC; there is nothing to route', 'path_not_allowed')
+  }
   const route = cashRoute()
 
   const refuse = (code: RouteRefusalCode | 'routing_cap', reason: string): never => {

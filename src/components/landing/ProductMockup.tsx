@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import { Check, Lock } from 'lucide-react'
+import { CASH } from '@/lib/assets'
 import { cn } from '@/lib/utils'
 
 /*
@@ -38,7 +39,7 @@ const SCREENS = [
   { src: '/landing/flow-3-filled.jpg', alt: 'The XLM book with 10,000 XLM entered, the upfront received, and the earn button.', h: BOOK_H },
 ]
 
-const UPFRONT = '+5.28 LUSD'
+const UPFRONT = `+5.28 ${CASH.code}`
 
 type Step = { ms: number; screen: number; cursor: keyof typeof SPOTS; scrolled?: boolean; click?: boolean; toast?: boolean; hidden?: boolean }
 

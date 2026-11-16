@@ -5,7 +5,7 @@ import { validateAsset } from '../assets/validate'
 
 const VAULT = StrKey.encodeContract(Buffer.alloc(32, 0x31))
 const TOKEN = StrKey.encodeContract(Buffer.alloc(32, 0x32))
-const CASH = StrKey.encodeContract(Buffer.alloc(32, 0x33))
+const CASH = { code: 'ZUSD', issuer: StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 0x33)), logo: '/zusd.png' }
 const ISSUER = StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 0x34))
 
 function declaration(
@@ -17,7 +17,8 @@ function declaration(
     slug: 'zzz',
     icon: '◆',
     logo: '/zzz.png',
-    contracts: { vault: VAULT, token: TOKEN, cash: CASH },
+    contracts: { vault: VAULT, token: TOKEN },
+    cash: CASH,
     feedSymbol: 'ZZZ',
     binanceSymbol: 'ZZZUSDT',
     coingeckoId: 'test-underlying',
@@ -65,13 +66,13 @@ describe('a complete declaration is servable', () => {
 describe('what is absent is unconfigured, what is wrong is invalid', () => {
   it('calls a missing contract unconfigured and a malformed one invalid', () => {
     const absent = declare(
-      declaration({ contracts: { vault: '', token: TOKEN, cash: CASH } })
+      declaration({ contracts: { vault: '', token: TOKEN } })
     ).issues
     expect(absent).toHaveLength(1)
     expect(absent[0]).toMatchObject({ kind: 'unconfigured', field: 'contracts.vault' })
 
     const malformed = declare(
-      declaration({ contracts: { vault: 'NOT-A-CONTRACT', token: TOKEN, cash: CASH } })
+      declaration({ contracts: { vault: 'NOT-A-CONTRACT', token: TOKEN } })
     ).issues
     expect(malformed).toHaveLength(1)
     expect(malformed[0]).toMatchObject({ kind: 'invalid', field: 'contracts.vault' })
@@ -101,9 +102,10 @@ describe('what is absent is unconfigured, what is wrong is invalid', () => {
 
 describe('dropping a required field takes the asset offline', () => {
   const cases: Array<[string, Partial<AssetDeclaration>, string]> = [
-    ['no vault', { contracts: { vault: '', token: TOKEN, cash: CASH } }, 'contracts.vault'],
-    ['no token', { contracts: { vault: VAULT, token: '', cash: CASH } }, 'contracts.token'],
-    ['no cash', { contracts: { vault: VAULT, token: TOKEN, cash: '' } }, 'contracts.cash'],
+    ['no vault', { contracts: { vault: '', token: TOKEN } }, 'contracts.vault'],
+    ['no token', { contracts: { vault: VAULT, token: '' } }, 'contracts.token'],
+    ['no cash issuer', { cash: { ...CASH, issuer: '' } }, 'cash.issuer'],
+    ['a cash code no asset could have', { cash: { ...CASH, code: 'TOO-LONG-A-CODE' } }, 'cash.code'],
     ['no feed', { feedSymbol: '' }, 'feedSymbol'],
     ['no market', { binanceSymbol: '' }, 'binanceSymbol'],
     ['no vol source', { coingeckoId: '' }, 'coingeckoId'],

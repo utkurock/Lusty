@@ -6,8 +6,11 @@
 //
 // Order is the order surfaces list them in.
 
+import { LUSD_CODE, LUSD_ISSUER } from '../lusd'
+import { CIRCLE_USDC, IS_TESTNET } from '../stellar'
 import type {
   AssetDeclaration,
+  CashAsset,
   ExpiryParams,
   InlinedEnv,
   StrikeParams,
@@ -33,7 +36,6 @@ import type {
 export const BROWSER_ENV: InlinedEnv = {
   NEXT_PUBLIC_VAULT_CONTRACT: process.env.NEXT_PUBLIC_VAULT_CONTRACT,
   NEXT_PUBLIC_XLM_CONTRACT: process.env.NEXT_PUBLIC_XLM_CONTRACT,
-  NEXT_PUBLIC_LUSD_CONTRACT: process.env.NEXT_PUBLIC_LUSD_CONTRACT,
   NEXT_PUBLIC_VAULT_CONTRACT_BTC: process.env.NEXT_PUBLIC_VAULT_CONTRACT_BTC,
   NEXT_PUBLIC_BTC_CONTRACT: process.env.NEXT_PUBLIC_BTC_CONTRACT,
   NEXT_PUBLIC_BTC_ANCHOR_CODE: process.env.NEXT_PUBLIC_BTC_ANCHOR_CODE,
@@ -44,13 +46,18 @@ export const BROWSER_ENV: InlinedEnv = {
   NEXT_PUBLIC_ETH_ANCHOR_ISSUER: process.env.NEXT_PUBLIC_ETH_ANCHOR_ISSUER,
 }
 
-// Premiums are paid in one cash today, and both books escrow puts in it. Named
-// once so the two declarations cannot drift apart, and still declared per
-// asset so an asset settling in something else stays a config change.
-const LUSD_SAC = {
-  env: 'NEXT_PUBLIC_LUSD_CONTRACT',
-  fallback: 'CDTMNV7F7P3LUH6LLBTXY4EQYBUYGVGYRC7P73HMFV5PXLO5NE6A74QB',
-} as const
+/**
+ * The cash every book pays premiums in and escrows puts in. Named once so the
+ * declarations cannot drift apart, and still declared per asset so an asset
+ * settling in something else stays a config change.
+ *
+ * On the public network it is Circle's USDC. Testnet has no Circle liquidity
+ * worth settling against, so there it is LUSD, which this repository issues
+ * (lib/lusd) and the faucet hands out.
+ */
+export const CASH: CashAsset = IS_TESTNET
+  ? { code: LUSD_CODE, issuer: LUSD_ISSUER, logo: '/lusd.png' }
+  : { ...CIRCLE_USDC, logo: '/usdc.png' }
 
 // The ladder lib/pricing has always used, written down as a parameter instead
 // of a module constant. Both assets declare the same rungs because that is
@@ -86,8 +93,8 @@ export const DECLARATIONS: AssetDeclaration[] = [
         env: 'NEXT_PUBLIC_XLM_CONTRACT',
         fallback: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
       },
-      cash: LUSD_SAC,
     },
+    cash: CASH,
     feedSymbol: { env: 'REFLECTOR_FEED_SYMBOL', fallback: 'XLM' },
     binanceSymbol: 'XLMUSDT',
     coingeckoId: 'stellar',
@@ -129,8 +136,8 @@ export const DECLARATIONS: AssetDeclaration[] = [
     contracts: {
       vault: { env: 'NEXT_PUBLIC_VAULT_CONTRACT_BTC', fallback: '' },
       token: { env: 'NEXT_PUBLIC_BTC_CONTRACT', fallback: '' },
-      cash: LUSD_SAC,
     },
+    cash: CASH,
     feedSymbol: { env: 'REFLECTOR_FEED_SYMBOL_BTC', fallback: 'BTC' },
     binanceSymbol: 'BTCUSDT',
     coingeckoId: 'bitcoin',
@@ -194,8 +201,8 @@ export const DECLARATIONS: AssetDeclaration[] = [
     contracts: {
       vault: { env: 'NEXT_PUBLIC_VAULT_CONTRACT_ETH', fallback: '' },
       token: { env: 'NEXT_PUBLIC_ETH_CONTRACT', fallback: '' },
-      cash: LUSD_SAC,
     },
+    cash: CASH,
     feedSymbol: { env: 'REFLECTOR_FEED_SYMBOL_ETH', fallback: 'ETH' },
     binanceSymbol: 'ETHUSDT',
     coingeckoId: 'ethereum',

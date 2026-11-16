@@ -18,7 +18,7 @@ import { niceStrikeStep, roundStrike, strikeRungs } from '../pricing'
 
 const VAULT = StrKey.encodeContract(Buffer.alloc(32, 0x31))
 const TOKEN = StrKey.encodeContract(Buffer.alloc(32, 0x32))
-const CASH = StrKey.encodeContract(Buffer.alloc(32, 0x33))
+const CASH = { code: 'ZUSD', issuer: StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 0x33)), logo: '/zusd.png' }
 
 /** A declared book with a ladder nothing else in the repo uses. */
 function book(symbol: string, strike: StrikeParams) {
@@ -28,7 +28,8 @@ function book(symbol: string, strike: StrikeParams) {
     slug: symbol.toLowerCase(),
     icon: '◆',
     logo: `/${symbol.toLowerCase()}.png`,
-    contracts: { vault: VAULT, token: TOKEN, cash: CASH },
+    contracts: { vault: VAULT, token: TOKEN },
+    cash: CASH,
     feedSymbol: symbol,
     binanceSymbol: `${symbol}USDT`,
     coingeckoId: symbol.toLowerCase(),
