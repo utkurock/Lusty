@@ -306,3 +306,58 @@ describe('the registry under a broken declaration', () => {
     vi.doUnmock('../assets/config')
   })
 })
+
+// The money on the public network is real. A declaration there may only pay in
+// Circle's USDC, and may never escrow one of the test tokens this repository
+// mints — LUSD, LBTC — whose issuer key is whoever ran the mint script.
+describe('on the public network', () => {
+  const CIRCLE = { code: 'USDC', issuer: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN', logo: '/usdc.png' }
+  const LUSD_ISSUER = 'GBCMRD6NDL2RAJUOFQ25EHZVO3IRIGNESWE4QDRFB4AVFIP7IT5BRCJ6'
+
+  async function publicDeclare() {
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_STELLAR_NETWORK', 'public')
+    vi.stubEnv('NEXT_PUBLIC_RPC_URL', 'https://rpc.example')
+    vi.stubEnv('NEXT_PUBLIC_LUSD_ISSUER', '')
+    const { declare: declarePublic } = await import('../assets/schema')
+    return (over: Partial<AssetDeclaration>) =>
+      declarePublic(declaration({ cash: CIRCLE, ...over }))
+  }
+
+  afterEach(() => vi.unstubAllEnvs())
+
+  it('serves a book that pays in Circle’s USDC', async () => {
+    const a = (await publicDeclare())({})
+    expect(a.issues).toEqual([])
+    expect(a.enabled).toBe(true)
+  })
+
+  it.each([
+    ['LUSD', { ...CASH, code: 'LUSD', issuer: LUSD_ISSUER }],
+    ['a USDC Circle did not issue', { ...CIRCLE, issuer: ISSUER }],
+    ['another code from Circle’s issuer', { ...CIRCLE, code: 'EURC' }],
+  ])('refuses cash that is %s', async (_, cash) => {
+    const a = (await publicDeclare())({ cash })
+    expect(a.enabled).toBe(false)
+    expect(a.issues).toContainEqual(expect.objectContaining({ kind: 'invalid', field: 'cash' }))
+  })
+
+  it.each([
+    ['LBTC under any issuer', { kind: 'issued' as const, code: 'LBTC', issuer: ISSUER }],
+    ['anything the LUSD issuer issued', { kind: 'issued' as const, code: 'ZZZ', issuer: LUSD_ISSUER }],
+  ])('refuses an underlying that is %s', async (_, collateral) => {
+    const a = (await publicDeclare())({ collateral })
+    expect(a.enabled).toBe(false)
+    expect(a.issues).toContainEqual(expect.objectContaining({ kind: 'invalid', field: 'stellarAsset' }))
+  })
+
+  it('lets testnet keep its own tokens', () => {
+    const a = declare(
+      declaration({
+        cash: { ...CASH, code: 'LUSD', issuer: LUSD_ISSUER },
+        collateral: { kind: 'issued', code: 'LBTC', issuer: ISSUER },
+      }),
+    )
+    expect(a.issues).toEqual([])
+  })
+})

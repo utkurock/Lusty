@@ -79,10 +79,12 @@ describe('on testnet', () => {
 })
 
 // LUSD exists because testnet has no cash worth settling in, so only the
-// surfaces that exist for testnet alone may spell it.
+// surfaces that exist for testnet alone may spell it, and the rule that
+// refuses it on the public network.
 describe('no other source names LUSD', () => {
   const ROOT = path.resolve(__dirname, '../../..')
   const TESTNET_ONLY = new Set([
+    'src/lib/assets/validate.ts',
     'src/lib/lusd.ts',
     'src/lib/swap.ts',
     'src/lib/faucet.ts',

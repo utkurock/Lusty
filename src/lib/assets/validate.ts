@@ -27,6 +27,8 @@
 // the expensive one.
 
 import { StrKey } from '@stellar/stellar-sdk'
+import { LUSD_ISSUER } from '../lusd'
+import { CIRCLE_USDC, IS_TESTNET } from '../stellar'
 import type { AssetIssue, UnderlyingAsset } from './schema'
 
 /** The asset as resolved, before it is known whether it can be served. */
@@ -35,6 +37,13 @@ export type ResolvedAsset = Omit<UnderlyingAsset, 'enabled' | 'issues'>
 // Amounts are decimal numbers standing in for i128 at seven decimals, so
 // anything below a stroop is float noise rather than a real inequality.
 const EPSILON = 1e-7
+
+/**
+ * The codes this repository mints for testnet (scripts/mint-lusd.mjs,
+ * scripts/mint-lbtc.mjs). Matched by code, because LBTC's issuer is a fresh
+ * keypair on every mint and so cannot be listed.
+ */
+const REPOSITORY_ISSUED_CODES = ['LUSD', 'LBTC']
 
 const SYMBOL = /^[A-Z0-9]{1,12}$/
 const SLUG = /^[a-z0-9][a-z0-9-]{0,31}$/
@@ -168,6 +177,25 @@ export function validateAsset(a: ResolvedAsset): AssetIssue[] {
       issues.missing('stellarAsset.issuer', 'nobody anchors this asset yet')
     } else if (!StrKey.isValidEd25519PublicKey(issuer)) {
       issues.invalid('stellarAsset.issuer', `is not an account address: ${issuer}`)
+    }
+  }
+
+  // On the public network the money is real, so it has to be someone's whose
+  // reserve stands behind it. Premiums and put escrow are Circle's USDC, and an
+  // underlying is never one of the test tokens this repository mints: its
+  // issuer key sits with whoever ran the mint script, and nothing backs it.
+  if (!IS_TESTNET) {
+    if (a.cash.code !== CIRCLE_USDC.code || a.cash.issuer !== CIRCLE_USDC.issuer) {
+      issues.invalid('cash', `must be Circle's USDC on the public network, got ${a.cash.code}:${a.cash.issuer}`)
+    }
+    if (a.stellarAsset.kind === 'issued') {
+      const { code, issuer } = a.stellarAsset
+      if (REPOSITORY_ISSUED_CODES.includes(code.toUpperCase()) || issuer === LUSD_ISSUER) {
+        issues.invalid(
+          'stellarAsset',
+          `${code} is a test token this repository issues and cannot be escrowed on the public network`
+        )
+      }
     }
   }
 
