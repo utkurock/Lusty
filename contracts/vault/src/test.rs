@@ -2,7 +2,7 @@
 
 use super::reflector::{Asset, PriceData};
 use super::{
-    DataKey, Kind, Limits, LustyVault, LustyVaultClient, PendingLimits, PendingWithdrawal, Pool,
+    DataKey, Error, Kind, Limits, LustyVault, LustyVaultClient, PendingLimits, PendingWithdrawal, Pool,
     LIMIT_RAISE_DELAY_SECS, MAX_QUOTERS, WITHDRAW_DELAY_SECS,
 };
 use soroban_sdk::testutils::storage::Persistent as _;
@@ -75,6 +75,7 @@ struct Setup<'a> {
     treasury: Address,
     quoter: Address,
     admin: Address,
+    guardian: Address,
 }
 
 fn limits(call: i128, put: i128) -> Limits {
@@ -139,6 +140,7 @@ fn setup() -> Setup<'static> {
     let writer = Address::generate(&env);
     let treasury = Address::generate(&env);
     let quoter = Address::generate(&env);
+    let guardian = Address::generate(&env);
     let funder = Address::generate(&env);
 
     let sac = env.register_stellar_asset_contract_v2(admin.clone());
@@ -162,6 +164,7 @@ fn setup() -> Setup<'static> {
             treasury.clone(),
             vec![&env, quoter.clone()],
             admin.clone(),
+            guardian.clone(),
             limits(MAX_POSITION_CALL, MAX_POSITION_PUT),
         ),
     );
@@ -171,7 +174,7 @@ fn setup() -> Setup<'static> {
     // to be up before any position can be written.
     oracle.set_lastprice(&SPOT, &START);
 
-    Setup { env, vault, oracle, token, cash, writer, treasury, quoter, admin }
+    Setup { env, vault, oracle, token, cash, writer, treasury, quoter, admin, guardian }
 }
 
 // ── Deposit / premium ───────────────────────────────────────────────
@@ -1152,6 +1155,7 @@ fn register_vault_with_quoters(quoters: Vec<Address>) {
             Address::generate(&env),
             quoters,
             admin,
+            Address::generate(&env),
             limits(MAX_POSITION_CALL, MAX_POSITION_PUT),
         ),
     );
@@ -1286,6 +1290,7 @@ fn the_constructor_refuses_the_admin_as_a_quoter() {
             Address::generate(&env),
             vec![&env, admin.clone()],
             admin,
+            Address::generate(&env),
             limits(MAX_POSITION_CALL, MAX_POSITION_PUT),
         ),
     );
@@ -1312,6 +1317,7 @@ fn the_constructor_refuses_the_vault_as_its_own_treasury() {
             vault_id.clone(),
             vec![&env, Address::generate(&env)],
             admin,
+            Address::generate(&env),
             limits(MAX_POSITION_CALL, MAX_POSITION_PUT),
         ),
     );
@@ -1537,4 +1543,173 @@ fn a_substitute_more_than_an_hour_after_expiry_is_refused() {
     s.oracle.set_price(&(EXPIRY + 3900), &OTM);
     s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 4000);
     s.vault.settle(&id);
+}
+
+// ── v6: the guardian's pause ────────────────────────────────────────
+//
+// The guardian can stop new positions and do nothing else; only the admin can
+// start them again. Nothing that closes a position is ever paused.
+
+fn announced(s: &Setup, topic: &str) -> bool {
+    let want = ScVal::Symbol(ScSymbol(topic.try_into().unwrap()));
+    s.env.events().all().events().iter().any(|e| match &e.body {
+        ContractEventBody::V0(v) => v.topics.first() == Some(&want),
+    })
+}
+
+#[test]
+fn the_guardian_pauses_and_the_admin_unpauses() {
+    let s = setup();
+    assert!(!s.vault.paused());
+
+    // Auths and events are those of the last invocation, so read them first.
+    s.vault.pause();
+    assert_eq!(s.env.auths()[0].0, s.guardian);
+    assert!(announced(&s, "pause"));
+    assert!(s.vault.paused());
+
+    s.vault.unpause();
+    assert_eq!(s.env.auths()[0].0, s.admin);
+    assert!(announced(&s, "unpause"));
+    assert!(!s.vault.paused());
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
+}
+
+#[test]
+fn a_paused_vault_refuses_both_kinds_before_anything_moves() {
+    let s = setup();
+    token::StellarAssetClient::new(&s.env, &s.cash.address).mint(&s.writer, &PUT_COLLATERAL);
+    s.vault.pause();
+
+    let call = s.vault.try_deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
+    assert_eq!(call.err(), Some(Ok(Error::Paused.into())));
+    let put = s.vault.try_open(
+        &s.writer,
+        &Kind::Put,
+        &PUT_COLLATERAL,
+        &STRIKE,
+        &EXPIRY,
+        &PREMIUM,
+        &s.quoter,
+    );
+    assert_eq!(put.err(), Some(Ok(Error::Paused.into())));
+    assert_eq!(s.token.balance(&s.writer), WRITER_XLM);
+    assert_eq!(s.cash.balance(&s.writer), PUT_COLLATERAL);
+    assert_eq!(s.vault.stats().next_id, 0);
+}
+
+#[test]
+fn pausing_twice_is_not_an_error() {
+    let s = setup();
+    s.vault.pause();
+    s.vault.pause();
+    assert!(s.vault.paused());
+}
+
+#[test]
+fn settlement_and_price_recording_run_while_paused() {
+    let s = setup();
+    let assigned = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
+    let later = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
+    s.vault.pause();
+
+    s.oracle.set_price(&EXPIRY, &ITM);
+    s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 60);
+    assert_eq!(s.vault.record_price(&EXPIRY), ITM);
+    assert_eq!(s.vault.settle(&assigned), symbol_short!("assigned"));
+    assert_eq!(s.vault.settle(&later), symbol_short!("assigned"));
+    assert_eq!(s.vault.escrowed(&Kind::Call), 0);
+    assert_eq!(s.vault.owed(&Kind::Call), 0);
+    assert!(s.vault.paused());
+}
+
+#[test]
+fn the_thirty_day_release_runs_while_paused() {
+    let s = setup();
+    let id = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &PREMIUM, &s.quoter);
+    s.vault.pause();
+    s.oracle.clear_lastprice();
+    s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 31 * 86400);
+
+    assert_eq!(s.vault.settle(&id), symbol_short!("kept"));
+    assert_eq!(s.token.balance(&s.writer), WRITER_XLM);
+}
+
+#[test]
+#[should_panic] // only the admin signed → guardian auth missing
+fn the_admin_cannot_pause() {
+    let s = setup();
+    s.env.mock_auths(&[MockAuth {
+        address: &s.admin,
+        invoke: &MockAuthInvoke {
+            contract: &s.vault.address,
+            fn_name: "pause",
+            args: ().into_val(&s.env),
+            sub_invokes: &[],
+        },
+    }]);
+    s.vault.pause();
+}
+
+#[test]
+#[should_panic] // only the guardian signed → admin auth missing
+fn the_guardian_cannot_unpause() {
+    let s = setup();
+    s.vault.pause();
+    s.env.mock_auths(&[MockAuth {
+        address: &s.guardian,
+        invoke: &MockAuthInvoke {
+            contract: &s.vault.address,
+            fn_name: "unpause",
+            args: ().into_val(&s.env),
+            sub_invokes: &[],
+        },
+    }]);
+    s.vault.unpause();
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #26)")] // GuardianIsQuoter
+fn the_guardian_cannot_be_added_as_a_quoter() {
+    let s = setup();
+    s.vault.add_quoter(&s.guardian);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #26)")] // GuardianIsQuoter
+fn the_constructor_refuses_the_guardian_as_a_quoter() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let guardian = Address::generate(&env);
+    register_vault_with_roles(&env, vec![&env, guardian.clone()], admin, guardian);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #25)")] // GuardianIsAdmin
+fn the_constructor_refuses_the_admin_as_guardian() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    register_vault_with_roles(&env, vec![&env, Address::generate(&env)], admin.clone(), admin);
+}
+
+fn register_vault_with_roles(env: &Env, quoters: Vec<Address>, admin: Address, guardian: Address) {
+    let sac = env.register_stellar_asset_contract_v2(admin.clone());
+    let usdc = env.register_stellar_asset_contract_v2(admin.clone());
+    let oracle_id = env.register(MockOracle, ());
+    env.register(
+        LustyVault,
+        (
+            oracle_id,
+            Symbol::new(env, "XLM"),
+            sac.address(),
+            usdc.address(),
+            Address::generate(env),
+            quoters,
+            admin,
+            guardian,
+            limits(MAX_POSITION_CALL, MAX_POSITION_PUT),
+        ),
+    );
 }

@@ -17,10 +17,13 @@ set_limits(limits)                        admin-only, a raise waits 24h
 request_withdrawal(pool, amount)          admin-only (v5), free liquidity only
 execute_withdrawal(pool) → amount         admin-only, 24h after the request, to the treasury
 cancel_withdrawal(pool)                   admin-only
+pause()                                   guardian-only (v6), stops new positions only
+unpause()                                 admin-only (v6)
 
 position(id), position_count(owner), positions_of(owner, start, limit)
 stats(), escrowed(kind), owed(kind), exposure(kind, expiry), limits(), config()
 free_liquidity(pool), pending_withdrawal(pool)                                (v5)
+paused()                                                                      (v6)
 ```
 
 ### Two legs, one machine
@@ -61,10 +64,25 @@ never depends on the protocol being online.
 - A stale or empty feed blocks settlement rather than settling at a wrong
   price.
 
-### v5 (in this tree, not yet deployed)
+### v6 (in this tree, not yet deployed)
 
-The source here is v5. The live instances below are still v4, and nothing
-changes for them until a v5 instance is deployed and the books are pointed at it.
+The source here is v6, the release candidate for the public network. The live
+testnet books run v5 (`docs/DEPLOYMENTS.md`); nothing changes for them until a
+v6 instance is deployed. v6 adds `guardian` to the constructor, after `admin`.
+
+- **A guardian can pause new positions.** `pause()` needs the guardian and
+  `unpause()` needs the admin, so stopping the vault takes any one guardian
+  signer and restarting it takes the admin's threshold. While paused, `open`
+  and `deposit` are refused (`Paused`, 24) before anything moves. Nothing that
+  closes a position is paused: `settle`, `record_price` and the thirty-day
+  release keep working, so a pause can never be what holds a writer's
+  collateral. `fund`, the limits, the quoter set and withdrawals are untouched.
+  Each call emits a `pause` / `unpause` event; pausing a paused vault is not an
+  error. The guardian cannot be the admin (`GuardianIsAdmin`, 25) or a quoter
+  (`GuardianIsQuoter`, 26).
+
+### v5
+
 
 - **The expiry price is recorded on chain.** The first `settle` on an expiry,
   or a call to the permissionless `record_price(expiry)`, stores the price it
@@ -131,6 +149,7 @@ deposit:
 | Limits that cannot both be satisfied | `InvalidLimit` (12) |
 | Expiry at `Limits::max_expiry_{call,put}` | `ExpiryFull` (13) |
 | Premium above `Limits::max_premium_bps` of the collateral | `PremiumTooHigh` (14) |
+| The guardian has paused new positions | `Paused` (24) |
 
 The solvency check and the settlement payout are computed by the same
 function, so the amount reserved at open is exactly the amount paid at
@@ -171,6 +190,12 @@ free pool liquidity to the treasury a day after announcing it. That is the
 whole of its power: it cannot move collateral or a reserved payout, price an
 option, or settle a position, and tightening a limit does not reach collateral
 already escrowed under the old one.
+
+`guardian` can pause new positions and nothing else (v6). It is the account
+that acts first when a pricing key leaks or the oracle misbehaves: it stops
+writes, then the admin removes the key or tightens the limits, then the admin
+unpauses. It moves nothing, so its policy can be fast — any one signer —
+without widening what a single stolen key can take.
 
 `add_quoter` and `remove_quoter` are how a pricing key is rotated or revoked.
 Rotation is add-then-remove: the contract refuses to empty the set (`LastQuoter`),
@@ -242,6 +267,7 @@ stellar contract deploy \
   --treasury <treasury account> \
   --quoters '["<pricing engine key>"]' \
   --admin <admin account> \
+  --guardian <guardian account> \
   --limits '{"max_position_call":"100000000000","max_position_put":"100000000000","max_expiry_call":"5000000000000","max_expiry_put":"5000000000000","max_premium_bps":2000}'
 ```
 

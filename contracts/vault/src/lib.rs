@@ -1,4 +1,4 @@
-//! Lusty Vault — trustless options vault (Soroban, v5).
+//! Lusty Vault — trustless options vault (Soroban, v6).
 //!
 //! The full money loop is on-chain. All three legs of a written option are
 //! contract-enforced:
@@ -139,6 +139,14 @@ pub enum Error {
     WithdrawalNotDue = 22,
     /// No withdrawal is scheduled for this pool.
     NoWithdrawal = 23,
+    /// The guardian has paused new positions. Settlement is never paused.
+    Paused = 24,
+    /// The guardian stops the vault on one signature and the admin restarts it
+    /// on two; one account holding both would make either one key or neither.
+    GuardianIsAdmin = 25,
+    /// The key that stops the vault when a pricing key leaks must not be that
+    /// pricing key.
+    GuardianIsQuoter = 26,
 }
 
 #[contracttype]
@@ -160,6 +168,10 @@ pub struct Config {
     /// settlement never route through it: the admin cannot move collateral,
     /// price an option or settle a position.
     pub admin: Address,
+    /// May pause new positions, and nothing else. Separate from the admin so
+    /// that stopping the vault can be quick (any one of the guardian's signers)
+    /// while restarting it, like every other admin call, is not.
+    pub guardian: Address,
 }
 
 /// The oracle's scale and grid, read once at construction and held from then
@@ -374,6 +386,8 @@ enum DataKey {
     ExpiryPrice(u64),
     /// A withdrawal of this pool's free liquidity, scheduled by the admin.
     PendingWithdrawal(Pool),
+    /// Present while the guardian has new positions paused.
+    Paused,
 }
 
 /// Vault-wide totals, in one read, for verifying solvency from outside. The
@@ -410,10 +424,14 @@ impl LustyVault {
         treasury: Address,
         quoters: Vec<Address>,
         admin: Address,
+        guardian: Address,
         limits: Limits,
     ) {
         if treasury == env.current_contract_address() {
             panic_with_error!(&env, Error::InvalidTreasury);
+        }
+        if guardian == admin {
+            panic_with_error!(&env, Error::GuardianIsAdmin);
         }
         let reflector = ReflectorClient::new(&env, &oracle);
         let decimals = reflector.decimals();
@@ -426,11 +444,9 @@ impl LustyVault {
         env.storage()
             .instance()
             .set(&DataKey::Feed, &Feed { decimals, resolution });
-        Self::store_quoters(&env, &quoters, &admin);
-        env.storage().instance().set(
-            &DataKey::Config,
-            &Config { oracle, feed, token, cash, treasury, admin },
-        );
+        let cfg = Config { oracle, feed, token, cash, treasury, admin, guardian };
+        Self::store_quoters(&env, &quoters, &cfg);
+        env.storage().instance().set(&DataKey::Config, &cfg);
         Self::store_limits(&env, &limits);
         env.storage().instance().set(&DataKey::NextId, &0u64);
         Self::extend_instance(&env);
@@ -450,7 +466,7 @@ impl LustyVault {
             panic_with_error!(&env, Error::QuoterExists);
         }
         quoters.push_back(quoter.clone());
-        Self::store_quoters(&env, &quoters, &cfg.admin);
+        Self::store_quoters(&env, &quoters, &cfg);
         Self::extend_instance(&env);
         env.events()
             .publish((symbol_short!("quoter"), symbol_short!("add")), quoter);
@@ -472,7 +488,7 @@ impl LustyVault {
         }
         let mut remaining = quoters;
         remaining.remove(index);
-        Self::store_quoters(&env, &remaining, &cfg.admin);
+        Self::store_quoters(&env, &remaining, &cfg);
         Self::extend_instance(&env);
         env.events()
             .publish((symbol_short!("quoter"), symbol_short!("remove")), quoter);
@@ -487,6 +503,35 @@ impl LustyVault {
 
     pub fn is_quoter(env: Env, quoter: Address) -> bool {
         Self::quoter_set(&env).contains(&quoter)
+    }
+
+    /// Stop new positions. Guardian-only, and the guardian's whole power: it
+    /// moves nothing and changes no limit. Everything that closes a position
+    /// keeps working — `settle`, `record_price` and the thirty-day release —
+    /// so a pause can never be what keeps a writer's collateral in the vault.
+    /// Pausing a paused vault is not an error: in an emergency the call must
+    /// not fail because someone else got there first.
+    pub fn pause(env: Env) {
+        let cfg: Config = env.storage().instance().get(&DataKey::Config).unwrap();
+        cfg.guardian.require_auth();
+        env.storage().instance().set(&DataKey::Paused, &true);
+        Self::extend_instance(&env);
+        env.events().publish((symbol_short!("pause"),), ());
+    }
+
+    /// Accept new positions again. Admin-only: a pause any one guardian signer
+    /// can make takes the admin's threshold to lift.
+    pub fn unpause(env: Env) {
+        let cfg: Config = env.storage().instance().get(&DataKey::Config).unwrap();
+        cfg.admin.require_auth();
+        env.storage().instance().remove(&DataKey::Paused);
+        Self::extend_instance(&env);
+        env.events().publish((symbol_short!("unpause"),), ());
+    }
+
+    /// Whether new positions are paused.
+    pub fn paused(env: Env) -> bool {
+        env.storage().instance().has(&DataKey::Paused)
     }
 
     /// Adjust the risk limits. Admin-only: it can shrink what the vault
@@ -910,6 +955,9 @@ impl LustyVault {
         quoter: Address,
     ) -> u64 {
         let cfg: Config = env.storage().instance().get(&DataKey::Config).unwrap();
+        if env.storage().instance().has(&DataKey::Paused) {
+            panic_with_error!(&env, Error::Paused);
+        }
         owner.require_auth();
         // Membership before authorization, so an unauthorised address is
         // rejected for what it is rather than for a signature nobody would
@@ -1024,13 +1072,16 @@ impl LustyVault {
     /// Reject a set that would brick the vault or quietly widen it: empty
     /// leaves nobody able to price, duplicates make `remove_quoter` look like
     /// it revoked a key it did not, and an unbounded set outgrows what one
-    /// instance entry can hold.
-    fn store_quoters(env: &Env, quoters: &Vec<Address>, admin: &Address) {
+    /// instance entry can hold. Neither role account may be a member.
+    fn store_quoters(env: &Env, quoters: &Vec<Address>, cfg: &Config) {
         if quoters.is_empty() {
             panic_with_error!(env, Error::LastQuoter);
         }
-        if quoters.contains(admin) {
+        if quoters.contains(&cfg.admin) {
             panic_with_error!(env, Error::QuoterIsAdmin);
+        }
+        if quoters.contains(&cfg.guardian) {
+            panic_with_error!(env, Error::GuardianIsQuoter);
         }
         if quoters.len() > MAX_QUOTERS {
             panic_with_error!(env, Error::TooManyQuoters);
