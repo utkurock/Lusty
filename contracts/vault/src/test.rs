@@ -1808,3 +1808,192 @@ fn set_limits_rejects_an_open_interest_cap_below_the_expiry_cap() {
     let s = setup();
     s.vault.set_limits(&Limits { max_open_put: MAX_EXPIRY_PUT - 1, ..s.vault.limits() });
 }
+
+// ── Rounding at public-network magnitudes ───────────────────────────
+//
+// The fixtures above price XLM near $0.20. On the public network the BTC book
+// writes strikes near $100,000 at Reflector's 14 decimals against 7-decimal
+// classic assets. Every division the vault makes must still round toward the
+// vault: it pays at most the exact value, never a stroop over, and a product
+// too large for i128 must refuse rather than wrap.
+
+/// $97,123.45678 at Reflector's 14 decimals — deliberately not round.
+const BTC_SPOT: i128 = 9_712_345_678_000_000_000;
+/// One unit of a 7-decimal classic asset.
+const UNIT: i128 = 1_0000000;
+const SCALE: i128 = 100_000_000_000_000; // 10^14
+
+/// Turn the harness into a BTC book: room for public-network sizes, a live
+/// BTC price, and pools deep enough that only rounding is under test.
+fn btc_book(s: &Setup) {
+    s.vault.set_limits(&Limits {
+        max_position_call: 10_000_000 * UNIT,
+        max_position_put: 1_000_000_000 * UNIT,
+        max_expiry_call: 100_000_000 * UNIT,
+        max_expiry_put: 10_000_000_000 * UNIT,
+        max_open_call: 100_000_000 * UNIT,
+        max_open_put: 10_000_000_000 * UNIT,
+        max_premium_bps: MAX_PREMIUM_BPS,
+    });
+    let now = START + LIMIT_RAISE_DELAY_SECS;
+    s.env.ledger().with_mut(|l| l.timestamp = now);
+    s.oracle.set_lastprice(&BTC_SPOT, &now);
+
+    let funder = Address::generate(&s.env);
+    let cash = token::StellarAssetClient::new(&s.env, &s.cash.address);
+    let btc = token::StellarAssetClient::new(&s.env, &s.token.address);
+    cash.mint(&funder, &(1_000_000_000 * UNIT));
+    btc.mint(&funder, &(1_000 * UNIT));
+    s.vault.fund(&funder, &(1_000_000_000 * UNIT));
+    s.vault.fund_underlying(&funder, &(1_000 * UNIT));
+    cash.mint(&s.writer, &(100_000_000 * UNIT));
+    btc.mint(&s.writer, &(1_000 * UNIT));
+}
+
+/// What a position of this shape is exactly worth on assignment, as the
+/// rational `num / den` in the payout token's units.
+fn exact_payout(kind: Kind, amount: i128, strike: i128) -> (i128, i128) {
+    match kind {
+        Kind::Call => (amount * strike, SCALE),
+        Kind::Put => (amount * SCALE, strike),
+    }
+}
+
+#[test]
+fn a_btc_call_near_100k_pays_its_strike_value_to_the_stroop() {
+    let s = setup();
+    btc_book(&s);
+    let strike = 100_000 * SCALE;
+    let half = UNIT / 2;
+    let id = s.vault.deposit(&s.writer, &half, &strike, &EXPIRY, &0, &s.quoter);
+    // 0.5 BTC × $100,000 = $50,000 reserved, exactly.
+    assert_eq!(s.vault.owed(&Kind::Call), 50_000 * UNIT);
+
+    let before = s.cash.balance(&s.writer);
+    s.oracle.set_price(&EXPIRY, &(101_000 * SCALE));
+    s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 60);
+    assert_eq!(s.vault.settle(&id), symbol_short!("assigned"));
+    assert_eq!(s.cash.balance(&s.writer) - before, 50_000 * UNIT);
+    assert_eq!(s.token.balance(&s.treasury), half);
+}
+
+#[test]
+fn every_division_rounds_in_the_vaults_favour() {
+    // Calls and puts at strikes between $80,000 and $120,000 carrying all
+    // fourteen decimals of noise, sizes from one stroop up, every one assigned.
+    // Each payout is the floor of its exact value — reserved at open and paid
+    // at settlement alike — and the books close to zero with nothing left over.
+    let s = setup();
+    btc_book(&s);
+    let mut seed: u64 = 0x5eed_1e57;
+    let mut next = |bound: u64| {
+        seed = seed
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (seed >> 11) % bound
+    };
+
+    let mut written = Vec::new(&s.env);
+    for i in 0..24u32 {
+        let strike = 80_000 * SCALE + next(40_000 * SCALE as u64) as i128 + 1;
+        let (kind, amount, expiry) = if i % 2 == 0 {
+            (Kind::Call, next(5 * UNIT as u64) as i128 + 1, EXPIRY)
+        } else {
+            (Kind::Put, next(50_000 * UNIT as u64) as i128 + 1, LATER)
+        };
+        let id = s.vault.open(&s.writer, &kind, &amount, &strike, &expiry, &0, &s.quoter);
+        written.push_back((id, kind, amount, strike));
+    }
+
+    let mut reserved = [0i128; 2];
+    for (_, kind, amount, strike) in written.iter() {
+        let (num, den) = exact_payout(kind, amount, strike);
+        reserved[kind as usize] += num / den;
+    }
+    assert_eq!(s.vault.owed(&Kind::Call), reserved[0]);
+    assert_eq!(s.vault.owed(&Kind::Put), reserved[1]);
+
+    // Calls assign above every strike, puts below every strike.
+    s.oracle.set_price(&EXPIRY, &(200_000 * SCALE));
+    s.oracle.set_price(&LATER, &(10_000 * SCALE));
+    s.env.ledger().with_mut(|l| l.timestamp = LATER + 60);
+    for (id, kind, amount, strike) in written.iter() {
+        let payout = match kind {
+            Kind::Call => &s.cash,
+            Kind::Put => &s.token,
+        };
+        let before = payout.balance(&s.writer);
+        assert_eq!(s.vault.settle(&id), symbol_short!("assigned"));
+        let paid = payout.balance(&s.writer) - before;
+
+        let (num, den) = exact_payout(kind, amount, strike);
+        assert!(paid * den <= num, "position {id} paid over its exact value");
+        assert!(num < (paid + 1) * den, "position {id} paid a stroop under the floor");
+    }
+    assert_eq!(s.vault.escrowed(&Kind::Call), 0);
+    assert_eq!(s.vault.escrowed(&Kind::Put), 0);
+    assert_eq!(s.vault.owed(&Kind::Call), 0);
+    assert_eq!(s.vault.owed(&Kind::Put), 0);
+    assert_eq!(s.vault.free_liquidity(&Pool::Cash), s.cash.balance(&s.vault.address));
+    assert_eq!(s.vault.free_liquidity(&Pool::Underlying), s.token.balance(&s.vault.address));
+}
+
+#[test]
+fn the_premium_ceiling_floors_twice_at_a_btc_price() {
+    // One stroop of BTC at $97,123.45678 is worth 97,123.45678 cash stroops,
+    // valued at 97,123; half of that is 48,561.5, capped at 48,561.
+    let s = setup();
+    btc_book(&s);
+    let too_much = s.vault.try_deposit(&s.writer, &1, &BTC_SPOT, &EXPIRY, &48_562, &s.quoter);
+    assert_eq!(too_much.err(), Some(Ok(Error::PremiumTooHigh.into())));
+    s.vault.deposit(&s.writer, &1, &BTC_SPOT, &EXPIRY, &48_561, &s.quoter);
+}
+
+#[test]
+fn a_dust_put_owes_nothing_and_can_be_paid_nothing() {
+    // One cash stroop at a BTC strike buys a ten-thousandth of a stroop of BTC:
+    // the vault reserves and delivers zero, and the ceiling allows no premium.
+    let s = setup();
+    btc_book(&s);
+    let paid = s
+        .vault
+        .try_open(&s.writer, &Kind::Put, &1, &BTC_SPOT, &LATER, &1, &s.quoter);
+    assert_eq!(paid.err(), Some(Ok(Error::PremiumTooHigh.into())));
+
+    let id = s.vault.open(&s.writer, &Kind::Put, &1, &BTC_SPOT, &LATER, &0, &s.quoter);
+    assert_eq!(s.vault.owed(&Kind::Put), 0);
+    let before = s.token.balance(&s.writer);
+    s.oracle.set_price(&LATER, &(10_000 * SCALE));
+    s.env.ledger().with_mut(|l| l.timestamp = LATER + 60);
+    assert_eq!(s.vault.settle(&id), symbol_short!("assigned"));
+    assert_eq!(s.token.balance(&s.writer), before);
+    assert_eq!(s.vault.escrowed(&Kind::Put), 0);
+}
+
+#[test]
+fn public_network_extremes_fit_in_i128() {
+    // Every BTC there will ever be, at a $10,000,000 strike; a trillion dollars
+    // of cash against a one-cent strike. Both well inside i128.
+    let s = setup();
+    let all_btc = 21_000_000 * UNIT;
+    let trillion = 1_000_000_000_000 * UNIT;
+    s.env.as_contract(&s.vault.address, || {
+        assert_eq!(
+            LustyVault::obligation(&s.env, Kind::Call, all_btc, 10_000_000 * SCALE, SCALE),
+            all_btc * 10_000_000,
+        );
+        assert_eq!(
+            LustyVault::obligation(&s.env, Kind::Put, trillion, SCALE / 100, SCALE),
+            trillion * 100,
+        );
+    });
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #1)")] // InvalidAmount
+fn a_product_past_i128_refuses_instead_of_wrapping() {
+    let s = setup();
+    s.env.as_contract(&s.vault.address, || {
+        LustyVault::obligation(&s.env, Kind::Call, i128::MAX / 2, 3, SCALE);
+    });
+}
