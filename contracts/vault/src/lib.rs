@@ -147,6 +147,9 @@ pub enum Error {
     /// The key that stops the vault when a pricing key leaks must not be that
     /// pricing key.
     GuardianIsQuoter = 26,
+    /// The leg's collateral across every expiry would pass
+    /// `Limits::max_open_{call,put}`.
+    OpenInterestFull = 27,
 }
 
 #[contracttype]
@@ -207,6 +210,13 @@ pub struct Limits {
     /// single date, which position size alone does not bound.
     pub max_expiry_call: i128,
     pub max_expiry_put: i128,
+    /// Most collateral the vault will hold across ALL expiries, per kind — the
+    /// leg's open interest. The expiry cap spreads the book over dates but
+    /// does not bound it: without this, every new expiry on the grid is fresh
+    /// room, and what the pools stand behind grows with the calendar. A
+    /// position counts until it is settled, expired or not.
+    pub max_open_call: i128,
+    pub max_open_put: i128,
     /// Largest premium a position may pay, in basis points of the collateral
     /// the writer escrowed. The one limit that binds the QUOTER rather than the
     /// writer: without it a compromised pricing key could quote itself the
@@ -230,14 +240,17 @@ pub struct PendingLimits {
 
 impl Limits {
     /// The tighter of two limit sets, field by field. Both being valid, this
-    /// is too: each expiry cap is at least its own position cap, so the
-    /// smaller expiry cap is at least the smaller position cap.
+    /// is too: each cap is at least the one nested inside it (position ≤
+    /// expiry ≤ open), so the smaller of two outer caps is at least the
+    /// smaller of their inner ones.
     fn tightest(&self, other: &Limits) -> Limits {
         Limits {
             max_position_call: self.max_position_call.min(other.max_position_call),
             max_position_put: self.max_position_put.min(other.max_position_put),
             max_expiry_call: self.max_expiry_call.min(other.max_expiry_call),
             max_expiry_put: self.max_expiry_put.min(other.max_expiry_put),
+            max_open_call: self.max_open_call.min(other.max_open_call),
+            max_open_put: self.max_open_put.min(other.max_open_put),
             max_premium_bps: self.max_premium_bps.min(other.max_premium_bps),
         }
     }
@@ -253,6 +266,13 @@ impl Limits {
         match kind {
             Kind::Call => self.max_expiry_call,
             Kind::Put => self.max_expiry_put,
+        }
+    }
+
+    fn max_open(&self, kind: Kind) -> i128 {
+        match kind {
+            Kind::Call => self.max_open_call,
+            Kind::Put => self.max_open_put,
         }
     }
 }
@@ -573,6 +593,10 @@ impl LustyVault {
                     limits.max_expiry_call,
                     limits.max_expiry_put,
                     effective_at,
+                    // v6, appended after `effective_at` so a reader of the
+                    // v5 fields keeps reading the same positions.
+                    limits.max_open_call,
+                    limits.max_open_put,
                 ),
             );
         }
@@ -588,6 +612,8 @@ impl LustyVault {
                 binding.max_premium_bps,
                 binding.max_expiry_call,
                 binding.max_expiry_put,
+                binding.max_open_call,
+                binding.max_open_put,
             ),
         );
     }
@@ -1008,6 +1034,12 @@ impl LustyVault {
         if exposure > limits.max_expiry(kind) {
             panic_with_error!(&env, Error::ExpiryFull);
         }
+        // Open-interest cap: nor across expiries, which the expiry cap alone
+        // allows one fresh date at a time. The leg's escrow counter already is
+        // its open interest, so the check reads it before the escrow is booked.
+        if Self::bump(&env, Self::escrow_of(&env, kind), amount) > limits.max_open(kind) {
+            panic_with_error!(&env, Error::OpenInterestFull);
+        }
 
         let this = env.current_contract_address();
         token::Client::new(&env, kind.collateral(&cfg)).transfer(&owner, &this, &amount);
@@ -1118,13 +1150,16 @@ impl LustyVault {
             || limits.max_position_put <= 0
             || limits.max_expiry_call < limits.max_position_call
             || limits.max_expiry_put < limits.max_position_put
+            || limits.max_open_call < limits.max_expiry_call
+            || limits.max_open_put < limits.max_expiry_put
             // A premium worth more than the collateral it is paid against is a
             // loss taken at the moment of writing, so 100% bounds the bound.
             || limits.max_premium_bps == 0
             || limits.max_premium_bps as i128 > BPS
         {
-            // An expiry cap below the position cap would make the larger of the
-            // two unreachable — a limit set that can never be met as written.
+            // An expiry cap below the position cap, or an open-interest cap
+            // below the expiry cap, would make the larger of the two
+            // unreachable — a limit set that can never be met as written.
             panic_with_error!(env, Error::InvalidLimit);
         }
     }

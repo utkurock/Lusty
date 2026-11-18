@@ -80,6 +80,15 @@ v6 instance is deployed. v6 adds `guardian` to the constructor, after `admin`.
   Each call emits a `pause` / `unpause` event; pausing a paused vault is not an
   error. The guardian cannot be the admin (`GuardianIsAdmin`, 25) or a quoter
   (`GuardianIsQuoter`, 26).
+- **Open interest is capped per leg.** `Limits` gains `max_open_call` and
+  `max_open_put`: the most collateral the vault holds across every expiry. The
+  per-expiry cap spreads the book over dates but did not bound it, so each new
+  expiry on the grid was fresh room. A position counts from open until it is
+  settled, expired or not, which is exactly `escrowed(kind)`. A write that
+  would pass the cap is refused (`OpenInterestFull`, 27). The cap must be at
+  least the expiry cap (`InvalidLimit`), and a raise waits the same day as any
+  other. Both events append the two fields: `limits` after `max_expiry_put`,
+  `lim_raise` after `effective_at`, so a v5 reader reads the same positions.
 
 ### v5
 
@@ -148,6 +157,7 @@ deposit:
 | Position above `Limits::max_position_{call,put}` | `PositionTooLarge` (11) |
 | Limits that cannot both be satisfied | `InvalidLimit` (12) |
 | Expiry at `Limits::max_expiry_{call,put}` | `ExpiryFull` (13) |
+| Leg's collateral across all expiries above `Limits::max_open_{call,put}` | `OpenInterestFull` (27) |
 | Premium above `Limits::max_premium_bps` of the collateral | `PremiumTooHigh` (14) |
 | The guardian has paused new positions | `Paused` (24) |
 
@@ -268,12 +278,12 @@ stellar contract deploy \
   --quoters '["<pricing engine key>"]' \
   --admin <admin account> \
   --guardian <guardian account> \
-  --limits '{"max_position_call":"100000000000","max_position_put":"100000000000","max_expiry_call":"5000000000000","max_expiry_put":"5000000000000","max_premium_bps":2000}'
+  --limits '{"max_position_call":"100000000000","max_position_put":"100000000000","max_expiry_call":"5000000000000","max_expiry_put":"5000000000000","max_open_call":"20000000000000","max_open_put":"20000000000000","max_premium_bps":2000}'
 ```
 
 Position and expiry limits are in the kind's collateral units at 7 decimals —
 the values above are 10,000 XLM and 10,000 cash per position, 500,000 per
-expiry.
+expiry, 2,000,000 open across all expiries.
 
 `max_premium_bps` is a share of collateral, not a token amount. 2000 (20%)
 sits about 3.5× above anything the pricing engine can quote: the engine's own

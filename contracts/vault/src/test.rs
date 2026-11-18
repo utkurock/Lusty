@@ -88,6 +88,8 @@ fn limits_with_expiry(call: i128, put: i128, exp_call: i128, exp_put: i128) -> L
         max_position_put: put,
         max_expiry_call: exp_call,
         max_expiry_put: exp_put,
+        max_open_call: MAX_OPEN_CALL,
+        max_open_put: MAX_OPEN_PUT,
         max_premium_bps: MAX_PREMIUM_BPS,
     }
 }
@@ -127,6 +129,8 @@ const MAX_POSITION_CALL: i128 = 10_000_0000000;
 const MAX_POSITION_PUT: i128 = 10_000_0000000;
 const MAX_EXPIRY_CALL: i128 = 100_000_0000000;
 const MAX_EXPIRY_PUT: i128 = 100_000_0000000;
+const MAX_OPEN_CALL: i128 = 1_000_000_0000000;
+const MAX_OPEN_PUT: i128 = 1_000_000_0000000;
 // Same idea for the premium ceiling: PREMIUM is 25% of a call's collateral
 // value (100 XLM × $0.20) and 20% of a put's, so 50% leaves both clear.
 const MAX_PREMIUM_BPS: u32 = 5_000;
@@ -1712,4 +1716,95 @@ fn register_vault_with_roles(env: &Env, quoters: Vec<Address>, admin: Address, g
             limits(MAX_POSITION_CALL, MAX_POSITION_PUT),
         ),
     );
+}
+
+// ── v6: open interest across expiries ───────────────────────────────
+//
+// The expiry cap spreads the book over dates; the open-interest cap bounds the
+// whole of it, so a fresh expiry on the grid is no longer fresh room.
+
+const LATER: u64 = EXPIRY + 7 * 86400;
+
+/// Room for one position per expiry and three in all, on the call leg.
+fn open_cap_of_three(s: &Setup) {
+    s.vault.set_limits(&Limits {
+        max_open_call: COLLATERAL * 3,
+        ..limits_with_expiry(COLLATERAL, MAX_POSITION_PUT, COLLATERAL * 2, MAX_EXPIRY_PUT)
+    });
+}
+
+#[test]
+fn the_open_interest_cap_binds_across_expiries() {
+    let s = setup();
+    open_cap_of_three(&s);
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &0, &s.quoter);
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &0, &s.quoter);
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &LATER, &0, &s.quoter);
+    assert_eq!(s.vault.escrowed(&Kind::Call), COLLATERAL * 3);
+
+    // LATER's own cap has room for one more; the leg as a whole does not.
+    assert_eq!(s.vault.exposure(&Kind::Call, &LATER), COLLATERAL);
+    let refused = s.vault.try_deposit(&s.writer, &COLLATERAL, &STRIKE, &LATER, &0, &s.quoter);
+    assert_eq!(refused.err(), Some(Ok(Error::OpenInterestFull.into())));
+    assert_eq!(s.token.balance(&s.writer), WRITER_XLM - COLLATERAL * 3);
+}
+
+#[test]
+fn each_leg_has_its_own_open_interest() {
+    let s = setup();
+    open_cap_of_three(&s);
+    for expiry in [EXPIRY, EXPIRY, LATER] {
+        s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &expiry, &0, &s.quoter);
+    }
+    // The put leg needs underlying to deliver; the full call leg is no reason
+    // to refuse it.
+    s.vault.fund_underlying(&s.writer, &COLLATERAL);
+    token::StellarAssetClient::new(&s.env, &s.cash.address).mint(&s.writer, &PUT_COLLATERAL);
+    s.vault
+        .open(&s.writer, &Kind::Put, &PUT_COLLATERAL, &STRIKE, &LATER, &0, &s.quoter);
+}
+
+#[test]
+fn settlement_frees_open_interest() {
+    let s = setup();
+    open_cap_of_three(&s);
+    let first = s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &0, &s.quoter);
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &EXPIRY, &0, &s.quoter);
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &LATER, &0, &s.quoter);
+
+    // Expired but unsettled still counts: its collateral is still here.
+    s.oracle.set_price(&EXPIRY, &OTM);
+    s.env.ledger().with_mut(|l| l.timestamp = EXPIRY + 60);
+    s.oracle.set_lastprice(&SPOT, &(EXPIRY + 60));
+    let still_full = s.vault.try_deposit(&s.writer, &COLLATERAL, &STRIKE, &LATER, &0, &s.quoter);
+    assert_eq!(still_full.err(), Some(Ok(Error::OpenInterestFull.into())));
+
+    s.vault.settle(&first);
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &LATER, &0, &s.quoter);
+}
+
+#[test]
+fn a_raised_open_interest_cap_waits_the_delay() {
+    let s = setup();
+    open_cap_of_three(&s);
+    for expiry in [EXPIRY, EXPIRY, LATER] {
+        s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &expiry, &0, &s.quoter);
+    }
+    s.vault.set_limits(&Limits {
+        max_open_call: COLLATERAL * 4,
+        ..limits_with_expiry(COLLATERAL, MAX_POSITION_PUT, COLLATERAL * 2, MAX_EXPIRY_PUT)
+    });
+    assert_eq!(s.vault.limits().max_open_call, COLLATERAL * 3);
+    assert_eq!(s.vault.pending_limits().unwrap().limits.max_open_call, COLLATERAL * 4);
+    assert!(s.vault.try_deposit(&s.writer, &COLLATERAL, &STRIKE, &LATER, &0, &s.quoter).is_err());
+
+    wait_out_raise(&s);
+    s.vault.deposit(&s.writer, &COLLATERAL, &STRIKE, &LATER, &0, &s.quoter);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #12)")] // InvalidLimit
+fn set_limits_rejects_an_open_interest_cap_below_the_expiry_cap() {
+    let s = setup();
+    s.vault.set_limits(&Limits { max_open_put: MAX_EXPIRY_PUT - 1, ..s.vault.limits() });
 }
