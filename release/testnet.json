@@ -1,0 +1,65 @@
+{
+  "network": "testnet",
+  "wasmHash": "b61d403ad03ab430181455351355e34235685bbeedcf99948c3167ab993fbf64",
+  "books": {
+    "XLM": {
+      "vault": "CDRRLRY3KSYAGKMSHBQ6NWQNWPVSF46DTNEADJBONMNJ7USF32H32TE2",
+      "config": {
+        "admin": "GBDNJQDP4HJQH6WCJCYVYGTKDRYKZXQQSVEC4FOE24CVG4VRQU26IKEC",
+        "cash": "CDTMNV7F7P3LUH6LLBTXY4EQYBUYGVGYRC7P73HMFV5PXLO5NE6A74QB",
+        "feed": "XLM",
+        "oracle": "CCYOZJCOPG34LLQQ7N24YXBM7LL62R7ONMZ3G6WZAAYPB5OYKOMJRN63",
+        "token": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+        "treasury": "GCXVANOIFHM7IAAZTDEEOYW7WUDO7ETVJYVEO74LA23JSXQJP4TAJVUX"
+      },
+      "limits": {
+        "max_expiry_call": "5000000000000",
+        "max_expiry_put": "5000000000000",
+        "max_position_call": "100000000000",
+        "max_position_put": "100000000000",
+        "max_premium_bps": 2000
+      },
+      "quoters": ["GC7Z4LVQCUOU7FMRBX4WOGANARQGM4SZTACKMSQSMGIOO4KEAASHLOTX"]
+    },
+    "BTC": {
+      "vault": "CCE2WCB43ZGSWPLD3XRCECOYGXPBH5625RZZHJDHLQ4HD6YR35K2OYHQ",
+      "config": {
+        "admin": "GBDNJQDP4HJQH6WCJCYVYGTKDRYKZXQQSVEC4FOE24CVG4VRQU26IKEC",
+        "cash": "CDTMNV7F7P3LUH6LLBTXY4EQYBUYGVGYRC7P73HMFV5PXLO5NE6A74QB",
+        "feed": "BTC",
+        "oracle": "CCYOZJCOPG34LLQQ7N24YXBM7LL62R7ONMZ3G6WZAAYPB5OYKOMJRN63",
+        "token": "CDLI2GIDMYZQHK2K3TIGV5O2HQQRT36C5MV3IQWO6LX22YFTF43X74LU",
+        "treasury": "GCXVANOIFHM7IAAZTDEEOYW7WUDO7ETVJYVEO74LA23JSXQJP4TAJVUX"
+      },
+      "limits": {
+        "max_expiry_call": "50000000",
+        "max_expiry_put": "1500000000000",
+        "max_position_call": "500000",
+        "max_position_put": "15000000000",
+        "max_premium_bps": 2000
+      },
+      "quoters": ["GC7Z4LVQCUOU7FMRBX4WOGANARQGM4SZTACKMSQSMGIOO4KEAASHLOTX"]
+    }
+  },
+  "accounts": {
+    "GBDNJQDP4HJQH6WCJCYVYGTKDRYKZXQQSVEC4FOE24CVG4VRQU26IKEC": {
+      "roles": ["admin"],
+      "thresholds": { "low": 2, "med": 2, "high": 2 },
+      "signers": [
+        { "key": "GAC3MHKAW25XADQARWQFU6N2EJYAPLUM5L6XEJYNSRPXOHDQYHJGWE5U", "weight": 1 },
+        { "key": "GANN2GC2OJJBSL6SFQCI5R3LRUMY3ZUGEURPH7QE4UV362RERRGM7AYO", "weight": 1 },
+        { "key": "GBDNJQDP4HJQH6WCJCYVYGTKDRYKZXQQSVEC4FOE24CVG4VRQU26IKEC", "weight": 1 }
+      ]
+    },
+    "GC7Z4LVQCUOU7FMRBX4WOGANARQGM4SZTACKMSQSMGIOO4KEAASHLOTX": {
+      "roles": ["quoter"],
+      "thresholds": { "low": 0, "med": 0, "high": 0 },
+      "signers": [{ "key": "GC7Z4LVQCUOU7FMRBX4WOGANARQGM4SZTACKMSQSMGIOO4KEAASHLOTX", "weight": 1 }]
+    },
+    "GCXVANOIFHM7IAAZTDEEOYW7WUDO7ETVJYVEO74LA23JSXQJP4TAJVUX": {
+      "roles": ["treasury"],
+      "thresholds": { "low": 0, "med": 0, "high": 0 },
+      "signers": [{ "key": "GCXVANOIFHM7IAAZTDEEOYW7WUDO7ETVJYVEO74LA23JSXQJP4TAJVUX", "weight": 1 }]
+    }
+  }
+}
