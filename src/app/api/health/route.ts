@@ -4,7 +4,7 @@ import { LUSD_DISTRIBUTOR } from '@/lib/lusd'
 import { getSpot, resetSpotCache } from '@/lib/spot'
 import { allUnderlyings, enabledUnderlyings, type AssetIssue } from '@/lib/assets'
 import { routingExposure } from '@/lib/routing/budget'
-import { reconcileAll } from '@/lib/vault-limits'
+import { reconcileAll, readPause } from '@/lib/vault-limits'
 import { isAdminRequest } from '@/lib/admin-auth'
 import { HORIZON_URL } from '@/lib/stellar'
 
@@ -113,17 +113,26 @@ interface LimitsStatus {
   vault: string
   ok: boolean
   drift: string[]
+  /** The guardian's pause; null when unreadable. Reported, not scored: a pause is a decision. */
+  paused: boolean | null
   stale?: boolean
   error?: string
 }
 
 async function checkLimits(): Promise<LimitsStatus[]> {
   const all = await reconcileAll()
-  return all.map((r) => ({
+  const pauses = await Promise.all(
+    all.map((r) => {
+      const book = allUnderlyings().find((a) => a.symbol === r.symbol)
+      return book ? readPause(book) : Promise.resolve({ paused: null })
+    }),
+  )
+  return all.map((r, i) => ({
     underlying: r.symbol,
     vault: r.vault,
     ok: r.ok,
     drift: r.drift.map((d) => d.detail),
+    paused: pauses[i].paused,
     ...(r.stale ? { stale: true } : {}),
     ...(r.error ? { error: r.error } : {}),
   }))

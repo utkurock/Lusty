@@ -40,6 +40,7 @@ vi.mock('@/lib/vault-contract', () => ({
   getPositionsOf: async () => [],
   getExposure: async () => 0,
   getVaultLimits: async () => ({ maxExpiryCall: 0, maxExpiryPut: 0 }),
+  getVaultPaused: async () => false,
 }))
 
 /** A valid-looking Stellar address, different for each n. */

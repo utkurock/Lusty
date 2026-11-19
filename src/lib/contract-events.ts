@@ -410,6 +410,9 @@ export interface LimitsChange {
   /** v5 instances only: v4 left the per-expiry caps out of the event. */
   maxExpiryCall?: number
   maxExpiryPut?: number
+  /** v6 instances only: the open-interest caps across every expiry. */
+  maxOpenCall?: number
+  maxOpenPut?: number
   /**
    * Set when this is a raise the instance scheduled (`lim_raise`, v5) rather
    * than limits it applied: the values bind from this time unless the admin
@@ -423,18 +426,19 @@ export interface LimitsChange {
  * position caps and the premium ceiling; v5 appends the two per-expiry caps. On
  * a v4 instance a change to the per-expiry caps alone still shows up here, with
  * values that look unchanged. A v5 raise is first announced as `lim_raise`,
- * with the time it binds from appended, a day before it can be used.
+ * with the time it binds from appended, a day before it can be used. v6
+ * appends the two open-interest caps last on both: after the per-expiry caps
+ * on `limits`, after the binding time on `lim_raise`.
  */
 export function parseLimitsEvent(e: sorobanRpc.Api.EventResponse): LimitsChange | null {
   try {
     const topics = e.topic.map((t: xdr.ScVal) => scValToNative(t))
     const kind = String(topics[0])
     if (kind !== 'limits' && kind !== 'lim_raise') return null
-    const [call, put, bps, expCall, expPut, effectiveAt] = scValToNative(e.value) as [
-      bigint,
-      bigint,
-      number | bigint,
-      bigint?,
+    const fields = scValToNative(e.value) as Array<bigint | number | undefined>
+    const [call, put, bps, expCall, expPut] = fields as [bigint, bigint, number | bigint, bigint?, bigint?]
+    const effectiveAt = kind === 'lim_raise' ? (fields[5] as bigint | undefined) : undefined
+    const [openCall, openPut] = (kind === 'lim_raise' ? fields.slice(6, 8) : fields.slice(5, 7)) as [
       bigint?,
       bigint?,
     ]
@@ -449,6 +453,8 @@ export function parseLimitsEvent(e: sorobanRpc.Api.EventResponse): LimitsChange 
       maxPremiumBps: Number(bps),
       ...(expCall !== undefined ? { maxExpiryCall: Number(expCall) / TOKEN_SCALE } : {}),
       ...(expPut !== undefined ? { maxExpiryPut: Number(expPut) / TOKEN_SCALE } : {}),
+      ...(openCall !== undefined ? { maxOpenCall: Number(openCall) / TOKEN_SCALE } : {}),
+      ...(openPut !== undefined ? { maxOpenPut: Number(openPut) / TOKEN_SCALE } : {}),
       ...(kind === 'lim_raise'
         ? { effectiveAt: new Date(Number(effectiveAt) * 1000).toISOString() }
         : {}),

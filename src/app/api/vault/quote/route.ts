@@ -5,7 +5,7 @@ import { getSpot } from '@/lib/spot'
 import { clientRateLimit } from '@/lib/rate-limit'
 import { pricingInputsFor } from '@/lib/quote-inputs'
 import { requestedUnderlying } from '@/lib/assets'
-import { limitsRefusal } from '@/lib/vault-limits'
+import { limitsRefusal, pauseRefusal } from '@/lib/vault-limits'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -52,6 +52,13 @@ export async function GET(req: Request) {
         { error: `${assetRaw} is not a tradeable underlying` },
         { status: 400 },
       )
+    }
+
+    // A paused instance refuses every open; a quote or a signature for one is
+    // a promise the contract will break. Settlement is untouched by this.
+    const paused = await pauseRefusal(asset)
+    if (paused) {
+      return NextResponse.json({ error: paused, code: 'book_paused' }, { status: 503 })
     }
 
     // The instance's own limits, read before its book is priced. When the

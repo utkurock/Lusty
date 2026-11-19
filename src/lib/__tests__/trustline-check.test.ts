@@ -36,6 +36,7 @@ vi.mock('@/lib/db', async (importOriginal) => ({
 }))
 vi.mock('@/lib/vault-contract', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../vault-contract')>()),
+  getVaultPaused: async () => false,
   getVaultLimits: async (asset: any) => asset.onchainLimits,
   getExposure: async () => 0,
 }))

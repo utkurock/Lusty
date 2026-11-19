@@ -175,6 +175,18 @@ describe('a bound that contradicts another is caught before it is offered', () =
     ).toContain('onchainLimits.maxPremiumBps')
   })
 
+  it('takes the v6 open-interest caps as a pair, never under one expiry\'s cap', () => {
+    const limits = declaration().onchainLimits
+    const v6 = { ...limits, maxOpenCall: limits.maxExpiryCall * 3, maxOpenPut: limits.maxExpiryPut * 3 }
+    expect(fieldsFor({ onchainLimits: v6 })).toEqual([])
+    expect(fieldsFor({ onchainLimits: { ...limits, maxOpenCall: v6.maxOpenCall } })).toContain(
+      'onchainLimits.maxOpenCall'
+    )
+    expect(
+      fieldsFor({ onchainLimits: { ...v6, maxOpenPut: limits.maxExpiryPut / 2 } })
+    ).toContain('onchainLimits.maxOpenPut')
+  })
+
   it('refuses showing more precision than the book carries', () => {
     expect(fieldsFor({ displayDecimals: 9 })).toContain('displayDecimals')
   })

@@ -31,6 +31,9 @@ const down = {
   spot: false,
   limitsRpc: false,
   sigma: false,
+  // Not an outage but an operator's stop: the guardian paused the book.
+  paused: false,
+  pauseRpc: false,
 }
 
 const query = vi.fn(async (_sql: string) => {
@@ -69,6 +72,10 @@ vi.mock('@/lib/forward', () => ({
 }))
 vi.mock('@/lib/vault-contract', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../vault-contract')>()),
+  getVaultPaused: async () => {
+    if (down.pauseRpc) throw new Error('soroban rpc: 503 Service Unavailable')
+    return down.paused
+  },
   getVaultLimits: async (asset: any) => {
     if (down.limitsRpc) throw new Error('soroban rpc: 503 Service Unavailable')
     return asset.onchainLimits
@@ -178,6 +185,25 @@ describe('the co-signature with one dependency down', () => {
 
     const pastGrace = await reconcileLimits(XLM, t0 + 61 * 60_000)
     expect(pastGrace.ok).toBe(false)
+  })
+})
+
+describe('the co-signature for a book its guardian paused', () => {
+  it('refuses before anything is priced, and says the book is paused', async () => {
+    down.paused = true
+    const { status, body } = await cosign()
+    expect(status).toBe(503)
+    expect(body.code).toBe('book_paused')
+    expect(body.error).toContain('paused by its guardian')
+    expect(body.authEntries).toBeUndefined()
+  })
+
+  it('refuses when the pause state was never read, rather than assume the book open', async () => {
+    down.pauseRpc = true
+    const { status, body } = await cosign()
+    expect(status).toBe(503)
+    expect(body.code).toBe('book_paused')
+    expect(body.error).toContain('could not be read')
   })
 })
 

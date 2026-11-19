@@ -22,6 +22,8 @@ export interface VaultBucket {
 }
 
 export interface VaultStatsPayload {
+  /** The guardian has paused new positions; null when it could not be read. */
+  paused: boolean | null
   call: VaultSideStats
   put: VaultSideStats
   buckets: VaultBucket[]
@@ -55,6 +57,7 @@ export function useVaultStats(
       const d = await res.json()
       if (d.ok) {
         setStats({
+          paused: typeof d.paused === 'boolean' ? d.paused : null,
           call: {
             utilized: d.call?.utilized ?? d.utilizedXlm ?? 0,
             cap: d.call?.cap ?? d.capXlm ?? 0,

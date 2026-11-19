@@ -23,7 +23,7 @@
 // happens to be looser is the expensive one.
 
 import { UnderlyingAsset, allUnderlyings } from './assets'
-import { getVaultLimits, VaultLimits } from './vault-contract'
+import { getVaultLimits, getVaultPaused, VaultLimits } from './vault-contract'
 import { callEpochCap, putEpochCap, epochsPerMonth } from './vault-state'
 
 /**
@@ -75,7 +75,7 @@ export function compareLimits(
   const out: LimitDrift[] = []
   const declared = asset.onchainLimits
 
-  const exact: Array<[keyof VaultLimits, string]> = [
+  const exact: Array<[Exclude<keyof VaultLimits, 'maxOpenCall' | 'maxOpenPut'>, string]> = [
     ['maxPositionCall', 'largest single call position'],
     ['maxPositionPut', 'largest single put position'],
     ['maxExpiryCall', 'call collateral against one expiry'],
@@ -90,6 +90,29 @@ export function compareLimits(
         declared: declared[field],
         onchain: onchain[field],
         detail: `${asset.symbol} declares ${what} at ${declared[field]}, the instance enforces ${onchain[field]}`,
+      })
+    }
+  }
+
+  // The open-interest caps exist on v6 only, so absent is a value here: a
+  // declaration without them describes a v5 instance, and pointing it at a v6
+  // one (or the other way round) is the record being wrong about which
+  // contract it is. NaN stands in for "none" so the detail can say so.
+  const open: Array<['maxOpenCall' | 'maxOpenPut', string]> = [
+    ['maxOpenCall', 'call open interest across every expiry'],
+    ['maxOpenPut', 'put open interest across every expiry'],
+  ]
+  for (const [field, what] of open) {
+    const mine = declared[field] ?? null
+    const theirs = onchain[field] ?? null
+    const agree = mine === null || theirs === null ? mine === theirs : !differs(mine, theirs)
+    if (!agree) {
+      out.push({
+        kind: 'declared',
+        field,
+        declared: mine ?? NaN,
+        onchain: theirs ?? NaN,
+        detail: `${asset.symbol} declares ${what} at ${mine ?? 'none'}, the instance enforces ${theirs ?? 'none'}`,
       })
     }
   }
@@ -116,9 +139,15 @@ export function compareLimits(
       'maxExpiryPut',
       `put collateral on one expiry (${asset.putMonthlyCapUsd} a month over ${epochsPerMonth(asset)} expiries)`,
     ],
+    // Across the book the envelope's whole monthly capacity can be open at
+    // once, one quotient per open expiry, so that is what meets the leg's
+    // open-interest cap. Skipped where the instance has none.
+    ['callMonthlyCap', asset.callMonthlyCap, 'maxOpenCall', 'call collateral across every open expiry'],
+    ['putMonthlyCapUsd', asset.putMonthlyCapUsd, 'maxOpenPut', 'put collateral across every open expiry'],
   ]
   for (const [field, value, against, what] of envelope) {
     const bound = onchain[against]
+    if (bound == null) continue
     if (value - bound > EPSILON) {
       out.push({
         kind: 'envelope',
@@ -147,6 +176,7 @@ const cache = new Map<string, LimitsReconciliation>()
 /** Drop every cached verdict. For tests and for the admin's forced re-read. */
 export function resetLimitsCache(): void {
   cache.clear()
+  pauseCache.clear()
 }
 
 /**
@@ -230,4 +260,63 @@ export async function reconcileAll(
 ): Promise<LimitsReconciliation[]> {
   const books = allUnderlyings().filter((a) => a.contracts.vault)
   return Promise.all(books.map((a) => reconcileLimits(a, now)))
+}
+
+// ── The guardian's pause ────────────────────────────────────────────
+//
+// A paused v6 instance refuses every `open` (#24) and keeps settling. The
+// contract is what binds, so this is not a second lock; it is the desk not
+// signing quotes the contract will throw away, and the screens saying why
+// rather than letting a writer sign and fail on chain.
+//
+// Read apart from the limits and on a much shorter clock. Limits move on a
+// one-day delay and a reading five minutes old is as good as a new one; a
+// pause is the emergency stop, and the desk should be quiet within a poll of
+// it. A failed read falls back to the last one inside the same grace as the
+// limits, for the same reason: an RPC blip is not a pause.
+
+const PAUSE_REFRESH_MS = 30_000
+
+export interface PauseReading {
+  /** Null when the state could not be read and no reading stands. */
+  paused: boolean | null
+  checkedAt: number
+  stale?: boolean
+  error?: string
+}
+
+const pauseCache = new Map<string, { paused: boolean; checkedAt: number }>()
+
+export async function readPause(
+  asset: UnderlyingAsset,
+  now: number = Date.now(),
+): Promise<PauseReading> {
+  const vault = asset.contracts.vault
+  if (!vault) return { paused: null, checkedAt: now, error: 'no vault instance configured' }
+
+  const cached = pauseCache.get(vault)
+  if (cached && now - cached.checkedAt < PAUSE_REFRESH_MS) return cached
+
+  try {
+    const fresh = { paused: await getVaultPaused(asset), checkedAt: now }
+    pauseCache.set(vault, fresh)
+    return fresh
+  } catch (e: any) {
+    const error = e?.message ?? 'pause state unreadable'
+    if (cached && now - cached.checkedAt < GRACE_MS) return { ...cached, stale: true, error }
+    return { paused: null, checkedAt: now, error }
+  }
+}
+
+/** Why this book is closed to new positions by its guardian, or null. */
+export async function pauseRefusal(
+  asset: UnderlyingAsset,
+  now: number = Date.now(),
+): Promise<string | null> {
+  const r = await readPause(asset, now)
+  if (r.paused === false) return null
+  if (r.paused === true) {
+    return `${asset.symbol} book is paused by its guardian: no new positions until the admin restarts it; open positions still settle`
+  }
+  return `${asset.symbol} pause state could not be read from its vault: ${r.error ?? 'unknown'}`
 }

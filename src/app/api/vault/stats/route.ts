@@ -11,6 +11,7 @@ import {
 import { XLM, settleableUnderlying } from '@/lib/assets'
 import { LUSD_CODE, LUSD_ISSUER, LUSD_DISTRIBUTOR } from '@/lib/lusd'
 import { HORIZON_URL } from '@/lib/stellar'
+import { readPause } from '@/lib/vault-limits'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -53,7 +54,10 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: 'vault not configured' }, { status: 500 })
     }
 
-    const openBuckets = await computeOpenBuckets(new Date(), asset)
+    const [openBuckets, pause] = await Promise.all([
+      computeOpenBuckets(new Date(), asset),
+      readPause(asset),
+    ])
 
     // Both the fill and the cap are this asset's own, and since M2-06 the
     // field names say so. The top-level `utilizedXlm`/`capXlm` below survive
@@ -110,6 +114,10 @@ export async function GET(req: Request) {
       {
         ok: true,
         underlying: asset.symbol,
+        // Whether the guardian has stopped new positions. Null when it could
+        // not be read; the quote and authorize routes refuse in that case, so
+        // the screen need not guess.
+        paused: pause.paused,
         distributor: LUSD_DISTRIBUTOR,
         xlmBalance,
         lusdBalance,

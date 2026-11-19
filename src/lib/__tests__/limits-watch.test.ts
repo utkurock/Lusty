@@ -35,7 +35,7 @@ vi.mock('@/lib/db', () => ({
   }),
 }))
 
-const { limitsChangeAlert, checkLimitsEvents, withdrawalAlert } = await import('../monitor/limits-watch')
+const { limitsChangeAlert, checkLimitsEvents, withdrawalAlert, departures } = await import('../monitor/limits-watch')
 const { parseLimitsEvent, parseWithdrawalEvent } = await import('../contract-events')
 const { underlying } = await import('../assets')
 
@@ -222,6 +222,54 @@ describe('parseLimitsEvent', () => {
     const v4 = parseLimitsEvent(raw)!
     expect(v4.maxExpiryCall).toBeUndefined()
     expect(v4.maxPositionCall).toBe(50)
+  })
+
+  it('reads the open-interest caps a v6 instance appends, after the binding time on a raise', () => {
+    const i128 = (v: bigint) => nativeToScVal(v, { type: 'i128' })
+    const head = [
+      i128(500_000_000n),
+      i128(15_000_000_000n),
+      nativeToScVal(2000, { type: 'u32' }),
+      i128(2_500_000_000n),
+      i128(30_000_000_000n),
+    ]
+    const applied: any = {
+      topic: [nativeToScVal('limits', { type: 'symbol' })],
+      value: xdr.ScVal.scvVec([...head, i128(15_000_000_000n), i128(90_000_000_000n)]),
+      contractId: { contractId: () => XLM_VAULT },
+      ledger: 11,
+      ledgerClosedAt: '2026-11-19T00:00:00Z',
+    }
+    expect(parseLimitsEvent(applied)).toMatchObject({ maxOpenCall: 1500, maxOpenPut: 9000 })
+
+    const raise: any = {
+      ...applied,
+      topic: [nativeToScVal('lim_raise', { type: 'symbol' })],
+      value: xdr.ScVal.scvVec([
+        ...head,
+        nativeToScVal(1_791_331_200n, { type: 'u64' }),
+        i128(15_000_000_000n),
+        i128(90_000_000_000n),
+      ]),
+    }
+    const parsed = parseLimitsEvent(raise)!
+    expect(parsed.effectiveAt).toBe(new Date(1_791_331_200_000).toISOString())
+    expect(parsed).toMatchObject({ maxOpenCall: 1500, maxOpenPut: 9000 })
+
+    // A v5 raise has no caps after its binding time; they stay unset.
+    raise.value = xdr.ScVal.scvVec(raise.value.vec().slice(0, 6))
+    expect(parseLimitsEvent(raise)!.maxOpenCall).toBeUndefined()
+  })
+
+  it('reports a v6 open-interest cap on a book declared without one', () => {
+    const change = {
+      contractId: XLM_VAULT,
+      ledger: 12,
+      at: '2026-11-19T00:00:00Z',
+      ...declared,
+      maxOpenCall: 1500,
+    }
+    expect(departures(change, xlm)).toEqual(['call open-interest cap none → 1500'])
   })
 
   it('ignores any other event', () => {

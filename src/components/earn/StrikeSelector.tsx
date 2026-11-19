@@ -271,6 +271,11 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
     return type === 'call' ? selectedBucket.callFull : selectedBucket.putFull
   }, [type, selectedBucket])
 
+  // The guardian has paused new positions on this book. The quote route
+  // refuses too, and the contract is what binds; this keeps a writer from
+  // being asked to sign for a position that cannot open.
+  const bookPaused = vaultStats?.paused === true
+
   // How much this wallet has already committed to the selected expiry + side,
   // in collateral units (XLM for calls, USD≈stable for puts). Mirrors the
   // server's per-user per-expiry SUM in reserveDepositCapacity.
@@ -359,6 +364,10 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
       return
     }
     if (!connected) { await connect(); return }
+    if (bookPaused) {
+      setError(`The ${assetSymbol} book is paused. No new positions until it restarts; open positions still settle.`)
+      return
+    }
     // Fail-closed: never send collateral while the wallet's per-expiry usage is
     // unknown (positions read still pending or failed). Retry the read so a
     // second press can succeed once it recovers.
@@ -881,7 +890,15 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
         </div>
       )}
 
-      {vaultFull && (
+      {bookPaused && (
+        <div className="notice notice-error text-ink">
+          The {assetSymbol} book is paused: it takes no new positions until it is
+          restarted. Positions already open are unaffected and settle at expiry
+          as usual.
+        </div>
+      )}
+
+      {!bookPaused && vaultFull && (
         <div className="notice notice-error text-ink">
           This expiry&apos;s {type === 'call' ? 'covered-call' : 'cash-secured-put'} epoch is
           full. Pick an expiry above that still has capacity; a deposit here
@@ -937,9 +954,11 @@ export function StrikeSelector({ assetSymbol, type }: StrikeSelectorProps) {
       <EarnButton
         onClick={handleEarn}
         loading={txLoading}
-        disabled={vaultFull || allowanceExceeded || checkingAllowance || amount <= 0 || amount < minAmount || amount > maxAmount}
+        disabled={bookPaused || vaultFull || allowanceExceeded || checkingAllowance || amount <= 0 || amount < minAmount || amount > maxAmount}
         label={
-          vaultFull
+          bookPaused
+            ? 'Book paused'
+            : vaultFull
             ? 'Vault full'
             : checkingAllowance
               ? 'Checking allowance…'

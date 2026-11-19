@@ -13,7 +13,7 @@ import { isScheduledExpiry, minDaysToExpiry } from '@/lib/expiries'
 import { assertQuoteAllowed, PolicyRejection, reserveQuote } from '@/lib/quote-policy'
 import { getBreakerState } from '@/lib/circuit-breaker'
 import { requestedUnderlying } from '@/lib/assets'
-import { limitsRefusal } from '@/lib/vault-limits'
+import { limitsRefusal, pauseRefusal } from '@/lib/vault-limits'
 import { hasTrustline } from '@/lib/swap'
 import { NETWORK_PASSPHRASE } from '@/lib/stellar'
 import {
@@ -175,6 +175,13 @@ export async function POST(req: Request) {
             { error: 'vault contract not configured on the server' },
             { status: 500 },
           )
+    }
+
+    // A paused instance refuses every open; a quote or a signature for one is
+    // a promise the contract will break. Settlement is untouched by this.
+    const paused = await pauseRefusal(asset)
+    if (paused) {
+      return NextResponse.json({ error: paused, code: 'book_paused' }, { status: 503 })
     }
 
     // Same refusal the quote endpoint raises, repeated here because the money

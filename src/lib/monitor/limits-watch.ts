@@ -48,6 +48,9 @@ const FIELDS = [
   // skipped rather than read as zero.
   ['maxExpiryCall', 'call per-expiry cap'],
   ['maxExpiryPut', 'put per-expiry cap'],
+  // v6 only. A v6 change on a book declared without them departs from it.
+  ['maxOpenCall', 'call open-interest cap'],
+  ['maxOpenPut', 'put open-interest cap'],
 ] as const
 
 /** Where a change departs from what the book declares, field by field. */
@@ -55,8 +58,10 @@ export function departures(change: LimitsChange, asset: UnderlyingAsset): string
   const declared = asset.onchainLimits
   return FIELDS.flatMap(([f, what]) => {
     const now = change[f]
-    if (now === undefined || Math.abs(now - declared[f]) <= EPSILON) return []
-    return [`${what} ${declared[f]} → ${now}`]
+    if (now === undefined) return []
+    const was = declared[f]
+    if (was !== undefined && Math.abs(now - was) <= EPSILON) return []
+    return [`${what} ${was ?? 'none'} → ${now}`]
   })
 }
 

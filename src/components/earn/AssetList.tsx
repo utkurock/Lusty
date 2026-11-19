@@ -93,6 +93,8 @@ function AssetBook({ asset, tab }: { asset: UnderlyingAsset; tab: Tab }) {
   const buckets = stats?.buckets ?? []
   const full =
     buckets.length > 0 && buckets.every((b) => (isCalls ? b.callFull : b.putFull))
+  // A paused book takes nothing on any expiry, so it closes the row outright.
+  const paused = stats?.paused === true
 
 
   return (
@@ -106,8 +108,8 @@ function AssetBook({ asset, tab }: { asset: UnderlyingAsset; tab: Tab }) {
         minAPR={apr?.min}
         quoted={answered}
         href={`/earn/${asset.slug}${isCalls ? '' : '?type=put'}`}
-        disabled={full}
-        disabledReason="Vault full"
+        disabled={paused || full}
+        disabledReason={paused ? 'Paused' : 'Vault full'}
       />
 
       {/* The engine answered and had nothing to offer. Say so once, under the

@@ -81,6 +81,13 @@ export interface OnchainLimits {
   maxPositionPut: number
   maxExpiryCall: number
   maxExpiryPut: number
+  /**
+   * The leg's open-interest cap across every expiry (v6). Left out for a v5
+   * instance, which enforces none; declaring one there is drift, as is
+   * leaving it out for an instance that enforces one.
+   */
+  maxOpenCall?: number
+  maxOpenPut?: number
   /** Premium ceiling in bps of escrowed collateral, the bound on a quoter. */
   maxPremiumBps: number
 }

@@ -10,12 +10,20 @@ const XLM_VAULT = StrKey.encodeContract(Buffer.alloc(32, 0x11))
 let onchain: any
 let reads = 0
 let readFails: string | null = null
+let paused = false
+let pauseReads = 0
+let pauseFails: string | null = null
 
 vi.mock('@/lib/vault-contract', () => ({
   getVaultLimits: async () => {
     reads += 1
     if (readFails) throw new Error(readFails)
     return onchain
+  },
+  getVaultPaused: async () => {
+    pauseReads += 1
+    if (pauseFails) throw new Error(pauseFails)
+    return paused
   },
 }))
 
@@ -30,6 +38,8 @@ const DEPLOYED = {
   maxPositionPut: 10_000,
   maxExpiryCall: 500_000,
   maxExpiryPut: 500_000,
+  maxOpenCall: null,
+  maxOpenPut: null,
   maxPremiumBps: 2_000,
 }
 
@@ -43,6 +53,9 @@ beforeEach(() => {
   onchain = { ...DEPLOYED }
   reads = 0
   readFails = null
+  paused = false
+  pauseReads = 0
+  pauseFails = null
   lim.resetLimitsCache()
 })
 
@@ -58,6 +71,8 @@ describe('compareLimits — the registry against the instance', () => {
         maxPositionPut: 1_500,
         maxExpiryCall: 5,
         maxExpiryPut: 150_000,
+        maxOpenCall: null,
+        maxOpenPut: null,
         maxPremiumBps: 2_000,
       })
     ).toEqual([])
@@ -159,5 +174,83 @@ describe('reconcileLimits — reading the instance', () => {
     const homeless = { ...reg.XLM, contracts: { ...reg.XLM.contracts, vault: '' } }
     expect(await lim.limitsRefusal(homeless)).toContain('could not be read')
     expect(reads).toBe(0)
+  })
+})
+
+describe('compareLimits — the v6 open-interest caps', () => {
+  // A v6 XLM book: the envelope's 1.5M a month and 150k USD a month both fit
+  // under the caps across every open expiry.
+  const V6 = { ...DEPLOYED, maxOpenCall: 1_500_000, maxOpenPut: 1_500_000 }
+  const declaredV6 = () => ({
+    ...reg.XLM,
+    onchainLimits: { ...reg.XLM.onchainLimits, maxOpenCall: 1_500_000, maxOpenPut: 1_500_000 },
+  })
+
+  it('reconciles a v6 book whose declaration carries the caps', () => {
+    expect(lim.compareLimits(declaredV6(), V6)).toEqual([])
+  })
+
+  it('catches a v5 declaration pointed at a v6 instance', () => {
+    const drift = lim.compareLimits(reg.XLM, V6)
+    expect(drift.map((d) => d.field).sort()).toEqual(['maxOpenCall', 'maxOpenPut'])
+    expect(drift.every((d) => d.kind === 'declared')).toBe(true)
+    expect(drift[0].detail).toContain('at none')
+  })
+
+  it('catches a v6 declaration pointed at a v5 instance', () => {
+    const drift = lim.compareLimits(declaredV6(), DEPLOYED)
+    expect(drift.map((d) => d.field).sort()).toEqual(['maxOpenCall', 'maxOpenPut'])
+    expect(drift[0].detail).toContain('enforces none')
+  })
+
+  it('catches an open-interest cap moved on chain', () => {
+    const drift = lim.compareLimits(declaredV6(), { ...V6, maxOpenPut: 9_000_000 })
+    expect(drift).toHaveLength(1)
+    expect(drift[0]).toMatchObject({ kind: 'declared', field: 'maxOpenPut', onchain: 9_000_000 })
+  })
+
+  it('refuses an envelope whose month would not fit under the open-interest cap', () => {
+    const tight = { ...V6, maxOpenCall: 1_000_000 }
+    const book = {
+      ...reg.XLM,
+      onchainLimits: { ...reg.XLM.onchainLimits, maxOpenCall: 1_000_000, maxOpenPut: 1_500_000 },
+    }
+    const drift = lim.compareLimits(book, tight)
+    expect(drift).toHaveLength(1)
+    expect(drift[0]).toMatchObject({ kind: 'envelope', field: 'callMonthlyCap', onchain: 1_000_000 })
+  })
+})
+
+describe('readPause — the guardian\'s stop', () => {
+  it('passes a book nobody paused', async () => {
+    expect(await lim.pauseRefusal(reg.XLM, 0)).toBeNull()
+  })
+
+  it('refuses a paused book and says settlement goes on', async () => {
+    paused = true
+    const refusal = await lim.pauseRefusal(reg.XLM, 0)
+    expect(refusal).toContain('XLM book is paused by its guardian')
+    expect(refusal).toContain('still settle')
+  })
+
+  it('re-reads within a poll, far sooner than the limits', async () => {
+    await lim.readPause(reg.XLM, 0)
+    await lim.readPause(reg.XLM, 10_000)
+    expect(pauseReads).toBe(1)
+    paused = true
+    expect((await lim.readPause(reg.XLM, 31_000)).paused).toBe(true)
+    expect(pauseReads).toBe(2)
+  })
+
+  it('rides out a transport failure on the last reading, then refuses', async () => {
+    await lim.readPause(reg.XLM, 0)
+    pauseFails = 'rpc unreachable'
+    expect(await lim.readPause(reg.XLM, 10 * 60_000)).toMatchObject({ paused: false, stale: true })
+    expect(await lim.pauseRefusal(reg.XLM, 2 * 60 * 60_000)).toContain('could not be read')
+  })
+
+  it('refuses when the state was never read', async () => {
+    pauseFails = 'rpc unreachable'
+    expect(await lim.pauseRefusal(reg.XLM, 0)).toContain('could not be read')
   })
 })

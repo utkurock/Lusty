@@ -299,6 +299,29 @@ export function validateAsset(a: ResolvedAsset): AssetIssue[] {
     )
   }
 
+  // The open-interest caps arrive together with v6 or not at all; one of them
+  // alone describes no instance. Under one expiry's cap the contract refuses
+  // them (`InvalidLimit`), so a declaration saying so cannot be its record.
+  const open = [
+    ['maxOpenCall', limits.maxOpenCall, limits.maxExpiryCall],
+    ['maxOpenPut', limits.maxOpenPut, limits.maxExpiryPut],
+  ] as const
+  if ((limits.maxOpenCall === undefined) !== (limits.maxOpenPut === undefined)) {
+    issues.invalid(
+      'onchainLimits.maxOpenCall',
+      'and maxOpenPut are declared together for a v6 instance, or both left out for a v5 one'
+    )
+  }
+  for (const [field, value, perExpiry] of open) {
+    if (value === undefined) continue
+    if (issues.positive(`onchainLimits.${field}`, value) && value < perExpiry) {
+      issues.invalid(
+        `onchainLimits.${field}`,
+        `is below one expiry's cap (${value} < ${perExpiry}), which the instance would refuse`
+      )
+    }
+  }
+
   return issues.list
 }
 

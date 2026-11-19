@@ -85,6 +85,13 @@ export interface VaultLimits {
   maxPositionPut: number
   maxExpiryCall: number
   maxExpiryPut: number
+  /**
+   * Most collateral the leg may hold across every expiry, its open interest.
+   * Null on a v5 instance, which has no such cap: null is "not enforced",
+   * never zero.
+   */
+  maxOpenCall: number | null
+  maxOpenPut: number | null
   /** Premium ceiling, in basis points of the collateral escrowed against it. */
   maxPremiumBps: number
 }
@@ -96,6 +103,8 @@ export interface VaultConfig {
   cash: string
   treasury: string
   admin: string
+  /** The key that may pause new positions. Null on a v5 instance, which has none. */
+  guardian: string | null
 }
 
 // ── Scaling ─────────────────────────────────────────────────────────
@@ -263,6 +272,7 @@ export async function getVaultConfig(asset: UnderlyingAsset = XLM): Promise<Vaul
     cash: c.cash,
     treasury: c.treasury,
     admin: c.admin,
+    guardian: c.guardian ?? null,
   }
 }
 
@@ -295,8 +305,35 @@ export async function getVaultLimits(asset: UnderlyingAsset = XLM): Promise<Vaul
     maxPositionPut: fromTokenUnits(l.max_position_put),
     maxExpiryCall: fromTokenUnits(l.max_expiry_call),
     maxExpiryPut: fromTokenUnits(l.max_expiry_put),
+    maxOpenCall: l.max_open_call === undefined ? null : fromTokenUnits(l.max_open_call),
+    maxOpenPut: l.max_open_put === undefined ? null : fromTokenUnits(l.max_open_put),
     maxPremiumBps: Number(l.max_premium_bps),
   }
+}
+
+/**
+ * Whether the instance's guardian has paused new positions. A paused v6
+ * instance refuses `open` with #24 and keeps settling; a v5 instance has no
+ * `paused` and cannot be paused, which reads as false here rather than as a
+ * failure. Any other error is thrown: a book whose state cannot be read is not
+ * a book known to be open.
+ */
+export async function getVaultPaused(asset: UnderlyingAsset = XLM): Promise<boolean> {
+  try {
+    return Boolean(await readVault('paused', [], asset))
+  } catch (err: any) {
+    if (isMissingFunction(err)) return false
+    throw err
+  }
+}
+
+/**
+ * True when a simulation failed because the instance has no such function,
+ * which is how an older instance answers a newer read.
+ */
+export function isMissingFunction(err: unknown): boolean {
+  const msg = String((err as any)?.message ?? err)
+  return /non-?existent|MissingValue|function/i.test(msg)
 }
 
 /** Collateral already committed to one expiry — how full that date is. */
@@ -632,7 +669,7 @@ export async function recordExpiryPrice(
   try {
     existing = await readVault('recorded_price', [ts], asset)
   } catch (err: any) {
-    if (/non-?existent|MissingValue|function/i.test(String(err?.message ?? err))) return 'unsupported'
+    if (isMissingFunction(err)) return 'unsupported'
     throw err
   }
   if (existing !== null && existing !== undefined) return 'already'
@@ -757,6 +794,13 @@ const VAULT_ERRORS: Record<number, string> = {
   19: 'The admin cannot also be a quoter',
   20: 'The treasury cannot be the vault itself',
   21: 'The oracle reports a scale or resolution the vault cannot use',
+  22: 'That withdrawal is not due yet',
+  23: 'No withdrawal is scheduled for this pool',
+  // v6 instances only.
+  24: 'This book is paused: no new positions until the admin restarts it. Open positions still settle',
+  25: 'The guardian cannot also be the admin',
+  26: 'The guardian cannot also be a quoter',
+  27: 'This side of the book is at its open-interest cap: no room on any expiry right now',
 }
 
 /**

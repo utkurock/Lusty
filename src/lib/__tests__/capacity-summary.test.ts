@@ -15,6 +15,11 @@ vi.mock('@/lib/vault-state', async (importOriginal) => ({
   ],
 }))
 
+vi.mock('@/lib/vault-contract', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/vault-contract')>()),
+  getVaultPaused: async () => false,
+}))
+
 vi.mock('@/lib/lusd', () => ({
   LUSD_CODE: 'LUSD',
   LUSD_ISSUER: 'GISSUER',

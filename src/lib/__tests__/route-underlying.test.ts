@@ -22,6 +22,7 @@ const reserveAction = vi.fn(async (..._a: any[]) => ({ alreadyProcessed: false }
 
 vi.mock('@/lib/vault-contract', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../vault-contract')>()),
+  getVaultPaused: async () => false,
   getPosition: (...a: any[]) => getPosition(...a),
   // A healthy book answers `limits()` with what the registry says it holds.
   // Both routes reconcile the two before they write, so leaving this to the
