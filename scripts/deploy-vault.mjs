@@ -24,6 +24,18 @@
 // same reason — same oracle, same treasury, same admin, same quoter set — so
 // what differs between two books is exactly what the registry says differs:
 // the feed, the collateral, and the limits.
+//
+// None of that holds on the public network, where copying a live instance says
+// nothing about what was reviewed. There the desk is named in the environment
+// (REFLECTOR_ORACLE_ID, VAULT_ADMIN, VAULT_GUARDIAN, VAULT_TREASURY,
+// VAULT_QUOTERS, VAULT_CASH_CONTRACT) and checked against release/public.json
+// before anything is signed: the reviewed wasm hash, the manifest's config and
+// limits, and every role account's signers and thresholds as Horizon has them.
+// See scripts/lib/deploy-guard.mjs for the refusals.
+//
+// This deploys v6 and only v6: the constructor takes a guardian and the limits
+// carry the open-interest caps, so VAULT_ONCHAIN_MAX_OPEN_{CALL,PUT}_<SYMBOL>
+// and VAULT_GUARDIAN are required wherever it runs.
 
 import {
   Address,
@@ -40,7 +52,8 @@ import {
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { HORIZON_URL, PASSPHRASE, RPC_URL } from './lib/network.mjs'
+import { HORIZON_URL, NETWORK, PASSPHRASE, RPC_URL } from './lib/network.mjs'
+import { deskFromManifest, releaseRefusals } from './lib/deploy-guard.mjs'
 
 // The app's own configuration, read the same way the app reads it. A script
 // run by hand has no framework loading it, and a deploy that silently fell back
@@ -91,6 +104,9 @@ const LIMIT_KEYS = {
   max_expiry_call: 'VAULT_ONCHAIN_MAX_EXPIRY_CALL',
   max_position_put: 'VAULT_ONCHAIN_MAX_POSITION_PUT',
   max_expiry_put: 'VAULT_ONCHAIN_MAX_EXPIRY_PUT',
+  // v6: the leg's whole open interest, across every expiry.
+  max_open_call: 'VAULT_ONCHAIN_MAX_OPEN_CALL',
+  max_open_put: 'VAULT_ONCHAIN_MAX_OPEN_PUT',
 }
 
 /** The one cap that is not asset-specific: it bounds the quoter, not the market. */
@@ -129,9 +145,41 @@ function bookFromEnv(symbol) {
     // this desk pays premiums in the same cash today, and reading it off the
     // live instance is stronger than reading it off a local file that may
     // disagree with what XLM is actually escrowing against.
-    cash: process.env.NEXT_PUBLIC_LUSD_CONTRACT ?? null,
+    cash: process.env.VAULT_CASH_CONTRACT || process.env.NEXT_PUBLIC_LUSD_CONTRACT || null,
     limits,
     missing,
+  }
+}
+
+/**
+ * The desk, named explicitly rather than copied off a live instance. This is
+ * the public network's only path: what is deployed there must be the reviewed
+ * release, and "whatever the instance next door is running" is not a statement
+ * about what was reviewed.
+ */
+function deskFromEnv(book, symbol) {
+  const list = (process.env.VAULT_QUOTERS ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  return {
+    oracle: process.env.REFLECTOR_ORACLE_ID ?? null,
+    feed: book.feed,
+    token: book.token,
+    cash: book.cash,
+    treasury: process.env.VAULT_TREASURY ?? null,
+    admin: process.env.VAULT_ADMIN ?? null,
+    guardian: process.env.VAULT_GUARDIAN ?? null,
+    quoters: list,
+  }
+}
+
+/** The reviewed release for a network, or null when none has been recorded. */
+function loadManifest(network) {
+  try {
+    return JSON.parse(readFileSync(`release/${network}.json`, 'utf8'))
+  } catch {
+    return null
   }
 }
 
@@ -143,6 +191,8 @@ function limitsScVal(l) {
   return xdr.ScVal.scvMap([
     entry('max_expiry_call', i128(l.max_expiry_call)),
     entry('max_expiry_put', i128(l.max_expiry_put)),
+    entry('max_open_call', i128(l.max_open_call)),
+    entry('max_open_put', i128(l.max_open_put)),
     entry('max_position_call', i128(l.max_position_call)),
     entry('max_position_put', i128(l.max_position_put)),
     entry('max_premium_bps', nativeToScVal(l.max_premium_bps, { type: 'u32' })),
@@ -263,6 +313,20 @@ async function sacAsset(sac) {
   }
 }
 
+/** An account's signers and thresholds, or null when Horizon has no such account. */
+async function loadRoleAccount(address) {
+  const res = await fetch(`${HORIZON_URL}/accounts/${address}`).then((r) => (r.ok ? r.json() : null))
+  if (!res) return null
+  return {
+    thresholds: {
+      low: res.thresholds.low_threshold,
+      med: res.thresholds.med_threshold,
+      high: res.thresholds.high_threshold,
+    },
+    signers: res.signers.map((s) => ({ key: s.key, weight: s.weight })),
+  }
+}
+
 async function preflight(vault, treasury, token, cash, probe) {
   console.log('\nbefore this book can trade:')
   const stats = await read(vault, 'stats', probe).catch(() => null)
@@ -310,8 +374,11 @@ async function main() {
     return
   }
 
+  const onPublic = NETWORK.name === 'public'
   const reference = process.env.NEXT_PUBLIC_VAULT_CONTRACT
-  if (!reference) throw new Error('NEXT_PUBLIC_VAULT_CONTRACT must name the instance to copy the desk from')
+  if (!onPublic && !reference) {
+    throw new Error('NEXT_PUBLIC_VAULT_CONTRACT must name the instance to copy the desk from')
+  }
 
   // Replacing a book's instance moves the settlement sweep off the old one:
   // it walks each book's configured vault and nothing else. Any position
@@ -366,42 +433,113 @@ async function main() {
   )
   console.log('→ deployer   :', deployer.publicKey())
 
-  const config = await read(reference, 'config', deployer.publicKey())
-  const cash = book.cash ?? config.cash
-  const quoters = await read(reference, 'quoters', deployer.publicKey())
-  const referenceHash = await wasmHashOf(reference)
+  // The desk. On the public network it is named in the environment and checked
+  // against the reviewed release; on testnet it is still copied off the
+  // reference instance, where nothing was reviewed and copying is the stronger
+  // guarantee that two books run the same desk.
   const wasm = wasmPath ? readFileSync(wasmPath) : null
+  let desk
+  let referenceHash = null
+  if (onPublic) {
+    desk = deskFromEnv(book, symbol)
+    if (reference) {
+      referenceHash = await wasmHashOf(reference)
+      console.log('→ reference  :', reference, `(wasm ${referenceHash.toString('hex')})`)
+    }
+  } else {
+    const config = await read(reference, 'config', deployer.publicKey())
+    const quoters = await read(reference, 'quoters', deployer.publicKey())
+    referenceHash = await wasmHashOf(reference)
+    desk = {
+      oracle: config.oracle,
+      feed: book.feed,
+      token: book.token,
+      cash: book.cash ?? config.cash,
+      treasury: config.treasury,
+      admin: config.admin,
+      // A v5 reference instance has no guardian to copy, so a v6 deploy off
+      // one has to be told which account holds the pause.
+      guardian: config.guardian ?? process.env.VAULT_GUARDIAN ?? null,
+      quoters,
+    }
+    console.log('→ reference  :', reference, `(feed ${config.feed})`)
+    console.log('  wasm hash  :', referenceHash.toString('hex'))
+  }
+  // Null only on the public network with no reference instance, where the
+  // guard below reports it alongside everything else that is wrong.
   let wasmHash = wasm ? createHash('sha256').update(wasm).digest() : referenceHash
-  console.log('→ reference  :', reference, `(feed ${config.feed})`)
-  console.log('  wasm hash  :', referenceHash.toString('hex'))
+  if (!wasmHash && !onPublic) {
+    throw new Error('--wasm is required when no reference instance names a hash to deploy from')
+  }
   if (wasm) {
     console.log(`→ new wasm   : ${wasmPath} (${wasm.length} bytes)`)
     console.log('  wasm hash  :', wasmHash.toString('hex'))
-    if (wasmHash.equals(referenceHash)) console.log('  note       : same code the reference already runs')
+    if (referenceHash && wasmHash.equals(referenceHash)) {
+      console.log('  note       : same code the reference already runs')
+    }
   }
-  console.log('  oracle     :', config.oracle)
-  console.log('  treasury   :', config.treasury)
-  console.log('  admin      :', config.admin)
-  console.log('  quoters    :', quoters.join(', '))
+  console.log('  oracle     :', desk.oracle)
+  console.log('  treasury   :', desk.treasury)
+  console.log('  admin      :', desk.admin)
+  console.log('  guardian   :', desk.guardian ?? '(unset)')
+  console.log('  quoters    :', desk.quoters.join(', '))
   console.log(`→ new book   : feed ${book.feed}`)
   console.log('  token      :', book.token)
-  console.log('  cash       :', cash)
+  console.log('  cash       :', desk.cash)
   console.log('  limits     :', Object.fromEntries(
     Object.entries(book.limits).map(([k, v]) => [k, typeof v === 'bigint' ? `${Number(v) / 1e7}` : v])
   ))
 
-  if (config.admin !== deployer.publicKey()) {
-    // Expected, and worth printing rather than hiding: the new book's admin is
-    // whoever the reference instance's is, and a book whose admin key nobody
-    // holds can never have its limits tightened.
-    console.log('  note       : admin is the reference instance\'s, not the deployer')
+  if (desk.admin !== deployer.publicKey()) {
+    // Expected, and worth printing rather than hiding: a book whose admin key
+    // nobody holds can never have its limits tightened.
+    console.log('  note       : admin is not the deployer')
   }
+
+  // The public network, before anything is signed: what is deployed there has
+  // to be the release that was reviewed, down to the signers on the accounts
+  // the constructor hands the admin, the pause and the collateral to.
+  if (onPublic) {
+    const manifest = loadManifest(NETWORK.name)
+    const roles = [desk.admin, desk.guardian, desk.treasury].filter(Boolean)
+    // No reviewed release to compare against: refuse without reading anything.
+    const accounts = manifest
+      ? Object.fromEntries(
+          await Promise.all(
+            [...new Set(roles)].map(async (a) => [a, await loadRoleAccount(a).catch(() => null)]),
+          ),
+        )
+      : {}
+    const refusals = releaseRefusals({
+      manifest,
+      network: NETWORK.name,
+      symbol,
+      wasmHash: wasmHash ? wasmHash.toString('hex') : null,
+      desk,
+      limits: Object.fromEntries(
+        Object.entries(book.limits).map(([k, v]) => [k, String(v)]),
+      ),
+      accounts,
+    })
+    if (refusals.length > 0) {
+      console.error(`\n✗ this is not the reviewed ${NETWORK.name} release:`)
+      for (const r of refusals) console.error(`  - ${r}`)
+      process.exit(1)
+    }
+    console.log(`\n✓ matches the reviewed ${NETWORK.name} release (release/${NETWORK.name}.json)`)
+  } else if (!desk.guardian) {
+    throw new Error(
+      `${symbol} has no guardian: set VAULT_GUARDIAN.\n` +
+        '  v6 takes one in the constructor and it cannot be changed afterwards.',
+    )
+  }
+
   if (dryRun) {
     console.log('\n(dry run — nothing deployed)')
     return
   }
 
-  if (wasm && !wasmHash.equals(referenceHash)) {
+  if (wasm && !(referenceHash && wasmHash.equals(referenceHash))) {
     // Uploading code that is already on the network is harmless; it costs the
     // fee and returns the same hash. Compare it anyway: the hash deployed from
     // must be the hash of the file that was read.
@@ -423,13 +561,14 @@ async function main() {
   }
 
   const args = [
-    new Address(config.oracle).toScVal(),
+    new Address(desk.oracle).toScVal(),
     nativeToScVal(book.feed, { type: 'symbol' }),
     new Address(book.token).toScVal(),
-    new Address(cash).toScVal(),
-    new Address(config.treasury).toScVal(),
-    nativeToScVal(quoters.map((q) => new Address(q)), { type: 'address' }),
-    new Address(config.admin).toScVal(),
+    new Address(desk.cash).toScVal(),
+    new Address(desk.treasury).toScVal(),
+    nativeToScVal(desk.quoters.map((q) => new Address(q)), { type: 'address' }),
+    new Address(desk.admin).toScVal(),
+    new Address(desk.guardian).toScVal(),
     limitsScVal(book.limits),
   ]
 
@@ -468,7 +607,7 @@ async function main() {
   // What is still not true about this book. All of it fails late — at
   // settlement, from inside a token contract — rather than at deploy, so it is
   // printed here with the state actually read rather than left to a checklist.
-  await preflight(contractId, config.treasury, book.token, cash, deployer.publicKey())
+  await preflight(contractId, desk.treasury, book.token, desk.cash, deployer.publicKey())
 
   console.log('\npaste into .env.local:\n')
   console.log(`${vaultEnvKey(symbol)}=${contractId}`)
