@@ -16,6 +16,7 @@ import type { Alert } from './notify'
 import { checkLimitsEvents, checkWithdrawalEvents } from './limits-watch'
 import { checkOracleHealth } from './oracle-health'
 import { checkRunnerHealth } from './runner-watch'
+import { checkSettleFailures } from './settle-failures'
 import { fetchCloses } from './klines'
 import { HORIZON_URL } from '@/lib/stellar'
 
@@ -446,6 +447,9 @@ export async function runMonitorChecks(): Promise<Alert[]> {
     // Not per book: one runner sweeps every instance, and a runner that has
     // stopped has stopped for all of them.
     checkRunnerHealth(),
+    // What the last run refused, named, rather than the count the backlog
+    // check reads off the chain.
+    checkSettleFailures(),
   ])
   return settled.filter((a): a is Alert => a !== null)
 }
