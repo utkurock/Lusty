@@ -14,6 +14,8 @@ import { inFlight } from '@/lib/routing/budget'
 import { summarise } from '@/lib/routing/journal'
 import type { Alert } from './notify'
 import { checkLimitsEvents, checkWithdrawalEvents } from './limits-watch'
+import { checkOracleHealth } from './oracle-health'
+import { fetchCloses } from './klines'
 import { HORIZON_URL } from '@/lib/stellar'
 
 /**
@@ -211,21 +213,6 @@ function logReturns(closes: number[]): number[] {
     }
   }
   return r
-}
-
-export async function fetchCloses(
-  interval: string,
-  limit: number,
-  asset: UnderlyingAsset,
-): Promise<number[]> {
-  const url = `https://api.binance.com/api/v3/klines?symbol=${asset.binanceSymbol}&interval=${interval}&limit=${limit}`
-  const res = await fetch(url, { cache: 'no-store' })
-  if (!res.ok) throw new Error(`binance klines ${res.status}`)
-  const rows = (await res.json()) as unknown[]
-  // kline tuple: [openTime, open, high, low, close, ...]; close is index 4.
-  return rows
-    .map((row) => parseFloat((row as string[])[4]))
-    .filter((n) => isFinite(n) && n > 0)
 }
 
 /**
@@ -431,6 +418,8 @@ function checkRouting(asset: UnderlyingAsset, now: number = Date.now()): Alert |
  * alerts by the check itself, so this never throws.
  */
 export { checkRouting }
+// Re-exported where it has always been imported from.
+export { fetchCloses }
 
 export async function runMonitorChecks(): Promise<Alert[]> {
   // Caps and vol are about writing, so they follow the books being written.
@@ -446,6 +435,9 @@ export async function runMonitorChecks(): Promise<Alert[]> {
     ...written.map((a) => checkVolSpike(a)),
     ...written.map((a) => checkRouting(a)),
     ...held.map((a) => checkSolvency(a)),
+    // Every book with a vault: a book withdrawn from quoting still has to
+    // settle its open positions at its feed's price.
+    ...held.map((a) => checkOracleHealth(a)),
     // Retired instances too: their open positions still settle there.
     ...settlementBooks().map((a) => checkSettlementBacklog(a)),
     checkLimitsEvents(),
