@@ -15,6 +15,7 @@ import { summarise } from '@/lib/routing/journal'
 import type { Alert } from './notify'
 import { checkLimitsEvents, checkWithdrawalEvents } from './limits-watch'
 import { checkOracleHealth } from './oracle-health'
+import { checkRunnerHealth } from './runner-watch'
 import { fetchCloses } from './klines'
 import { HORIZON_URL } from '@/lib/stellar'
 
@@ -442,6 +443,9 @@ export async function runMonitorChecks(): Promise<Alert[]> {
     ...settlementBooks().map((a) => checkSettlementBacklog(a)),
     checkLimitsEvents(),
     checkWithdrawalEvents(),
+    // Not per book: one runner sweeps every instance, and a runner that has
+    // stopped has stopped for all of them.
+    checkRunnerHealth(),
   ])
   return settled.filter((a): a is Alert => a !== null)
 }
