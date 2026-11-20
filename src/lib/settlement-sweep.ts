@@ -15,6 +15,7 @@ import {
   type SettlementFailure,
   type SettlementOutcome,
 } from '@/lib/settlement'
+import { recordRunEnd, recordRunStart, type RunSource } from '@/lib/monitor/runner-watch'
 
 /**
  * One settlement sweep: walk every underlying that has a vault and settle what
@@ -165,7 +166,7 @@ async function scanBook(
   }
 }
 
-export async function sweepOnce(opts: {
+export interface SweepOptions {
   dryRun?: boolean
   /**
    * Scan one page from this id instead of the whole book. For a sweep run by
@@ -176,7 +177,52 @@ export async function sweepOnce(opts: {
   settleLimit?: number
   /** Overrides SETTLE_RUNNER_SECRET; omit outside tests. */
   runnerSecret?: string
-} = {}): Promise<SweepReport> {
+  /** Who asked for this run, as the run log records it. */
+  source?: RunSource
+}
+
+/**
+ * A sweep, recorded. The row is opened before the sweep starts and closed
+ * whatever happens to it, because the two things worth alerting on — a run
+ * that never finished and a runner that stopped — are only visible in a log
+ * that a dead runner has already written to.
+ *
+ * A dry run signs nothing and is not a settlement run, so it is not recorded;
+ * otherwise a monitor dry-running the sweep would report a healthy runner.
+ */
+export async function sweepOnce(opts: SweepOptions = {}): Promise<SweepReport> {
+  if (opts.dryRun) return runSweep(opts)
+  const runId = await recordRunStart(opts.source ?? 'endpoint')
+  try {
+    const report = await runSweep(opts)
+    await recordRunEnd(runId, {
+      outcome: report.note ? 'scan-only' : 'ok',
+      settled: report.settled.length,
+      failed: report.failed.length,
+      due: report.books.reduce((n, b) => n + b.due.length, 0),
+      detail: {
+        failed: report.failed,
+        pastDeadline: report.books.flatMap((b) =>
+          b.pastDeadline.map((id) => ({ id, underlying: b.underlying, vault: b.vault })),
+        ),
+        scanErrors: report.books.filter((b) => b.error).map((b) => ({ underlying: b.underlying, vault: b.vault, error: b.error })),
+        note: report.note ?? null,
+      },
+    })
+    return report
+  } catch (e: any) {
+    await recordRunEnd(runId, {
+      outcome: 'error',
+      settled: 0,
+      failed: 0,
+      due: 0,
+      detail: { error: e?.message ?? 'sweep failed' },
+    })
+    throw e
+  }
+}
+
+async function runSweep(opts: SweepOptions): Promise<SweepReport> {
   const dryRun = opts.dryRun ?? false
   const runnerSecret = opts.runnerSecret ?? process.env.SETTLE_RUNNER_SECRET ?? ''
 

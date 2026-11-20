@@ -508,6 +508,26 @@ async function createSchema(): Promise<void> {
       cursor      text not null,
       updated_at  timestamptz not null default now()
     );
+
+    -- Every settlement run: opened before it starts, closed when it ends. A
+    -- row left open is a run that died mid-sweep, and the absence of a recent
+    -- closed row is a runner that has stopped — neither of which the sweep's
+    -- own log can say, because a runner that is not running logs nothing.
+    create table if not exists settlement_runs (
+      id          bigserial primary key,
+      source      text not null,
+      started_at  timestamptz not null default now(),
+      finished_at timestamptz,
+      outcome     text,
+      settled     int not null default 0,
+      failed      int not null default 0,
+      due         int not null default 0,
+      detail      jsonb
+    );
+    create index if not exists settlement_runs_started_at_idx
+      on settlement_runs(started_at desc);
+    create index if not exists settlement_runs_finished_at_idx
+      on settlement_runs(finished_at desc);
   `)
 
   // (Re)create leaderboard view.

@@ -66,7 +66,7 @@ async function tick() {
   }
   running = true
   try {
-    const r = await sweepOnce()
+    const r = await sweepOnce({ source: 'scheduler' })
     const parts = r.books.map((b) =>
       b.error
         ? `${bookLabel(b.underlying, b.vault)} scan failed (${b.error})`

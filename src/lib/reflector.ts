@@ -38,6 +38,8 @@ const DEFAULT_FEED_SYMBOL = XLM.feedSymbol
 // Feed parameters (constant per oracle deployment; see contracts/README.md).
 const DECIMALS = Number(process.env.REFLECTOR_DECIMALS ?? 14)
 const RESOLUTION_SECS = Number(process.env.REFLECTOR_RESOLUTION_SECS ?? 300)
+/** The feed's period length. The monitor judges staleness in multiples of it. */
+export const REFLECTOR_RESOLUTION_SECS = RESOLUTION_SECS
 // Reject a lastprice fallback older than this — mirrors the Soroban contract.
 const MAX_STALENESS_SECS = 3600
 export const REFLECTOR_MAX_STALENESS_SECS = MAX_STALENESS_SECS
