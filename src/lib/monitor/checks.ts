@@ -6,7 +6,6 @@ import {
   settlementBooks,
   type UnderlyingAsset,
 } from '@/lib/assets'
-import { scanForSettlement, positionKey, bookLabel } from '@/lib/settlement'
 import { computeOpenBuckets, callEpochCap } from '@/lib/vault-state'
 import { getVaultStats } from '@/lib/vault-contract'
 import { LUSD_DISTRIBUTOR } from '@/lib/lusd'
@@ -17,6 +16,7 @@ import { checkLimitsEvents, checkWithdrawalEvents } from './limits-watch'
 import { checkOracleHealth } from './oracle-health'
 import { checkRunnerHealth } from './runner-watch'
 import { checkSettleFailures } from './settle-failures'
+import { checkSettlementBacklog } from './settlement-backlog'
 import { fetchCloses } from './klines'
 import { HORIZON_URL } from '@/lib/stellar'
 
@@ -267,76 +267,6 @@ async function checkVolSpike(asset: UnderlyingAsset): Promise<Alert | null> {
       severity: 'info',
       title: `${unit} vol check skipped`,
       message: `Could not evaluate ${unit} volatility: ${e?.message ?? 'unknown'}.`,
-    }
-  }
-}
-
-/**
- * Is anything expired and still open?
- *
- * The check that was missing. Settlement is time-limited: past roughly a day
- * after expiry the oracle no longer has the price, the contract refuses, and
- * the collateral is escrowed with nothing able to release it. Nine positions
- * reached that state over three weeks without a single alert, because nothing
- * here was looking.
- *
- * Two severities, because they ask for opposite responses. A position that is
- * expired but still inside the window means the sweep is late — fix the sweep.
- * A position past the window means the sweep is already too late — that
- * collateral needs a decision, and no amount of retrying will produce one.
- */
-async function checkSettlementBacklog(asset: UnderlyingAsset): Promise<Alert | null> {
-  // A retired instance is named with its contract, so its alert is not
-  // mistaken for the book's current one.
-  const unit = bookLabel(asset.symbol, asset.contracts.vault)
-  try {
-    const scan = await scanForSettlement({ asset })
-    if (scan.candidates.length === 0) return null
-
-    const stranded = scan.pastDeadline
-    const pending = scan.candidates.filter((c) => !c.pastDeadline)
-
-    if (stranded.length > 0) {
-      return {
-        severity: 'critical',
-        title: `${unit}: collateral stranded — settlement missed its window`,
-        message:
-          `${stranded.length} expired ${unit} position(s) are past the oracle's history window. ` +
-          `The contract can no longer price them, there is no admin path to release escrow, ` +
-          `and their collateral is locked permanently. ` +
-          `${stranded.map((id) => positionKey(asset.symbol, id, asset.contracts.vault)).join(', ')}.`,
-        fields: [
-          { label: 'underlying', value: unit },
-          { label: 'stranded', value: String(stranded.length) },
-          { label: 'also_due', value: String(pending.length) },
-        ],
-      }
-    }
-
-    const soonest = pending.reduce(
-      (min, c) => Math.min(min, c.settleBy.getTime()),
-      Infinity
-    )
-    const hoursLeft = Math.max(0, (soonest - Date.now()) / 3_600_000)
-
-    return {
-      severity: 'warning',
-      title: `${unit}: settlement sweep is behind`,
-      message:
-        `${pending.length} ${unit} position(s) have expired and are not settled. ` +
-        `The earliest becomes unsettleable in ${hoursLeft.toFixed(1)}h, after which its ` +
-        `collateral is locked for good.`,
-      fields: [
-        { label: 'underlying', value: unit },
-        { label: 'due', value: String(pending.length) },
-        { label: 'hours_to_deadline', value: hoursLeft.toFixed(1) },
-      ],
-    }
-  } catch (e: any) {
-    return {
-      severity: 'critical',
-      title: `${unit}: settlement scan failed`,
-      message: `Could not read the ${unit} vault's positions: ${e?.message ?? 'unknown'}. Whether anything is due to settle is unknown.`,
     }
   }
 }

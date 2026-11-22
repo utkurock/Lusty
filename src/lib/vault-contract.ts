@@ -650,6 +650,29 @@ export async function settlePosition(
 }
 
 /**
+ * Whether an instance holds a settlement price for an expiry.
+ *
+ *   'recorded'     a v5+ instance with the price on chain: every position on
+ *                  the expiry settles at it, however late
+ *   'unrecorded'   a v5+ instance without it: past the oracle's history, settle
+ *                  is refused until the thirty-day release
+ *   'unsupported'  a v4 instance, which records nothing and releases nothing
+ */
+export async function getRecordedPrice(
+  expiry: Date,
+  asset: UnderlyingAsset = XLM,
+): Promise<'recorded' | 'unrecorded' | 'unsupported'> {
+  const ts = nativeToScVal(BigInt(Math.floor(expiry.getTime() / 1000)), { type: 'u64' })
+  try {
+    const existing = await readVault('recorded_price', [ts], asset)
+    return existing !== null && existing !== undefined ? 'recorded' : 'unrecorded'
+  } catch (err: any) {
+    if (isMissingFunction(err)) return 'unsupported'
+    throw err
+  }
+}
+
+/**
  * Write an expiry's settlement price onto a v5 instance while the oracle still
  * has it, so positions on that expiry settle at it however late they are
  * settled. Permissionless and idempotent on the contract's side, and — like
@@ -664,15 +687,10 @@ export async function recordExpiryPrice(
   signer: Keypair,
   asset: UnderlyingAsset = XLM,
 ): Promise<'recorded' | 'already' | 'unsupported'> {
+  const held = await getRecordedPrice(expiry, asset)
+  if (held === 'unsupported') return 'unsupported'
+  if (held === 'recorded') return 'already'
   const ts = nativeToScVal(BigInt(Math.floor(expiry.getTime() / 1000)), { type: 'u64' })
-  let existing: unknown
-  try {
-    existing = await readVault('recorded_price', [ts], asset)
-  } catch (err: any) {
-    if (isMissingFunction(err)) return 'unsupported'
-    throw err
-  }
-  if (existing !== null && existing !== undefined) return 'already'
 
   const server = vaultServer()
   const account = await server.getAccount(signer.publicKey())

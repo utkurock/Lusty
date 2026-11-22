@@ -6,9 +6,12 @@
  * buffer of historical prices, not a permanent record: once the expiry period
  * is pruned, `price(asset, expiry)` returns nothing, and the contract's only
  * fallback — the live price — is gated on being within an hour of expiry, so
- * that a late settlement cannot pick its own price. Past that point nothing can
- * settle the position: not the runner, not the writer, not a stranger. There is
- * no admin override and no upgrade entrypoint, so the collateral stays escrowed.
+ * that a late settlement cannot pick its own price. Past that point a position
+ * settles only at a price written on chain while the oracle still had it — by
+ * the first settlement on its expiry or by `record_price` (v5 onwards). Without
+ * one, settle is refused until UNPRICED_RELEASE_SECS after expiry and then
+ * releases the collateral to its owner as kept, assigned or not. A v4 instance
+ * has neither, and its collateral stays escrowed for good.
  *
  * Measured against the live testnet feed: the reading 20h back was still
  * served, the one 22h back was gone.
@@ -19,6 +22,13 @@
  * position nobody can close as one that is about to be closed.
  */
 export const ORACLE_HISTORY_SECS = 24 * 60 * 60
+
+/**
+ * How long after expiry a v5+ instance keeps refusing to settle a position with
+ * no recorded price, before releasing it as kept. The contract's
+ * `UNPRICED_RELEASE_SECS`.
+ */
+export const UNPRICED_RELEASE_SECS = 30 * 24 * 60 * 60
 
 /** Whether the oracle can still price this expiry. */
 export function withinOracleWindow(expiry: Date, now: Date = new Date()): boolean {
