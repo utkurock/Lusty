@@ -239,6 +239,28 @@ export async function fetchVaultEvents(limit = 25): Promise<VaultEvent[]> {
 }
 
 /**
+ * Every position opened in the last `lookbackLedgers`, across the deployed
+ * instances, oldest first. Throws when the RPC cannot be read: unlike the
+ * activity feed, its caller is a monitor, and "nothing opened" and "could not
+ * look" must not read alike.
+ */
+export async function scanOpens(lookbackLedgers: number): Promise<VaultEvent[]> {
+  if (VAULT_IDS.length === 0) return []
+  const server = new sorobanRpc.Server(RPC_URL)
+  const { sequence } = await server.getLatestLedger()
+  const topic = nativeToScVal('deposit', { type: 'symbol' }).toXDR('base64')
+  const { events } = await scanForward(
+    server,
+    { startLedger: Math.max(sequence - lookbackLedgers, 1) },
+    [[topic, '*']],
+    Math.max(1, Math.ceil(lookbackLedgers / LEDGERS_PER_PAGE)),
+  )
+  return events
+    .map(parseEvent)
+    .filter((e): e is VaultEvent => e !== null && e.kind === 'deposit')
+}
+
+/**
  * When a position opened, as the ledger recorded it: the `deposit` event its
  * open emitted, in the transaction the caller names.
  *

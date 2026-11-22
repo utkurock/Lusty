@@ -17,6 +17,7 @@ import { checkOracleHealth } from './oracle-health'
 import { checkRunnerHealth } from './runner-watch'
 import { checkSettleFailures } from './settle-failures'
 import { checkSettlementBacklog } from './settlement-backlog'
+import { checkAbnormalActivity } from './abnormal-activity'
 import { fetchCloses } from './klines'
 import { HORIZON_URL } from '@/lib/stellar'
 
@@ -366,6 +367,8 @@ export async function runMonitorChecks(): Promise<Alert[]> {
     ...written.map((a) => checkCapBreach(a)),
     ...written.map((a) => checkVolSpike(a)),
     ...written.map((a) => checkRouting(a)),
+    // Opens happen only on the books being written.
+    ...written.map((a) => checkAbnormalActivity(a)),
     ...held.map((a) => checkSolvency(a)),
     // Every book with a vault: a book withdrawn from quoting still has to
     // settle its open positions at its feed's price.

@@ -52,6 +52,9 @@ vi.mock('@/lib/monitor/limits-watch', () => ({
   checkLimitsEvents: async () => null,
   checkWithdrawalEvents: async () => null,
 }))
+vi.mock('@/lib/monitor/abnormal-activity', () => ({
+  checkAbnormalActivity: async () => null,
+}))
 
 let checks: typeof import('../monitor/checks')
 let assets: typeof import('../assets')
