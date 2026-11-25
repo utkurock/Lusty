@@ -16,6 +16,7 @@ import {
   type SettlementOutcome,
 } from '@/lib/settlement'
 import { recordRunEnd, recordRunStart, type RunSource } from '@/lib/monitor/runner-watch'
+import { pingHeartbeat } from '@/lib/monitor/heartbeat'
 
 /**
  * One settlement sweep: walk every underlying that has a vault and settle what
@@ -187,16 +188,18 @@ export interface SweepOptions {
  * that never finished and a runner that stopped — are only visible in a log
  * that a dead runner has already written to.
  *
- * A dry run signs nothing and is not a settlement run, so it is not recorded;
- * otherwise a monitor dry-running the sweep would report a healthy runner.
+ * A dry run signs nothing and is not a settlement run, so it is not recorded
+ * and does not ping the dead-man's switch; otherwise a monitor dry-running the
+ * sweep would report a healthy runner.
  */
 export async function sweepOnce(opts: SweepOptions = {}): Promise<SweepReport> {
   if (opts.dryRun) return runSweep(opts)
   const runId = await recordRunStart(opts.source ?? 'endpoint')
   try {
     const report = await runSweep(opts)
+    const outcome = report.note ? 'scan-only' : 'ok'
     await recordRunEnd(runId, {
-      outcome: report.note ? 'scan-only' : 'ok',
+      outcome,
       settled: report.settled.length,
       failed: report.failed.length,
       due: report.books.reduce((n, b) => n + b.due.length, 0),
@@ -209,6 +212,8 @@ export async function sweepOnce(opts: SweepOptions = {}): Promise<SweepReport> {
         note: report.note ?? null,
       },
     })
+    // Only a run that could settle proves the runner is settling.
+    if (outcome === 'ok') await pingHeartbeat('settle')
     return report
   } catch (e: any) {
     await recordRunEnd(runId, {

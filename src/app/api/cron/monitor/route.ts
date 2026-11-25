@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { cronAuthorized } from '@/lib/cron-auth'
 import { runMonitorChecks } from '@/lib/monitor/checks'
 import { sendAlert } from '@/lib/monitor/notify'
+import { pingHeartbeat } from '@/lib/monitor/heartbeat'
 import { applyAutoBreaker } from '@/lib/monitor/triggers'
 import { ALL_BOOKS } from '@/lib/circuit-breaker'
 import { purgeOldIps } from '@/lib/db-queries'
@@ -96,6 +97,14 @@ async function handle(req: Request) {
   const deliveries = await Promise.all(toDeliver.map((a) => sendAlert(a)))
   const delivered = deliveries.filter((d) => d.delivered).length
 
+  // The dead-man's switch: silence from here is an outage only a service
+  // outside this deployment can see. An alert that reached no channel is a
+  // monitor nobody hears, so that run does not ping either.
+  const heartbeat =
+    delivered === toDeliver.length
+      ? await pingHeartbeat('monitor')
+      : { status: 'skipped' as const, reason: `${toDeliver.length - delivered} alert(s) undelivered` }
+
   return NextResponse.json({
     ok: true,
     checkedAt: new Date().toISOString(),
@@ -110,6 +119,7 @@ async function handle(req: Request) {
     ...(purged ? { ipsPurged: purged } : {}),
     ...(analyticsPurged ? { analyticsPurged } : {}),
     ...(reservations ? { reservationsSwept: reservations } : {}),
+    heartbeat: heartbeat.status,
   })
 }
 
