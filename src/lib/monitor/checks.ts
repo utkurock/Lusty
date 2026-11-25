@@ -20,6 +20,7 @@ import { checkSettlementBacklog } from './settlement-backlog'
 import { checkAbnormalActivity } from './abnormal-activity'
 import { checkReleaseDrift } from './release-drift'
 import { checkUnconfirmedActions } from './unconfirmed-actions'
+import { checkLapsedReservations } from './lapsed-reservations'
 import { fetchCloses } from './klines'
 import { HORIZON_URL } from '@/lib/stellar'
 
@@ -390,6 +391,8 @@ export async function runMonitorChecks(): Promise<Alert[]> {
     checkReleaseDrift(),
     // A payout the network never confirmed, or a reservation nothing finished.
     checkUnconfirmedActions(),
+    // Signatures the chain could not resolve, still holding allowance.
+    checkLapsedReservations(),
   ])
   return settled.filter((a): a is Alert => a !== null)
 }
