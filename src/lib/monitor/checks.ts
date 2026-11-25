@@ -18,6 +18,7 @@ import { checkRunnerHealth } from './runner-watch'
 import { checkSettleFailures } from './settle-failures'
 import { checkSettlementBacklog } from './settlement-backlog'
 import { checkAbnormalActivity } from './abnormal-activity'
+import { checkReleaseDrift } from './release-drift'
 import { fetchCloses } from './klines'
 import { HORIZON_URL } from '@/lib/stellar'
 
@@ -383,6 +384,9 @@ export async function runMonitorChecks(): Promise<Alert[]> {
     // What the last run refused, named, rather than the count the backlog
     // check reads off the chain.
     checkSettleFailures(),
+    // The whole release — wasm, config, limits, quoters and every role
+    // account's signers and thresholds — against release/<network>.json.
+    checkReleaseDrift(),
   ])
   return settled.filter((a): a is Alert => a !== null)
 }
