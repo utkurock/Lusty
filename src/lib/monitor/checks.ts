@@ -19,6 +19,7 @@ import { checkSettleFailures } from './settle-failures'
 import { checkSettlementBacklog } from './settlement-backlog'
 import { checkAbnormalActivity } from './abnormal-activity'
 import { checkReleaseDrift } from './release-drift'
+import { checkUnconfirmedActions } from './unconfirmed-actions'
 import { fetchCloses } from './klines'
 import { HORIZON_URL } from '@/lib/stellar'
 
@@ -387,6 +388,8 @@ export async function runMonitorChecks(): Promise<Alert[]> {
     // The whole release — wasm, config, limits, quoters and every role
     // account's signers and thresholds — against release/<network>.json.
     checkReleaseDrift(),
+    // A payout the network never confirmed, or a reservation nothing finished.
+    checkUnconfirmedActions(),
   ])
   return settled.filter((a): a is Alert => a !== null)
 }

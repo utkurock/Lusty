@@ -58,6 +58,9 @@ vi.mock('@/lib/monitor/abnormal-activity', () => ({
 vi.mock('@/lib/monitor/release-drift', () => ({
   checkReleaseDrift: async () => null,
 }))
+vi.mock('@/lib/monitor/unconfirmed-actions', () => ({
+  checkUnconfirmedActions: async () => null,
+}))
 
 let checks: typeof import('../monitor/checks')
 let assets: typeof import('../assets')
