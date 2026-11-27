@@ -1,0 +1,61 @@
+name: Backup settlement
+
+# The second settlement runner (M3-08). The primary sweep runs inside the
+# application every fifteen minutes; this runs on GitHub's hosts, on its own
+# fee key, and settles only positions that have been expired for longer than
+# BACKUP_SETTLE_GRACE_MINUTES — what the primary left. So the application, its
+# host or its runner key going down does not leave expired positions to age out
+# of the oracle's history window. See scripts/settle-due.mjs.
+#
+# Configure in the repository's settings:
+#   secrets.BACKUP_SETTLE_SECRET        the backup's own fee-only key (never the primary's)
+#   secrets.BACKUP_SETTLE_HEARTBEAT_URL optional dead-man's switch, pinged on a clean run
+#   vars.STELLAR_NETWORK                testnet | public
+#   vars.RPC_URL                        required on public
+#   vars.BACKUP_SETTLE_EXTRA_VAULTS     retired instances still holding positions
+#   vars.BACKUP_SETTLE_GRACE_MINUTES    default 60
+#
+# Without BACKUP_SETTLE_SECRET the run is a dry run: it lists what is due and
+# signs nothing. A run that fails to settle or read anything turns red.
+
+on:
+  schedule:
+    - cron: '17,47 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: backup-settle
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  settle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+
+      - name: Settle what the primary left due
+        env:
+          NEXT_PUBLIC_STELLAR_NETWORK: ${{ vars.STELLAR_NETWORK }}
+          NEXT_PUBLIC_RPC_URL: ${{ vars.RPC_URL }}
+          BACKUP_SETTLE_EXTRA_VAULTS: ${{ vars.BACKUP_SETTLE_EXTRA_VAULTS }}
+          BACKUP_SETTLE_GRACE_MINUTES: ${{ vars.BACKUP_SETTLE_GRACE_MINUTES }}
+          BACKUP_SETTLE_SECRET: ${{ secrets.BACKUP_SETTLE_SECRET }}
+          BACKUP_SETTLE_HEARTBEAT_URL: ${{ secrets.BACKUP_SETTLE_HEARTBEAT_URL }}
+        run: |
+          if [ -n "$BACKUP_SETTLE_SECRET" ]; then
+            node scripts/settle-due.mjs
+          else
+            echo "::warning::BACKUP_SETTLE_SECRET is not set; dry run only"
+            node scripts/settle-due.mjs --dry-run
+          fi
