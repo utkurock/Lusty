@@ -6,7 +6,9 @@ import { allUnderlyings, enabledUnderlyings, type AssetIssue } from '@/lib/asset
 import { routingExposure } from '@/lib/routing/budget'
 import { reconcileAll, readPause } from '@/lib/vault-limits'
 import { isAdminRequest } from '@/lib/admin-auth'
-import { HORIZON_URL } from '@/lib/stellar'
+import { HORIZON_URL, NETWORK } from '@/lib/stellar'
+import { readReleaseState } from '@/lib/monitor/release-drift'
+import { describeDrift } from '@/lib/drift.mjs'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -180,6 +182,66 @@ function checkRouting() {
   }))
 }
 
+// The release: which network this is, the wasm each book runs, and whether the
+// network still matches release/<network>.json.
+//
+// Drift counts against the overall status, and so does a manifest that is
+// missing or for another network: either way the deployment is running
+// something that is not the reviewed release, or cannot say. A network that
+// could not be read is reported and not scored — Horizon and the RPC are
+// scored on their own, and one slow read should not call the release wrong.
+//
+// It is the most expensive read here (three simulations and a wasm read per
+// book, a Horizon read per role account), and a release changes by a deploy,
+// so it is held for five minutes rather than the probe's fifteen seconds.
+interface ReleaseStatus {
+  ok: boolean
+  status: 'ok' | 'drift' | 'no-manifest' | 'wrong-network' | 'unreadable'
+  reviewedWasmHash?: string
+  books?: { underlying: string; vault: string; wasmHash: string; reviewed: boolean }[]
+  differences?: number
+  /** Admin only: each difference, as the drift check prints it. */
+  drift?: string[]
+  checkedAt: string
+  error?: string
+}
+
+const RELEASE_CACHE_MS = 5 * 60_000
+let releaseCached: { at: number; status: Promise<ReleaseStatus> } | null = null
+
+async function readRelease(): Promise<ReleaseStatus> {
+  const s = await readReleaseState()
+  const checkedAt = new Date().toISOString()
+  if (s.status === 'ok' || s.status === 'drift') {
+    return {
+      ok: s.status === 'ok',
+      status: s.status,
+      reviewedWasmHash: s.reviewedWasmHash,
+      books: s.books.map((b) => ({
+        underlying: b.symbol,
+        vault: b.vault,
+        wasmHash: b.wasmHash,
+        reviewed: b.wasmHash === s.reviewedWasmHash,
+      })),
+      differences: s.drift.length,
+      drift: s.drift.map(describeDrift),
+      checkedAt,
+    }
+  }
+  const failed = s as Extract<typeof s, { error: string }>
+  return { ok: failed.status === 'unreadable', status: failed.status, checkedAt, error: failed.error }
+}
+
+function checkRelease(): Promise<ReleaseStatus> {
+  if (releaseCached && Date.now() - releaseCached.at < RELEASE_CACHE_MS) return releaseCached.status
+  const fresh = readRelease()
+  releaseCached = { at: Date.now(), status: fresh }
+  fresh.catch(() => {
+    if (releaseCached?.status === fresh) releaseCached = null
+  })
+  return fresh
+}
+
 // One probe serves everyone who asks within this window. Each fresh probe
 // reads Horizon, the database, every price feed and every book's limits, and
 // the pool behind the database is three connections: answering each request
@@ -217,6 +279,8 @@ function redact(r: HealthReport): HealthReport {
       priceFeeds: c.priceFeeds.map(hide),
       limits: c.limits.map(hide),
       priceFeed: c.priceFeed && hide(c.priceFeed),
+      // The count is public; which signer or threshold moved is the operator's.
+      release: (({ drift: _drift, ...rest }) => hide(rest))(c.release),
     },
   }
 }
@@ -233,11 +297,12 @@ export async function GET(req: Request) {
 }
 
 async function probe() {
-  const [horizon, db, priceFeeds, limits] = await Promise.all([
+  const [horizon, db, priceFeeds, limits, release] = await Promise.all([
     checkHorizon(),
     checkDb(),
     checkPriceFeeds(),
     checkLimits(),
+    checkRelease(),
   ])
   const assets = checkAssets()
 
@@ -253,12 +318,15 @@ async function probe() {
     db.ok &&
     misconfigured.length === 0 &&
     tradeable.every((f) => f.ok) &&
-    limits.every((l) => l.ok || !enabled.has(l.underlying))
+    limits.every((l) => l.ok || !enabled.has(l.underlying)) &&
+    release.ok
 
   return {
     ok: allOk,
     checkedAt: new Date().toISOString(),
+    network: NETWORK.name,
     components: {
+      release,
       horizon,
       db,
       assets,

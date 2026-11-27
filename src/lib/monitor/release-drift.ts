@@ -67,34 +67,99 @@ export function releaseDriftAlert(drift: Drift[], manifest: Manifest): Alert | n
   }
 }
 
-export async function checkReleaseDrift(
-  deps: { loadManifest?: () => Promise<Manifest>; readers?: () => Readers } = {},
-): Promise<Alert | null> {
+type Deps = { loadManifest?: () => Promise<Manifest>; readers?: () => Readers }
+
+/** One book as the network runs it. */
+export interface ReleaseBook {
+  symbol: string
+  vault: string
+  /** The wasm hash the instance runs, hex. */
+  wasmHash: string
+}
+
+/**
+ * The release as the network runs it against its manifest, read once. The
+ * monitor turns it into an alert and /api/health reports it; both read it here
+ * so the two cannot disagree about what "no drift" means.
+ */
+export type ReleaseState =
+  | {
+      status: 'ok' | 'drift'
+      network: string
+      /** The manifest's reviewed hash. */
+      reviewedWasmHash: string
+      books: ReleaseBook[]
+      drift: Drift[]
+      manifest: Manifest
+    }
+  | { status: 'no-manifest' | 'wrong-network' | 'unreadable'; network: string; error: string }
+
+/**
+ * Each book's hash out of an observed release. `observeRelease` carries one
+ * hash at the top when every book agrees and a JSON map by symbol when not.
+ */
+function bookHashes(observed: Manifest): Record<string, string> {
+  if (/^[0-9a-f]{64}$/.test(observed.wasmHash)) {
+    return Object.fromEntries(Object.keys(observed.books).map((s) => [s, observed.wasmHash]))
+  }
+  return JSON.parse(observed.wasmHash)
+}
+
+export async function readReleaseState(deps: Deps = {}): Promise<ReleaseState> {
+  const network = NETWORK.name
   let manifest: Manifest
   try {
     manifest = await (deps.loadManifest ?? readManifest)()
   } catch (e: any) {
-    return {
-      severity: 'critical',
-      title: 'No release manifest to check the network against',
-      message: `Could not read release/${NETWORK.name}.json: ${e?.message ?? 'unknown'}. Without it a changed signer, threshold, quoter or wasm on ${NETWORK.name} goes unreported.`,
-    }
+    return { status: 'no-manifest', network, error: e?.message ?? 'unknown' }
   }
-  if (manifest.network !== NETWORK.name) {
-    return {
-      severity: 'critical',
-      title: 'Release manifest is for another network',
-      message: `release/${NETWORK.name}.json describes ${manifest.network}; this deployment runs ${NETWORK.name}. Nothing it records can be compared.`,
-    }
+  if (manifest.network !== network) {
+    return { status: 'wrong-network', network, error: `the manifest describes ${manifest.network}` }
   }
   try {
     const observed = await observeRelease(manifest, (deps.readers ?? liveReaders)())
-    return releaseDriftAlert(compareRelease(manifest, observed), manifest)
-  } catch (e: any) {
+    const drift = compareRelease(manifest, observed)
+    const hashes = bookHashes(observed)
     return {
-      severity: 'critical',
-      title: 'Release drift check failed',
-      message: `Could not read ${NETWORK.name} to compare it with its release manifest: ${e?.message ?? 'unknown'}. A role account or instance changed since the last good read would go unreported.`,
+      status: drift.length === 0 ? 'ok' : 'drift',
+      network,
+      reviewedWasmHash: manifest.wasmHash,
+      books: Object.entries(observed.books).map(([symbol, b]) => ({
+        symbol,
+        vault: b.vault,
+        wasmHash: hashes[symbol],
+      })),
+      drift,
+      manifest,
     }
+  } catch (e: any) {
+    return { status: 'unreadable', network, error: e?.message ?? 'unknown' }
+  }
+}
+
+export async function checkReleaseDrift(deps: Deps = {}): Promise<Alert | null> {
+  const state = await readReleaseState(deps)
+  switch (state.status) {
+    case 'ok':
+    case 'drift':
+      return releaseDriftAlert(state.drift, state.manifest)
+    case 'no-manifest':
+      return {
+        severity: 'critical',
+        title: 'No release manifest to check the network against',
+        message: `Could not read release/${state.network}.json: ${state.error}. Without it a changed signer, threshold, quoter or wasm on ${state.network} goes unreported.`,
+      }
+    case 'wrong-network':
+      return {
+        severity: 'critical',
+        title: 'Release manifest is for another network',
+        message: `release/${state.network}.json is not for ${state.network}: ${state.error}. Nothing it records can be compared.`,
+      }
+    case 'unreadable':
+      return {
+        severity: 'critical',
+        title: 'Release drift check failed',
+        message: `Could not read ${state.network} to compare it with its release manifest: ${state.error}. A role account or instance changed since the last good read would go unreported.`,
+      }
   }
 }
