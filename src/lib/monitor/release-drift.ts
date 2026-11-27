@@ -33,7 +33,8 @@ import type { Alert } from './notify'
 
 const manifestPath = () => join(process.cwd(), 'release', `${NETWORK.name}.json`)
 
-async function readManifest(): Promise<Manifest> {
+/** The deployment's release manifest, `release/<network>.json`. */
+export async function readManifest(): Promise<Manifest> {
   return JSON.parse(await readFile(manifestPath(), 'utf8'))
 }
 

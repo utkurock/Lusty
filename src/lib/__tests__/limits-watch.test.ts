@@ -35,8 +35,10 @@ vi.mock('@/lib/db', () => ({
   }),
 }))
 
-const { limitsChangeAlert, checkLimitsEvents, withdrawalAlert, departures } = await import('../monitor/limits-watch')
-const { parseLimitsEvent, parseWithdrawalEvent } = await import('../contract-events')
+const { limitsChangeAlert, checkLimitsEvents, withdrawalAlert, departures, adminEventAlert } = await import(
+  '../monitor/limits-watch'
+)
+const { parseLimitsEvent, parseWithdrawalEvent, parseAdminEvent } = await import('../contract-events')
 const { underlying } = await import('../assets')
 
 const xlm = underlying('XLM')
@@ -360,5 +362,61 @@ describe('withdrawals of free pool liquidity', () => {
       [xlm],
     )
     expect(a?.severity).toBe('warning')
+  })
+})
+
+describe('quoter changes, pauses and unpauses', () => {
+  const quoter = StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 9))
+  const raw = (topics: xdr.ScVal[], value: xdr.ScVal): any => ({
+    topic: topics,
+    value,
+    contractId: { contractId: () => XLM_VAULT },
+    ledger: 77,
+    ledgerClosedAt: '2026-11-27T00:00:00Z',
+    txHash: 'tx',
+  })
+  const sym = (s: string) => nativeToScVal(s, { type: 'symbol' })
+
+  it('reads a quoter added or removed, with its address', () => {
+    expect(parseAdminEvent(raw([sym('quoter'), sym('add')], nativeToScVal(quoter, { type: 'address' })))).toMatchObject({
+      action: 'quoter_added',
+      quoter,
+      ledger: 77,
+    })
+    expect(parseAdminEvent(raw([sym('quoter'), sym('remove')], nativeToScVal(quoter, { type: 'address' })))?.action).toBe(
+      'quoter_removed',
+    )
+  })
+
+  it('reads a pause and an unpause, which carry no value', () => {
+    expect(parseAdminEvent(raw([sym('pause')], xdr.ScVal.scvVoid()))?.action).toBe('paused')
+    expect(parseAdminEvent(raw([sym('unpause')], xdr.ScVal.scvVoid()))?.action).toBe('unpaused')
+  })
+
+  it('ignores every other event', () => {
+    expect(parseAdminEvent(raw([sym('limits')], xdr.ScVal.scvVoid()))).toBeNull()
+    expect(parseAdminEvent(raw([sym('quoter'), sym('rotate')], xdr.ScVal.scvVoid()))).toBeNull()
+  })
+
+  const ev = (action: any, extra: any = {}) => ({
+    contractId: XLM_VAULT, ledger: 77, at: '2026-11-27T00:00:00Z', txHash: 'tx', action, ...extra,
+  })
+
+  it('is critical when a quoter is added, and names the book and the key', () => {
+    const alert = adminEventAlert([ev('quoter_added', { quoter })], [xlm])!
+    expect(alert.severity).toBe('critical')
+    expect(alert.title).toBe('Vault quoter added')
+    expect(alert.message).toContain('XLM at ledger 77')
+    expect(alert.message).toContain(quoter.slice(0, 6))
+  })
+
+  it('is critical on a pause and only warns on an unpause or a removal', () => {
+    expect(adminEventAlert([ev('paused')], [xlm])).toMatchObject({ severity: 'critical', title: 'Vault paused' })
+    expect(adminEventAlert([ev('unpaused')], [xlm])).toMatchObject({ severity: 'warning', title: 'Vault unpaused' })
+    expect(adminEventAlert([ev('quoter_removed', { quoter })], [xlm])?.severity).toBe('warning')
+  })
+
+  it('is quiet with nothing to say', () => {
+    expect(adminEventAlert([], [xlm])).toBeNull()
   })
 })

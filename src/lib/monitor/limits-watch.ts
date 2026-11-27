@@ -1,8 +1,10 @@
 import { getPool, ensureSchema } from '@/lib/db'
 import { allUnderlyings, type UnderlyingAsset } from '@/lib/assets'
 import {
+  scanAdminEvents,
   scanLimitsChanges,
   scanWithdrawals,
+  type AdminEvent,
   type LimitsChange,
   type WithdrawalEvent,
 } from '@/lib/contract-events'
@@ -207,6 +209,70 @@ export async function checkWithdrawalEvents(): Promise<Alert | null> {
       message:
         `Could not read withdrawal events: ${e?.message ?? 'unknown'}. ` +
         'Withdrawals requested since the last run are unknown until this recovers.',
+    }
+  }
+}
+
+// Quoter changes, pauses and unpauses. The rest of what the admin and the
+// guardian can do on an instance: who may co-sign a premium, and whether new
+// positions may open at all. None of it moves money, all of it is a decision
+// somebody should have announced, so every one is reported.
+
+const ADMIN_CURSOR = 'vault-admin'
+
+const shortKey = (k: string) => `${k.slice(0, 6)}…${k.slice(-4)}`
+
+/** The alert for a batch of quoter and pause events, or null when there were none. Pure. */
+export function adminEventAlert(events: AdminEvent[], books: UnderlyingAsset[]): Alert | null {
+  if (events.length === 0) return null
+  const byVault = new Map(books.filter((b) => b.contracts.vault).map((b) => [b.contracts.vault, b]))
+  const lines = events.map((e) => {
+    const name = byVault.get(e.contractId)?.symbol ?? `instance ${e.contractId.slice(0, 8)}…`
+    const what = {
+      quoter_added: `quoter ${e.quoter ? shortKey(e.quoter) : '?'} added — it can now co-sign premiums`,
+      quoter_removed: `quoter ${e.quoter ? shortKey(e.quoter) : '?'} removed`,
+      paused: 'paused by the guardian — new positions are refused; settle and release keep working',
+      unpaused: 'unpaused by the admin — new positions may open again',
+    }[e.action]
+    return `${name} at ledger ${e.ledger}: ${what}`
+  })
+  // Granting a signing key and stopping a book are the two to be woken for.
+  const critical = events.some((e) => e.action === 'quoter_added' || e.action === 'paused')
+  const only = new Set(events.map((e) => e.action))
+  const title =
+    only.size === 1 && only.has('paused')
+      ? 'Vault paused'
+      : only.size === 1 && only.has('unpaused')
+        ? 'Vault unpaused'
+        : only.has('quoter_added')
+          ? 'Vault quoter added'
+          : 'Vault quoter set or pause state changed'
+  return {
+    severity: critical ? 'critical' : 'warning',
+    title,
+    message:
+      `${lines.join('. ')}. Each is a role account's decision on chain; one nobody announced ` +
+      'means a role key is being used by someone it should not be.',
+    fields: events.map((e, i) => ({ label: `event_${i + 1}`, value: `${e.action} ${e.at} tx ${e.txHash ?? '—'}` })),
+  }
+}
+
+export async function checkAdminEvents(): Promise<Alert | null> {
+  let cursor: string | undefined
+  try {
+    cursor = await readCursor(ADMIN_CURSOR)
+    const scan = await scanAdminEvents(cursor)
+    // A pause is read again now, not after the pause cache's thirty seconds.
+    if (scan.events.some((e) => e.action === 'paused' || e.action === 'unpaused')) resetLimitsCache()
+    if (scan.cursor && scan.cursor !== cursor) await writeCursor(scan.cursor, ADMIN_CURSOR)
+    return adminEventAlert(scan.events, allUnderlyings())
+  } catch (e: any) {
+    return {
+      severity: 'critical',
+      title: 'Vault quoter and pause watch failed',
+      message:
+        `Could not read quoter, pause and unpause events: ${e?.message ?? 'unknown'}. ` +
+        'Quoters added and books paused since the last run are unknown until this recovers.',
     }
   }
 }

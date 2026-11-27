@@ -489,6 +489,26 @@ export function parseLimitsEvent(e: sorobanRpc.Api.EventResponse): LimitsChange 
 /** First scan with no cursor: two pages, about twenty hours. */
 const LIMITS_LOOKBACK_LEDGERS = 2 * LEDGERS_PER_PAGE
 
+const symbolTopic = (name: string) => nativeToScVal(name, { type: 'symbol' }).toXDR('base64')
+
+/**
+ * A monitor's scan: forward from its cursor, or, on the first run, from the
+ * lookback. Three pages per run once it has a cursor, which a five-minute
+ * timer never outruns. Throws on an RPC failure — a monitor must not read an
+ * outage as a quiet admin.
+ */
+async function scanSince(cursor: string | undefined, topics: (string | '*')[][]): Promise<EventPage> {
+  const server = new sorobanRpc.Server(RPC_URL)
+  let start: { startLedger: number } | { cursor: string }
+  if (cursor) {
+    start = { cursor }
+  } else {
+    const { sequence } = await server.getLatestLedger()
+    start = { startLedger: Math.max(sequence - LIMITS_LOOKBACK_LEDGERS, 1) }
+  }
+  return scanForward(server, start, topics, cursor ? 3 : LIMITS_LOOKBACK_LEDGERS / LEDGERS_PER_PAGE)
+}
+
 /**
  * Every `set_limits` since `cursor`, applied or scheduled, oldest first, and the cursor to resume
  * from next time.
@@ -501,23 +521,7 @@ export async function scanLimitsChanges(
   cursor?: string,
 ): Promise<{ changes: LimitsChange[]; cursor?: string }> {
   if (VAULT_IDS.length === 0) return { changes: [], cursor }
-  const server = new sorobanRpc.Server(RPC_URL)
-  const topic = (name: string) => nativeToScVal(name, { type: 'symbol' }).toXDR('base64')
-
-  let start: { startLedger: number } | { cursor: string }
-  if (cursor) {
-    start = { cursor }
-  } else {
-    const { sequence } = await server.getLatestLedger()
-    start = { startLedger: Math.max(sequence - LIMITS_LOOKBACK_LEDGERS, 1) }
-  }
-
-  const page = await scanForward(
-    server,
-    start,
-    [[topic('limits')], [topic('lim_raise')]],
-    cursor ? 3 : LIMITS_LOOKBACK_LEDGERS / LEDGERS_PER_PAGE,
-  )
+  const page = await scanSince(cursor, [[symbolTopic('limits')], [symbolTopic('lim_raise')]])
   const changes = page.events
     .map(parseLimitsEvent)
     .filter((c): c is LimitsChange => c !== null)
@@ -591,25 +595,71 @@ export async function scanWithdrawals(
   cursor?: string,
 ): Promise<{ withdrawals: WithdrawalEvent[]; cursor?: string }> {
   if (VAULT_IDS.length === 0) return { withdrawals: [], cursor }
-  const server = new sorobanRpc.Server(RPC_URL)
-  const topic = (name: string) => nativeToScVal(name, { type: 'symbol' }).toXDR('base64')
-
-  let start: { startLedger: number } | { cursor: string }
-  if (cursor) {
-    start = { cursor }
-  } else {
-    const { sequence } = await server.getLatestLedger()
-    start = { startLedger: Math.max(sequence - LIMITS_LOOKBACK_LEDGERS, 1) }
-  }
-
-  const page = await scanForward(
-    server,
-    start,
-    Object.keys(WITHDRAWAL_STEPS).map((name) => [topic(name), '*']),
-    cursor ? 3 : LIMITS_LOOKBACK_LEDGERS / LEDGERS_PER_PAGE,
+  const page = await scanSince(
+    cursor,
+    Object.keys(WITHDRAWAL_STEPS).map((name) => [symbolTopic(name), '*']),
   )
   const withdrawals = page.events
     .map(parseWithdrawalEvent)
     .filter((w): w is WithdrawalEvent => w !== null)
   return { withdrawals, cursor: page.cursor ?? cursor }
+}
+
+/** A change to who may sign quotes, or to whether new positions may open (v6). */
+export interface AdminEvent {
+  contractId: string
+  ledger: number
+  at: string
+  txHash?: string
+  action: 'quoter_added' | 'quoter_removed' | 'paused' | 'unpaused'
+  /** The quoter added or removed. */
+  quoter?: string
+}
+
+/**
+ * Read a `quoter` (`add` / `remove`, the address as the value), `pause` or
+ * `unpause` event. Pause and unpause carry no value: the guardian or the admin
+ * authorized them, and that is the whole of what happened.
+ */
+export function parseAdminEvent(e: sorobanRpc.Api.EventResponse): AdminEvent | null {
+  try {
+    const topics = e.topic.map((t: xdr.ScVal) => scValToNative(t))
+    const base = {
+      contractId: e.contractId?.contractId() ?? '',
+      ledger: e.ledger,
+      at: e.ledgerClosedAt,
+      txHash: e.txHash,
+    }
+    const kind = String(topics[0])
+    if (kind === 'pause' || kind === 'unpause') {
+      return { ...base, action: kind === 'pause' ? 'paused' : 'unpaused' }
+    }
+    if (kind !== 'quoter') return null
+    const step = String(topics[1])
+    if (step !== 'add' && step !== 'remove') return null
+    return {
+      ...base,
+      action: step === 'add' ? 'quoter_added' : 'quoter_removed',
+      quoter: String(scValToNative(e.value)),
+    }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Every quoter change, pause and unpause since `cursor`, oldest first, and the
+ * cursor to resume from. Throws on an RPC failure, like the other monitor scans.
+ */
+export async function scanAdminEvents(
+  cursor?: string,
+): Promise<{ events: AdminEvent[]; cursor?: string }> {
+  if (VAULT_IDS.length === 0) return { events: [], cursor }
+  const page = await scanSince(cursor, [
+    [symbolTopic('quoter'), '*'],
+    [symbolTopic('pause')],
+    [symbolTopic('unpause')],
+  ])
+  const events = page.events.map(parseAdminEvent).filter((a): a is AdminEvent => a !== null)
+  return { events, cursor: page.cursor ?? cursor }
 }

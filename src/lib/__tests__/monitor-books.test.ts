@@ -51,6 +51,10 @@ vi.mock('@/lib/lusd', async (orig) => ({ ...(await orig<typeof import('@/lib/lus
 vi.mock('@/lib/monitor/limits-watch', () => ({
   checkLimitsEvents: async () => null,
   checkWithdrawalEvents: async () => null,
+  checkAdminEvents: async () => null,
+}))
+vi.mock('@/lib/monitor/role-accounts', () => ({
+  checkRoleAccounts: async () => null,
 }))
 vi.mock('@/lib/monitor/abnormal-activity', () => ({
   checkAbnormalActivity: async () => null,

@@ -12,7 +12,7 @@ import { LUSD_DISTRIBUTOR } from '@/lib/lusd'
 import { inFlight } from '@/lib/routing/budget'
 import { summarise } from '@/lib/routing/journal'
 import type { Alert } from './notify'
-import { checkLimitsEvents, checkWithdrawalEvents } from './limits-watch'
+import { checkAdminEvents, checkLimitsEvents, checkWithdrawalEvents } from './limits-watch'
 import { checkOracleHealth } from './oracle-health'
 import { checkRunnerHealth } from './runner-watch'
 import { checkSettleFailures } from './settle-failures'
@@ -21,6 +21,7 @@ import { checkAbnormalActivity } from './abnormal-activity'
 import { checkReleaseDrift } from './release-drift'
 import { checkUnconfirmedActions } from './unconfirmed-actions'
 import { checkLapsedReservations } from './lapsed-reservations'
+import { checkRoleAccounts } from './role-accounts'
 import { fetchCloses } from './klines'
 import { HORIZON_URL } from '@/lib/stellar'
 
@@ -380,6 +381,10 @@ export async function runMonitorChecks(): Promise<Alert[]> {
     ...settlementBooks().map((a) => checkSettlementBacklog(a)),
     checkLimitsEvents(),
     checkWithdrawalEvents(),
+    // Who may co-sign premiums, whether a book is paused, and who signs for
+    // the role accounts — every change, not the state between two reads.
+    checkAdminEvents(),
+    checkRoleAccounts(),
     // Not per book: one runner sweeps every instance, and a runner that has
     // stopped has stopped for all of them.
     checkRunnerHealth(),
